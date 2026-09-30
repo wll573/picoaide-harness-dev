@@ -160,6 +160,7 @@ const DESKTOP_SETTINGS_NAMESPACE = 'dsh-desktop'
 const UI_LAYOUT_PACKAGE = '@deepseek-ai/dsh-client-ui-layout'
 const UI_SIDEBAR_PACKAGE = '@deepseek-ai/dsh-client-ui-sidebar'
 const UI_CONVERSATION_PACKAGE = '@deepseek-ai/dsh-client-ui-conversation'
+const UI_APPROVAL_PACKAGE = '@deepseek-ai/dsh-client-ui-approval'
 const ADVANCED_DESKTOP_SHELL_MODE: DesktopShellMode = 'advanced'
 
 /**
@@ -1036,6 +1037,7 @@ export async function prepareDesktopProfile(
       ['ui-layout', UI_LAYOUT_PACKAGE],
       ['ui-sidebar', UI_SIDEBAR_PACKAGE],
       ['ui-conversation', UI_CONVERSATION_PACKAGE],
+      ['ui-approval', UI_APPROVAL_PACKAGE],
     ] as const) {
       if (rows.get(id)?.name !== packageName) {
         throw new Error(`${BIN_NAME}: advanced desktop mode must use ${packageName} in the ${id} row`)
@@ -1051,6 +1053,7 @@ export async function prepareDesktopProfile(
       { id: 'ui-layout', disabled: true },
       { id: 'ui-sidebar', disabled: false },
       { id: 'ui-conversation', disabled: false },
+      { id: 'ui-approval', disabled: false },
     )
   }
   // Agent presets (upstream 0.1.7): the declarative registry replaced the
