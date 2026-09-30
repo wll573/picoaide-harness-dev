@@ -271,6 +271,11 @@ export function apply(ctx: Context): void {
   const sync = async (session: Session | null): Promise<void> => {
     const epoch = epochs.begin()
     if (session === null) {
+      // 登出即回到"无 per-model 思考档位配置"。这是**同步**重置，放在本分支的
+      // 第一个 await 之前：此刻不可能有另一次 sync 插进来（单线程 + 尚未让出），
+      // 因此不必也不该受代际守卫约束 —— 否则一个早已作废的登出 sync 会把刚
+      // 登录那一次建好的映射清掉。
+      modelThinkingAdapterMap = new Map()
       await ctx.settings.replace(AGENT_DEFAULT_MODEL_NS, {})
       if (!epochs.isCurrent(epoch)) return
       await ctx.settings.replace(GATEWAY_LLM_NS, {})
