@@ -3,7 +3,7 @@
 ## 1. 服务端(PostgreSQL,PG-only 2026-08)
 
 > 2026-08 起 SQLite 已全面下线:服务端数据库为 PostgreSQL(内置容器或外部实例)。
-> 迁移在 `internal/serverstore/migrations-pg/`(0001–0082;0007 已废弃;0028 下线
+> 迁移在 `internal/serverstore/migrations-pg/`(0001–0085;0007 已废弃;0028 下线
 > 知识库/MCP 表并独立审计表 audit_logs;0039 usage 按月原生分区 + 日/月账本;
 > 0040/0041 归档直存 DB;0042 connectors;0043/0044 provider protocol;
 > 0045 glitchtip 下架;0046 rbac 角色;0047 brand 快照;0048 审计哈希链;
@@ -23,7 +23,12 @@
 > `wasm_app_opens_daily` 日汇总)、0076 `usage.app_id`(应用维度归因)、
 > 0077 网关 Files API 归属台账 `gateway_files`、0078 台账容量字段与清理索引、
 > 0079 回收标记 `gateway_files.reaping_at`(2026-09-22)、0080 模型目录缺失标记
-> `models.catalog_missing`、0081 回收世代号 `gateway_files.reap_gen`(2026-09-23,fencing token)** —— 前三条(0073-0076)随
+> `models.catalog_missing`、0081 回收世代号 `gateway_files.reap_gen`(2026-09-23,fencing token)、
+> 0082 月报订阅待补期号 `pending_period` + 重试退避(`fail_streak`/`next_attempt_at`)、
+> 0083 LLM 请求/响应 transcript 留存(`llm_transcripts` + 加密分块 `llm_transcript_chunks`)、
+> 0084 上游多 API Key 池 `gateway_provider_api_keys`(优先级 + 冷却态,从既有
+> `gateway_providers.api_key_enc` 回填)、0085 托管客户端策略(`managed_user_configs`/
+> `managed_skill_policies`/`managed_client_devices`)** —— 前三条(0073-0076)随
 > 2026-09-19「WASM 应用客户端专属」改造落地(应用子域/换票/匿名面/服务端 `ai.chat`
 > 同批删除,见 03-api-reference.md §11b),0077-0079 随 2026-09-22 网关文件直通、归属隔离与「按员工看占用 + 清理」落地
 > (见下 `gateway_files`),0081 随第四轮审计 R4-C-1 的回收器 fencing 落地

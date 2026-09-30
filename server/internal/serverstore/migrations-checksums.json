@@ -448,6 +448,24 @@
       "file": "0082_report_subscription_retry.sql",
       "bytes": 3042,
       "sha256": "d7a1bad79545e283906dcf0fcb80a5ccb129220d86c29cfb88f42dae69f7fc2f"
+    },
+    {
+      "version": "0083",
+      "file": "0083_llm_transcripts.sql",
+      "bytes": 1244,
+      "sha256": "b34e1602c75a3a398710c798a42d683a80353ad2ea8f90812f42358dd8412594"
+    },
+    {
+      "version": "0084",
+      "file": "0084_gateway_provider_api_keys.sql",
+      "bytes": 1110,
+      "sha256": "ce80d1e30d571b0a9098705afe5d5cd8660b0614962d58643c51258417c40f67"
+    },
+    {
+      "version": "0085",
+      "file": "0085_managed_client_policy.sql",
+      "bytes": 1531,
+      "sha256": "1f85bf96ca843a6596fb51bb251ed7e803c1fd087dffec033711e2ae60e9e348"
     }
   ]
 }
