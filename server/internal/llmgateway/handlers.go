@@ -37,22 +37,22 @@ type Handlers struct {
 	RetrieveFile gin.HandlerFunc // GET /files/:file_id
 	DeleteFile   gin.HandlerFunc // DELETE /files/:file_id
 	// 服务端面 /api/server/admin
-	ListProviders    gin.HandlerFunc
-	CreateProvider   gin.HandlerFunc
-	UpdateProvider   gin.HandlerFunc
-	DeleteProvider   gin.HandlerFunc
-	ProviderBalance  gin.HandlerFunc // GET /providers/:id/balance(2026-09 渠道余额)
-	ListProviderKeys    gin.HandlerFunc // GET /providers/:id/keys
-	CreateProviderKey   gin.HandlerFunc // POST /providers/:id/keys
-	UpdateProviderKey   gin.HandlerFunc // PUT /providers/:id/keys/:key_id
-	DeleteProviderKey   gin.HandlerFunc // DELETE /providers/:id/keys/:key_id
-	ResetProviderKey    gin.HandlerFunc // POST /providers/:id/keys/:key_id/reset
-	ListModelsAdmin  gin.HandlerFunc
-	CreateModel      gin.HandlerFunc
-	UpdateModel      gin.HandlerFunc
-	DeleteModel      gin.HandlerFunc
-	GetGatewayConfig gin.HandlerFunc
-	SetGatewayConfig gin.HandlerFunc
+	ListProviders     gin.HandlerFunc
+	CreateProvider    gin.HandlerFunc
+	UpdateProvider    gin.HandlerFunc
+	DeleteProvider    gin.HandlerFunc
+	ProviderBalance   gin.HandlerFunc // GET /providers/:id/balance(2026-09 渠道余额)
+	ListProviderKeys  gin.HandlerFunc // GET /providers/:id/keys
+	CreateProviderKey gin.HandlerFunc // POST /providers/:id/keys
+	UpdateProviderKey gin.HandlerFunc // PUT /providers/:id/keys/:key_id
+	DeleteProviderKey gin.HandlerFunc // DELETE /providers/:id/keys/:key_id
+	ResetProviderKey  gin.HandlerFunc // POST /providers/:id/keys/:key_id/reset
+	ListModelsAdmin   gin.HandlerFunc
+	CreateModel       gin.HandlerFunc
+	UpdateModel       gin.HandlerFunc
+	DeleteModel       gin.HandlerFunc
+	GetGatewayConfig  gin.HandlerFunc
+	SetGatewayConfig  gin.HandlerFunc
 	// 网关文件台账的管理面(2026-09-22):按员工看占用 / 搜索 / 排序 / 清理。
 	// 读走 gateway:read,删除与清理走 gateway:write(见 router.go 的申报)。
 	ListGatewayFiles    gin.HandlerFunc // GET /gateway/files

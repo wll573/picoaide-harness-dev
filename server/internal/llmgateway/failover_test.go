@@ -91,7 +91,7 @@ func (failoverTestChannel) FetchModels(ctx context.Context, apiKey string, fetch
 func (failoverTestChannel) RequestOverrides(modelID string) (map[string]any, []string) {
 	return map[string]any{"thinking": map[string]any{"type": "enabled"}, "test_marker": 1}, []string{"temperature"}
 }
-func (failoverTestChannel) DefaultModelCaps() (int64, int64) { return 0, 0 }
+func (failoverTestChannel) DefaultModelCaps() (int64, int64)              { return 0, 0 }
 func (failoverTestChannel) TransformRequestBody(body map[string]any) bool { return false }
 
 func TestProxyFailoverRecomputesChannelOverridesPerCandidate(t *testing.T) {

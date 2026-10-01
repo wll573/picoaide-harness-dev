@@ -649,6 +649,7 @@ const PERM_ARG_POSITIVE_FIXTURES: PermArgPositiveFixture[] = [
   { rel: 'pages/app-center/Apps.tsx', arg: 'PERM_CAP_READ', testFile: 'pages/AppCenter.test.tsx', testName: '渲染应用列表:标题/app_id/访问级别中文标签/负责人/当前版本/状态', kind: 'behavior' },
   { rel: 'pages/app-center/Apps.tsx', arg: 'PERM_CAP_WRITE', testFile: 'pages/AppCenter.test.tsx', testName: '点「下架」→ POST /wasm-apps/<id>/unpublish，并按响应把该行切回「上架」', kind: 'behavior' },
   { rel: 'pages/Audit.tsx', arg: 'PERM_AUDIT_RETENTION_WRITE', testFile: 'pages/Audit.test.tsx', testName: 'super_admin 仍然可编辑并可保存(不误伤)', kind: 'behavior' },
+  { rel: 'pages/ManagedConfig.tsx', arg: 'PERM_MANAGED_WRITE', testFile: 'pages/ManagedConfig.test.tsx', testName: '用表单管理配置与 Skill，并提交结构化策略', kind: 'behavior' },
   { rel: 'pages/GatewayFiles.tsx', arg: 'PERM_GATEWAY_WRITE', testFile: 'pages/GatewayFiles.test.tsx', testName: '写面收敛：持有 gateway:write 时删除/清理入口可见', kind: 'behavior' },
 ]
 

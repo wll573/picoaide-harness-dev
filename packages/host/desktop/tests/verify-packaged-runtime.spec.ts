@@ -462,7 +462,9 @@ describe('上游补丁目标的静态 import 必须在打包必需清单里（G-
         const entry = exportsField[`./${sub}`]
         const def = typeof entry === 'string' ? entry : (entry?.default ?? entry?.import)
         if (typeof def !== 'string') continue
-        const relative = join('node_modules', name, def.replace(/^\.\//, ''))
+        // The required-entry manifest uses POSIX archive paths on every host;
+        // normalize the host-native path before comparing with it.
+        const relative = join('node_modules', name, def.replace(/^\.\//, '')).replaceAll('\\', '/')
         // 只对"磁盘上真实存在"的落点提要求：解析不到的多半是可选/平台分支，
         // 要求登记它们会把这条判据变成假红源。
         if (!existsSync(join(dirname(fileURLToPath(import.meta.url)), '..', relative))) continue

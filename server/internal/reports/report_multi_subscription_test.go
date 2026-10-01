@@ -49,7 +49,8 @@ func TestHealthySubscriptionNotRepushedWhenSiblingFails(t *testing.T) {
 	}))
 	defer broken.Close()
 
-	if _, err := serverstore.CreateReportSubscription(db, "finance-ok", healthy.URL, true); err != nil {
+	healthyID, err := serverstore.CreateReportSubscription(db, "finance-ok", healthy.URL, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 	brokenID, err := serverstore.CreateReportSubscription(db, "compliance-broken", broken.URL, true)
@@ -60,6 +61,8 @@ func TestHealthySubscriptionNotRepushedWhenSiblingFails(t *testing.T) {
 	// 失败有指数退避：首轮失败 ⇒ 1 小时后才允许重试，所以必须推进时钟，否则第 2/3 轮
 	// 被退避窗口挡住 —— 那是退避在起作用，不是"不报错"）。
 	clock := bjAt(2026, 9, 15, 10)
+	pinSubscriptionCreatedAt(t, db, healthyID, clock)
+	pinSubscriptionCreatedAt(t, db, brokenID, clock)
 	sched := NewScheduler(db, time.Hour, func() time.Time { return clock })
 
 	for round := 1; round <= 3; round++ {

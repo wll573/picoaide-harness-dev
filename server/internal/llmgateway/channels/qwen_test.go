@@ -69,18 +69,18 @@ func TestQwenTransformRequestBody(t *testing.T) {
 	}
 
 	cases := []struct {
-		name     string
-		input    map[string]any
-		wantEffort any  // nil 表示字段不应存在
+		name         string
+		input        map[string]any
+		wantEffort   any  // nil 表示字段不应存在
 		wantThinking bool // thinking 字段是否应保留(true=保留,false=删除)
-		wantBudget bool  // thinking_budget 是否应保留
-		changed  bool
+		wantBudget   bool // thinking_budget 是否应保留
+		changed      bool
 	}{
 		{
 			name: "off → none,删除 thinking",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
-				"thinking": map[string]any{"type": "disabled"},
+				"model":            "qwen3.8-27b",
+				"thinking":         map[string]any{"type": "disabled"},
 				"reasoning_effort": "off",
 			},
 			wantEffort:   "none",
@@ -91,8 +91,8 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "low → low,删除 thinking",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
-				"thinking": map[string]any{"type": "enabled"},
+				"model":            "qwen3.8-27b",
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "low",
 			},
 			wantEffort:   "low",
@@ -103,8 +103,8 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "high → medium,删除 thinking",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
-				"thinking": map[string]any{"type": "enabled"},
+				"model":            "qwen3.8-27b",
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "high",
 			},
 			wantEffort:   "medium",
@@ -115,8 +115,8 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "max → xhigh,删除 thinking",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
-				"thinking": map[string]any{"type": "enabled"},
+				"model":            "qwen3.8-27b",
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 			},
 			wantEffort:   "xhigh",
@@ -127,7 +127,7 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "只开 thinking 开关不设档位 → 删除 thinking,不设 effort",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
+				"model":    "qwen3.8-27b",
 				"thinking": map[string]any{"type": "enabled"},
 			},
 			wantEffort:   nil,
@@ -138,7 +138,7 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "thinking.type=disabled → none,删除 thinking",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
+				"model":    "qwen3.8-27b",
 				"thinking": map[string]any{"type": "disabled"},
 			},
 			wantEffort:   "none",
@@ -149,7 +149,7 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "无思考参数 → 不变",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
+				"model":    "qwen3.8-27b",
 				"messages": []any{},
 			},
 			wantEffort:   nil,
@@ -160,8 +160,8 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "删除 thinking_budget(与 effort 互斥)",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
-				"thinking_budget": 8192,
+				"model":            "qwen3.8-27b",
+				"thinking_budget":  8192,
 				"reasoning_effort": "high",
 			},
 			wantEffort:   "medium",
@@ -172,7 +172,7 @@ func TestQwenTransformRequestBody(t *testing.T) {
 		{
 			name: "仅 thinking_budget 也删除(避免与默认 effort 冲突)",
 			input: map[string]any{
-				"model": "qwen3.8-27b",
+				"model":           "qwen3.8-27b",
 				"thinking_budget": 4096,
 			},
 			wantEffort:   nil,

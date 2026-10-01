@@ -7,10 +7,10 @@ import (
 
 func TestThinkingAdapterFromDefaultParams(t *testing.T) {
 	cases := []struct {
-		name     string
-		params   string
-		wantVal  string
-		wantOK   bool
+		name    string
+		params  string
+		wantVal string
+		wantOK  bool
 	}{
 		{"空串", "", "", false},
 		{"空对象", "{}", "", false},
@@ -56,8 +56,8 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "deepseek 模式原样透传",
 			adapter: "deepseek",
 			input: map[string]any{
-				"model": "test-model",
-				"thinking": map[string]any{"type": "enabled"},
+				"model":            "test-model",
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 			},
 			want: bodyCheck{effort: "max", thinking: true, budget: false},
@@ -66,8 +66,8 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "空 adapter 不转换",
 			adapter: "",
 			input: map[string]any{
-				"model": "test-model",
-				"thinking": map[string]any{"type": "enabled"},
+				"model":            "test-model",
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 			},
 			want: bodyCheck{effort: "max", thinking: true, budget: false},
@@ -78,7 +78,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "qwen: off → none,删 thinking",
 			adapter: "qwen",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "disabled"},
+				"thinking":         map[string]any{"type": "disabled"},
 				"reasoning_effort": "off",
 			},
 			want: bodyCheck{effort: "none", thinking: false, budget: false},
@@ -87,7 +87,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "qwen: low → low",
 			adapter: "qwen",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "low",
 			},
 			want: bodyCheck{effort: "low", thinking: false, budget: false},
@@ -96,7 +96,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "qwen: high → medium",
 			adapter: "qwen",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "high",
 			},
 			want: bodyCheck{effort: "medium", thinking: false, budget: false},
@@ -105,7 +105,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "qwen: max → xhigh",
 			adapter: "qwen",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 			},
 			want: bodyCheck{effort: "xhigh", thinking: false, budget: false},
@@ -141,7 +141,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_open: off → 保留 none,删 thinking",
 			adapter: "strip_open",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "disabled"},
+				"thinking":         map[string]any{"type": "disabled"},
 				"reasoning_effort": "off",
 			},
 			want: bodyCheck{effort: "none", thinking: false, budget: false},
@@ -158,7 +158,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_open: low → 删除全部思考参数(走模型默认)",
 			adapter: "strip_open",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "low",
 			},
 			want: bodyCheck{effort: nil, thinking: false, budget: false},
@@ -167,7 +167,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_open: high → 删除全部思考参数(走模型默认)",
 			adapter: "strip_open",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "high",
 			},
 			want: bodyCheck{effort: nil, thinking: false, budget: false},
@@ -176,7 +176,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_open: max → 删除全部思考参数(走模型默认)",
 			adapter: "strip_open",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 			},
 			want: bodyCheck{effort: nil, thinking: false, budget: false},
@@ -195,7 +195,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_all: 全删(off 也删)",
 			adapter: "strip_all",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "disabled"},
+				"thinking":         map[string]any{"type": "disabled"},
 				"reasoning_effort": "off",
 			},
 			want: bodyCheck{effort: nil, thinking: false, budget: false},
@@ -204,7 +204,7 @@ func TestApplyThinkingAdapter(t *testing.T) {
 			name:    "strip_all: 全删(max 也删)",
 			adapter: "strip_all",
 			input: map[string]any{
-				"thinking": map[string]any{"type": "enabled"},
+				"thinking":         map[string]any{"type": "enabled"},
 				"reasoning_effort": "max",
 				"thinking_budget":  8192,
 			},

@@ -44,7 +44,7 @@ describe('advanced BrowserWindow options', () => {
         // 开发态（缺省 packaged=false）：DevTools 保持可用。
         devTools: true,
         // P0-6/D8:窗口必须挂上承载渲染进程错误转发的沙箱 preload。
-        preload: expect.stringContaining('preload/renderer-error.cjs'),
+        preload: expect.stringMatching(/preload[\\/]renderer-error\.cjs/u),
       },
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 16, y: 16 },
@@ -109,7 +109,7 @@ describe('advanced BrowserWindow options', () => {
         // 开发态（缺省 packaged=false）：DevTools 保持可用。
         devTools: true,
         // P0-6/D8:窗口必须挂上承载渲染进程错误转发的沙箱 preload。
-        preload: expect.stringContaining('preload/renderer-error.cjs'),
+        preload: expect.stringMatching(/preload[\\/]renderer-error\.cjs/u),
       },
     }))
     expect(options).not.toHaveProperty('titleBarStyle')

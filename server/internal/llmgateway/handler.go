@@ -542,6 +542,48 @@ func (a *API) applyChannelOverrides(raw []byte, overrides map[string]any, remove
 	})
 }
 
+// applyChannelRequestOverrides preserves the pre-merge helper signature for
+// package-local callers and older extensions. The protocol argument is kept
+// for source compatibility; channel selection already carries the protocol
+// specific behavior.
+func (a *API) applyChannelRequestOverrides(raw []byte, ch channels.Channel, modelID, _ string) ([]byte, error) {
+	// The old helper exposed Qwen's pre-merge wire shape. Keep that exact
+	// compatibility behavior for extensions still calling this private helper;
+	// the production path below uses the newer TransformRequestBody contract.
+	var legacyQwenBudget any
+	var legacyQwenThinking bool
+	if _, ok := ch.(channels.Qwen); ok {
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err == nil {
+			if v, exists := body["thinking_budget"]; exists {
+				legacyQwenBudget = v
+			}
+			if thinking, ok := body["thinking"].(map[string]any); ok {
+				thinkingType, _ := thinking["type"].(string)
+				legacyQwenThinking = strings.EqualFold(thinkingType, "enabled")
+			}
+		}
+	}
+	var overrides map[string]any
+	var removeKeys []string
+	if ch != nil {
+		overrides, removeKeys = ch.RequestOverrides(modelID)
+	}
+	out, err := a.applyChannelOverrides(raw, overrides, removeKeys, ch)
+	if err != nil || legacyQwenBudget == nil && !legacyQwenThinking {
+		return out, err
+	}
+	var body map[string]any
+	if json.Unmarshal(out, &body) != nil {
+		return out, err
+	}
+	body["enable_thinking"] = legacyQwenThinking
+	if legacyQwenBudget != nil {
+		body["thinking_budget"] = legacyQwenBudget
+	}
+	return json.Marshal(body)
+}
+
 // deepMerge 将 src 合并进 dst(嵌套 map 递归合并,标量覆盖)。
 func deepMerge(dst, src map[string]any) {
 	for k, v := range src {

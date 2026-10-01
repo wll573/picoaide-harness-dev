@@ -39,6 +39,15 @@ func (c OpenAICompat) FetchModels(ctx context.Context, apiKey string, fetchFn fu
 
 func (OpenAICompat) RequestOverrides(string) (map[string]any, []string) { return nil, nil }
 
+// TransformRequest is the legacy channel hook retained for callers compiled
+// against the pre-merge gateway API. The request path now uses
+// TransformRequestBody directly, but keeping this adapter avoids forcing
+// downstream integrations to update in lockstep.
+func (c OpenAICompat) TransformRequest(_ string, _ string, body map[string]any) error {
+	c.TransformRequestBody(body)
+	return nil
+}
+
 func (OpenAICompat) DefaultModelCaps() (int64, int64) { return 131072, 8192 }
 
 // TransformRequestBody removes DeepSeek-only fields from ordinary OpenAI-compatible

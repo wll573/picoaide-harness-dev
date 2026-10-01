@@ -708,7 +708,7 @@ func withPortalReleaseDir(t *testing.T) {
 	t.Cleanup(func() { clientrelease.Dir = prev })
 }
 
-func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
+func TestPortalDownloadsFollowAvailableOrigin(t *testing.T) {
 	withPortalReleaseDir(t)
 	t.Setenv(clientrelease.PublicBaseURLEnv, "")
 
@@ -736,8 +736,8 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 		}
 	})
 
-	t.Run("不安全来源不显示入口并说明原因", func(t *testing.T) {
-		items, note := serve("10.0.0.9", "", nil)
+	t.Run("没有可判定来源不显示入口并说明原因", func(t *testing.T) {
+		items, note := serve("", "", nil)
 		for _, p := range items {
 			if p.URL != "" {
 				t.Errorf("%s 不该有下载地址: %q", p.Name, p.URL)
@@ -752,7 +752,7 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 	})
 
 	t.Run("管理员配置的自有地址仍然生效", func(t *testing.T) {
-		items, _ := serve("10.0.0.9", "", map[string]string{
+		items, _ := serve("", "", map[string]string{
 			"portal.client_download_win": "https://cdn.example.com/win.exe",
 		})
 		if items[0].URL != "https://cdn.example.com/win.exe" {

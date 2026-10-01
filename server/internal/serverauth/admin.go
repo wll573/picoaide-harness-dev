@@ -1359,7 +1359,14 @@ func (a *AdminAPI) putAuditSettings(c *gin.Context) {
 		}
 		_, _ = serverstore.PurgeOldLLMTranscripts(a.DB, time.Now().Add(-time.Duration(*req.TranscriptRetentionDays)*24*time.Hour))
 	}
-	_ = serverstore.AuditLog(a.DB, currentAdminUsername(c), "audit_retention_change", fmt.Sprintf("audit:%d→%d transcript:%d→%d", oldAudit, serverstore.AuditRetentionDays(a.DB), oldTranscript, serverstore.LLMTranscriptRetentionDays(a.DB)))
+	// Keep the legacy audit detail stable when only the audit retention setting
+	// is changed; the transcript suffix is useful only when that setting was
+	// part of the request and would otherwise break existing audit consumers.
+	detail := fmt.Sprintf("%d→%d", oldAudit, serverstore.AuditRetentionDays(a.DB))
+	if req.TranscriptRetentionDays != nil {
+		detail = fmt.Sprintf("audit:%d→%d transcript:%d→%d", oldAudit, serverstore.AuditRetentionDays(a.DB), oldTranscript, serverstore.LLMTranscriptRetentionDays(a.DB))
+	}
+	_ = serverstore.AuditLog(a.DB, currentAdminUsername(c), "audit_retention_change", detail)
 	c.JSON(http.StatusOK, gin.H{
 		"retention_days":            serverstore.AuditRetentionDays(a.DB),
 		"transcript_retention_days": serverstore.LLMTranscriptRetentionDays(a.DB),

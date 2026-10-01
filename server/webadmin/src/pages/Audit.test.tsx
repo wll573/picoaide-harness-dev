@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { request } from '../api'
@@ -71,7 +71,7 @@ const AUDIT_SETTINGS_PATH = '/api/server/admin/audit/settings'
  */
 async function waitForAuditRows(rows: number): Promise<void> {
   if (rows < 2) throw new Error(`waitForAuditRows 只用于 rows>=2（空态占位行会与之同形），收到 ${rows}`)
-  await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
+  await waitFor(() => expect(within(screen.getByTestId('audit-log-card')).getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
 }
 
 /**
@@ -492,7 +492,7 @@ function goSourceFiles(dir: string, out: string[] = []): string[] {
 
 /** 服务端源码文件清单（webadmin/node_modules/data 不是服务端写入面）。 */
 const GO_SOURCES: GoSourceFile[] = goSourceFiles(SERVER_DIR).map((f) => ({
-  path: f.slice(SERVER_DIR.length + 1),
+  path: f.slice(SERVER_DIR.length + 1).replaceAll('\\', '/'),
   text: readFileSync(f, 'utf8'),
 }))
 

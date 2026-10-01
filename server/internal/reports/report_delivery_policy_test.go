@@ -40,11 +40,13 @@ func TestPermanentWebhookFailureIsBackedOff(t *testing.T) {
 		w.WriteHeader(http.StatusBadGateway) // 永久坏的 webhook
 	}))
 	defer srv.Close()
-	if _, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true); err != nil {
+	id, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	base := bjAt(2026, 9, 15, 0)
+	pinSubscriptionCreatedAt(t, db, id, base)
 	for h := 0; h < 24; h++ {
 		now := base.Add(time.Duration(h) * time.Hour)
 		s := NewScheduler(db, time.Hour, func() time.Time { return now })
@@ -96,11 +98,13 @@ func TestTransientWebhookFailureRecoversOnFirstRetry(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	if _, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true); err != nil {
+	id, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	base := bjAt(2026, 9, 15, 0)
+	pinSubscriptionCreatedAt(t, db, id, base)
 	clock := base
 	for h := 0; h < 3; h++ {
 		s := NewScheduler(db, time.Hour, func() time.Time { return clock })
@@ -148,11 +152,13 @@ func TestTwoInstancesDoNotDuplicateDelivery(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
-	if _, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true); err != nil {
+	id, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	now := bjAt(2026, 9, 15, 10)
+	pinSubscriptionCreatedAt(t, db, id, now)
 	s1 := NewScheduler(db, time.Hour, func() time.Time { return now })
 	s2 := NewScheduler(db, time.Hour, func() time.Time { return now })
 	done := make(chan struct{}, 2)
@@ -208,11 +214,13 @@ func TestCrossMonthFailureKeepsPendingPeriod(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true); err != nil {
+	id, err := serverstore.CreateReportSubscription(db, "ops", srv.URL, true)
+	if err != nil {
 		t.Fatal(err)
 	}
 	// 9/30 23:00（北京）：这一轮应当投 8 月报表，推送失败。
 	sep := bjAt(2026, 9, 30, 23)
+	pinSubscriptionCreatedAt(t, db, id, sep)
 	_ = NewScheduler(db, time.Hour, func() time.Time { return sep }).tryRun()
 	// 10/1 00:00（北京）：webhook 恢复 —— 跨过月界，仍必须补投 8 月那一期。
 	oct := bjAt(2026, 10, 1, 0)

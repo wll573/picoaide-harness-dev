@@ -68,6 +68,7 @@ func TestFixingHookURLResetsBackoffSoCatchUpIsImmediate(t *testing.T) {
 	}
 
 	base := bjAt(2026, 9, 15, 0)
+	pinSubscriptionCreatedAt(t, db, id, base)
 	// 连续失败两次：第 1 次 ⇒ 退避 1 小时；第 2 次 ⇒ 退避 24 小时。
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base }).tryRun()
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base.Add(time.Hour) }).tryRun()
@@ -128,6 +129,7 @@ func TestRenamingWithoutURLChangeKeepsBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := bjAt(2026, 9, 15, 0)
+	pinSubscriptionCreatedAt(t, db, id, base)
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base }).tryRun()
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base.Add(time.Hour) }).tryRun()
 

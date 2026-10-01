@@ -126,10 +126,10 @@ func New(db *sql.DB) *API {
 		loginIPLimiter:      sharedLoginIPLimiter(),
 		registrationLimiter: newRateLimiter(10),
 		callbackLimiter:     newCallbackLimiter(),
-		oidcFlowLimiter:  newRateLimiter(oidcFlowStartMaxAttempts),
-		providers:        map[string]PasswordProvider{},
-		browsers:         map[string]BrowserProvider{},
-		enabledProviders: map[string]bool{},
+		oidcFlowLimiter:     newRateLimiter(oidcFlowStartMaxAttempts),
+		providers:           map[string]PasswordProvider{},
+		browsers:            map[string]BrowserProvider{},
+		enabledProviders:    map[string]bool{},
 	}
 }
 
