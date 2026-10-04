@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -123,6 +125,82 @@ func insertID(q rowQuerier, query string, args ...any) (int64, error) {
 // the `?` -> `$N` rewrite layer: the codebase's SQL statements all use `?`
 // placeholders (kept for portability), and pgx requires $N. Configures a pool
 // sized for the gateway's concurrency and the Asia/Shanghai session timezone.
+// pgErrorIsTransient 判断一个连接错误是否属于"数据库还没准备好"这类**值得重试**
+// 的暂时性故障。判据用 SQLSTATE（去见 reports.go 的同族说明：不匹配错误串，
+// 错误串的形状由驱动决定，换个版本就变）。
+//
+//	57P03  cannot_connect_now      —— 数据库正在启动（compose/CI 并行拉起的常态）
+//	08006  connection_failure      —— 连接中途失效
+//	08001  sqlclient_unable_to_establish_sqlconnection
+//	08004  sqlserver_rejected_establishment_of_sqlconnection
+//	53300  too_many_connections    —— 稍后重试有意义
+//
+// 口令错（28P01）、库不存在（3D000）等**不在此列**：重试多少次结果都一样，
+// 应立即失败并说清原因。
+func pgErrorIsTransient(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code {
+		case "57P03", "08006", "08001", "08004", "53300":
+			return true
+		default:
+			return false
+		}
+	}
+	// 非 PgError：连接根本没能建立（DNS 解析失败、拒绝连接、超时）。
+	// 这几种同样值得重试（PG 可能正在启动，端口还没监听）。
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return true
+	}
+	msg := err.Error()
+	for _, s := range []string{"connection refused", "connection reset", "no such host",
+		"i/o timeout", "network is unreachable", "database system is starting up"} {
+		if strings.Contains(msg, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// redactDSN 把连接串里的口令替换成 ***，用于日志与错误信息。
+//
+// 为什么必须做：启动失败的报错会进 journalctl，而 journal 默认对 adm 组与
+// systemd-journal 组可读。原文打印等于把数据库口令写进日志。
+func redactDSN(dsn string) string {
+	// postgres://user:password@host:port/db?...
+	if i := strings.Index(dsn, "://"); i >= 0 {
+		rest := dsn[i+3:]
+		at := strings.LastIndex(rest, "@")
+		colon := strings.Index(rest, ":")
+		if at > 0 && colon > 0 && colon < at {
+			return dsn[:i+3] + rest[:colon] + ":***" + rest[at:]
+		}
+		return dsn
+	}
+	// key=value 形态（password=...）
+	out := dsn
+	for _, key := range []string{"password=", "PASSWORD="} {
+		for {
+			i := strings.Index(out, key)
+			if i < 0 {
+				break
+			}
+			j := i + len(key)
+			k := strings.IndexAny(out[j:], " \t")
+			if k < 0 {
+				out = out[:j] + "***"
+				break
+			}
+			out = out[:j] + "***" + out[j+k:]
+		}
+	}
+	return out
+}
+
 func openPG(dsn string) (*sql.DB, error) {
 	if dsn == "" {
 		return nil, errors.New("pg dsn required")
@@ -135,19 +213,35 @@ func openPG(dsn string) (*sql.DB, error) {
 	// 启动竞态容忍:PG 与 server 并行拉起时(compose/CI 验证),连接可能撞上
 	// "database system is starting up"(SQLSTATE 57P03)。重试 30 次 × 1s,
 	// 逾期返回最后一次错误(服务端配合 CI docker.yml 的 Verify 步骤双保险)。
+	//
+	// 2026-10（原生 systemd 部署发现）：**只对暂时性错误重试**。
+	// 旧实现不看错误类型，对"口令错 / 库不存在 / 主机名写错"这类永远不会成功的
+	// 错误也一样重试 30 次 —— 且期间**一行日志都不打**。实测：把 DSN 口令写错后
+	// 启动，15 秒内既不退出也无任何输出；在 systemd 下表现为"服务反复重启、
+	// journal 全是空的"，排障只能靠猜。现在：
+	//   * 连接类错误（57P03 启动中、08006/08001/08004 连接失败、超时、网络不可达）→ 重试；
+	//   * 其余（28P01 口令错、3D000 库不存在、42P01 等）→ **立即失败**，并把
+	//     DSN 里的口令隐去后打进日志，让人一眼看出连的是哪个库、失败原因是什么。
 	var lastErr error
 	for attempt := 0; attempt < 30; attempt++ {
-		if err := db.Ping(); err != nil {
-			lastErr = err
-			time.Sleep(time.Second)
-			continue
+		err := db.Ping()
+		if err == nil {
+			lastErr = nil
+			break
 		}
-		lastErr = nil
-		break
+		lastErr = err
+		if !pgErrorIsTransient(err) {
+			db.Close()
+			return nil, fmt.Errorf("pg connect %s: %w", redactDSN(dsn), err)
+		}
+		if attempt == 0 || (attempt+1)%5 == 0 {
+			log.Printf("db: 等待数据库就绪（第 %d/30 次）：%v（DSN %s）", attempt+1, err, redactDSN(dsn))
+		}
+		time.Sleep(time.Second)
 	}
 	if lastErr != nil {
 		db.Close()
-		return nil, fmt.Errorf("pg ping: %w", lastErr)
+		return nil, fmt.Errorf("pg ping %s: %w", redactDSN(dsn), lastErr)
 	}
 	// 连接池:实测 500 并发 1257 TPS / 3000 突发 1613 writes/s 0 失败;
 	// 200 连接 + 业务层(流式 1-3s 打散)足以支撑数千并发大模型调用。

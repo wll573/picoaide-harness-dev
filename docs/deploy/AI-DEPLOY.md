@@ -79,7 +79,7 @@
 | 变量 | 含义 | 示例 |
 |---|---|---|
 | `DOMAIN` | 员工访问的地址（域名或 IP） | `ai.example.com` 或 `10.0.0.5` |
-| `TLS_MODE` | 证书模式，见 §2.3 | `internal` / `auto` / `manual` |
+| `TLS_MODE` | 证书模式，见 §2.3 | `internal` / `auto` / `manual` / `http` |
 | `PICOAI_ADMIN_PASSWORD` | 初始超管密码（≥10 位） | 由你生成强密码 |
 
 另外有一个**强烈建议一并确认**的变量（不确认也能跑，但反代场景下会踩坑）：
@@ -308,7 +308,7 @@ openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 20    # → PICOAI_ADMIN_
 cd /opt/picoaide
 cat > .env <<'EOF'
 DOMAIN=<确认过的域名或IP>
-TLS_MODE=<internal|auto|manual>
+TLS_MODE=<internal|auto|manual|http>
 ADMIN_USER=admin
 PICOAI_ADMIN_PASSWORD=<刚生成的超管密码>
 PG_PASSWORD=<刚生成的数据库密码>

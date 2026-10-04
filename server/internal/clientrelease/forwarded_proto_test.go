@@ -2,7 +2,6 @@ package clientrelease
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -90,23 +89,19 @@ func TestManifestURLsFollowForwardedProtoTable(t *testing.T) {
 				}
 			})
 			got := assetURL(body, "win-x64")
-			want := ""
+			// 判出 https ⇒ https 链接；判不出 ⇒ 回落 http（Host 在，能拼出绝对地址）。
+			want := "http://ai.example.com/updates/client/Setup.exe"
 			if tc.want {
 				want = "https://ai.example.com/updates/client/Setup.exe"
 			}
 			if got != want {
 				t.Fatalf("XFP=%q 的 asset url = %q, want %q（%s）", tc.header, got, want, tc.note)
 			}
-			// 反向面：判不出 https 时必须**明说**不可用（而不是静默下发一份 assets 为空的清单）。
-			_, unavailable := body["client_unavailable"]
-			if tc.want && unavailable {
-				t.Fatalf("XFP=%q 不该报 client_unavailable: %v", tc.header, body)
-			}
-			if !tc.want && !unavailable {
-				t.Fatalf("XFP=%q 必须报 client_unavailable: %v", tc.header, body)
-			}
-			if !tc.want && strings.Contains(unavailableReason(body), "/updates/client/") {
-				t.Fatalf("XFP=%q 的不可用原因里不该有链接: %v", tc.header, body["client_unavailable"])
+			// 反向面：Host 在时**不该**报不可用 —— 回落 http 是明确的策略，不是失败。
+			// （真正"给不出地址"是连 Host 都没有，那一情形由
+			// TestManifestWithoutSecureOriginOmitsClientSection 守着。）
+			if _, unavailable := body["client_unavailable"]; unavailable {
+				t.Fatalf("XFP=%q 时 Host 在，不该报 client_unavailable: %v", tc.header, body)
 			}
 		})
 	}

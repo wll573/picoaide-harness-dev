@@ -92,8 +92,11 @@ type Info struct {
 	Schema    int    `json:"schema"`
 	ChannelID string `json:"channel_id"`
 	Client    struct {
-		Version string           `json:"version"`
-		Assets  map[string]Asset `json:"assets"`
+		Version string `json:"version"`
+		// Notes（需求 §3.3）：这一版改了什么，给用户看。**可以为空**（老清单没有这个
+		// 字段）—— 消费方必须容忍空值，不能因为缺它而拒绝整个清单。
+		Notes  string           `json:"notes"`
+		Assets map[string]Asset `json:"assets"`
 	} `json:"client"`
 }
 
@@ -146,7 +149,10 @@ func manifest(c *gin.Context, serverVersion, channel string) {
 				"size":   a.Size,
 			}
 		}
-		resp["client"] = gin.H{"version": info.Client.Version, "assets": assets}
+		// Notes 原样下发（需求 §3.3「服务端发布版本号、更新说明、…」）。
+		// 可能为空串（发版时没写说明，或清单由旧版脚本生成）—— 下发出空串而不是
+		// 省略整个 key，让客户端的字段形状稳定，不必区分"没有这个 key"与"值为空"。
+		resp["client"] = gin.H{"version": info.Client.Version, "notes": info.Client.Notes, "assets": assets}
 	}
 	// 清单随发布变化,客户端每次检查都要拿最新值 → 不缓存。
 	c.Header("Cache-Control", "no-store")

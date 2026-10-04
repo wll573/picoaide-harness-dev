@@ -5,6 +5,9 @@ ROOT=${1:?usage: register-windows-installer.sh RELEASE_ROOT INSTALLER VERSION [C
 INSTALLER=${2:?usage: register-windows-installer.sh RELEASE_ROOT INSTALLER VERSION [CHANNEL]}
 VERSION=${3:?usage: register-windows-installer.sh RELEASE_ROOT INSTALLER VERSION [CHANNEL]}
 CHANNEL=${4:-inner}
+# 更新说明（需求 §3.3「服务端发布版本号、更新说明、…」）：可选，给用户看的这版改了什么。
+# 来源优先第 5 个参数，其次环境变量 CLIENT_RELEASE_NOTES；都没有则清单里不带该字段。
+NOTES=${5:-${CLIENT_RELEASE_NOTES:-}}
 ROOT=$(cd "$ROOT" && pwd)
 RELEASE_DIR="$ROOT/client-release"
 [[ -d "$RELEASE_DIR" ]] || { echo "missing client-release directory: $RELEASE_DIR" >&2; exit 1; }
@@ -28,17 +31,19 @@ cp "$INSTALLER" "$TMP_ASSET"
 mv -f "$TMP_ASSET" "$TARGET"
 SHA256=$(sha256sum "$TARGET" | awk '{print $1}')
 SIZE=$(stat -c '%s' "$TARGET" 2>/dev/null || stat -f '%z' "$TARGET")
-python3 - "$TMP_MANIFEST" "$CHANNEL" "$VERSION" "$FILENAME" "$SHA256" "$SIZE" <<'PY'
+python3 - "$TMP_MANIFEST" "$CHANNEL" "$VERSION" "$FILENAME" "$SHA256" "$SIZE" "$NOTES" <<'PY'
 import json
 import pathlib
 import sys
 
-manifest_path, channel, version, filename, sha256, size = sys.argv[1:]
+manifest_path, channel, version, filename, sha256, size, notes = sys.argv[1:]
 data = {
     "schema": 1,
     "channel_id": channel,
     "client": {
         "version": version,
+        # 空串 = 本次没有更新说明；客户端与门户页据此决定是否展示那一栏。
+        "notes": notes,
         "assets": {
             "win-x64": {
                 "file": filename,

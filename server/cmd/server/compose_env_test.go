@@ -121,6 +121,12 @@ var picoaiEnvExemptions = map[string]string{
 	// 故意不接线 —— 接线等于给废除开关续命。
 	"PICOAI_APPS_BASE_DOMAIN":         "已废除（legacy_config.go 告警 + 清理命令）",
 	"PICOAI_TRUSTED_PROXIES_EXPLICIT": "已废除（legacy_config.go 告警 + 清理命令）",
+	// 原生（systemd）部署专用：命令行默认值从这三个环境变量取（见 main.go 的 envOr）。
+	// Docker 部署里由 entrypoint.sh 补齐 -addr / -data 实参，compose 传入它们反而会
+	// 与 entrypoint 的默认值打架（两处都设就等于有两个真源）。
+	"PICOAI_ADDR":     "原生部署专用（main.go envOr 提供 -addr 默认值；Docker 由 entrypoint.sh 补实参）",
+	"PICOAI_DATA_DIR": "原生部署专用（main.go envOr 提供 -data 默认值；Docker 由 entrypoint.sh 补实参）",
+	"PICOAI_PG_DSN":   "原生部署专用（main.go envOr 提供 -pg-dsn：口令不放命令行，避免出现在 ps/proc 里）",
 }
 
 // picoaiEnvLiteral 匹配 Go 源码里的 PICOAI_* 名字字面量（含 const 声明 ——

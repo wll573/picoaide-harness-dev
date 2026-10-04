@@ -225,7 +225,12 @@ func TestManifestRejectsInvalidPublicBaseURL(t *testing.T) {
 		"https://ai.example.com/#frag", // fragment
 		"ai.example.com",               // 不是绝对地址
 		"ftp://ai.example.com",         // 非 http(s)
-		"http://ai.example.com",        // 非 https 且非回环:客户端会丢弃
+		// 说明（2026-10 内网 HTTP 交付）：这里原来还有一条 "http://ai.example.com"，
+		// 理由是"非 https 且非回环 ⇒ 客户端会丢弃"。内网交付分支把策略改成**允许 HTTP**
+		// （隔离内网里传输机密性由网络保证，见 resolveOrigin 的口径变更），
+		// 客户端不再丢弃 http 链接，因此这一项不再是非法配置，已移除。
+		// userinfo / query / fragment / 相对地址仍然非法（与协议无关）。
+		"http://user:pw@ai.example.com", // 带凭据
 	} {
 		t.Run(bad, func(t *testing.T) {
 			t.Setenv(PublicBaseURLEnv, bad)
@@ -254,13 +259,16 @@ func TestManifestWithoutSecureOriginOmitsClientSection(t *testing.T) {
 	warns := captureOriginWarnings(t)
 	r := newRouter("2.7.0")
 
+	// 2026-10 内网 HTTP 交付：http 来源现在能给出可用地址 ⇒ 不再是"给不出地址"的情形。
+	// 真正给不出地址的是**连 Host 都没有**（畸形请求，拼不出绝对 URL）。用它来守住
+	// "给不出时不下发、且原因里不含链接"这条仍然成立的契约。
 	body := getManifest(t, r, func(req *http.Request) {
-		req.Host = "ai.example.com" // 非回环 + 无 XFP + 无 TLS
+		req.Host = ""
 		req.Header.Set("X-Forwarded-Proto", "http")
 	})
 
 	if _, ok := body["client"]; ok {
-		t.Fatalf("不安全来源下不得下发 client 段: %v", body)
+		t.Fatalf("拼不出绝对地址时不得下发 client 段: %v", body)
 	}
 	reason, _ := body["client_unavailable"].(string)
 	if reason == "" {
@@ -273,8 +281,8 @@ func TestManifestWithoutSecureOriginOmitsClientSection(t *testing.T) {
 		t.Fatalf("服务端段必须照常下发: %v", body)
 	}
 	// 每进程只告警一次:再来两次请求也不该重复刷屏。
-	getManifest(t, r, func(req *http.Request) { req.Host = "ai.example.com" })
-	getManifest(t, r, func(req *http.Request) { req.Host = "ai2.example.com" })
+	getManifest(t, r, func(req *http.Request) { req.Host = "" })
+	getManifest(t, r, func(req *http.Request) { req.Host = "" })
 	if *warns != 1 {
 		t.Fatalf("告警次数 = %d, want 1(每进程一次)", *warns)
 	}
@@ -317,10 +325,14 @@ func TestManifestSecureOriginDetection(t *testing.T) {
 		})
 	}
 
-	// 非回环 + 无 https 信号 → 不可用(旧实现会给 http 链接,被客户端静默丢弃)
+	// 非回环 + 无 https 信号 → **仍然下发** http 链接（2026-10 内网 HTTP 交付的口径变更）。
+	//
+	// 改前这里断言"不得下发"，因为旧实现认为 http 链接会被客户端静默丢弃。内网交付
+	// 分支起客户端不再丢弃 http（纯内网无证书是常态），若继续不下发，内网部署的
+	// 客户端更新会整体不可用 —— 所以这条断言连同它的实现一起改了。
 	body := getManifest(t, r, func(req *http.Request) { req.Host = "ai.example.com" })
-	if _, ok := body["client"]; ok {
-		t.Fatalf("非回环 http 不得下发 client 段: %v", body)
+	if _, ok := body["client"]; !ok {
+		t.Fatalf("http 来源现在必须下发 client 段（内网 HTTP 交付）: %v", body)
 	}
 }
 
@@ -332,8 +344,10 @@ func TestResolveOrigin(t *testing.T) {
 		in   originInput
 		want string // 期望来源;空 = 不可用
 	}{
-		{"未配且无 https 信号", "", originInput{Host: "ai.example.com"}, ""},
-		{"未配且 XFP=http", "", originInput{ForwardedProto: "http", Host: "ai.example.com"}, ""},
+		// 2026-10 内网 HTTP 交付：无 https 信号时**回落到 http**，不再判为不可用。
+		// 详见 resolveOrigin 注释里的口径变更说明。
+		{"未配且无 https 信号", "", originInput{Host: "ai.example.com"}, "http://ai.example.com"},
+		{"未配且 XFP=http", "", originInput{ForwardedProto: "http", Host: "ai.example.com"}, "http://ai.example.com"},
 		{"未配无 Host", "", originInput{ForwardedProto: "https"}, ""},
 		{"未配 XFP=https", "", originInput{ForwardedProto: "https", Host: "ai.example.com"}, "https://ai.example.com"},
 		{"未配 TLS", "", originInput{TLS: true, Host: "ai.example.com:8443"}, "https://ai.example.com:8443"},
@@ -341,7 +355,7 @@ func TestResolveOrigin(t *testing.T) {
 		{"配置 https", "https://ai.example.com/", originInput{Host: "ai.example.com"}, "https://ai.example.com"},
 		{"配置子路径", "https://ai.example.com/picoaide", originInput{Host: "x"}, "https://ai.example.com/picoaide"},
 		{"配置回环 http", "http://127.0.0.1:9000", originInput{ForwardedProto: "https", Host: "ai.example.com"}, "http://127.0.0.1:9000"},
-		{"配置非回环 http", "http://ai.example.com", originInput{Host: "ai.example.com"}, ""},
+		{"配置非回环 http", "http://ai.example.com", originInput{Host: "ai.example.com"}, "http://ai.example.com"},
 		{"配置带 query", "https://ai.example.com/?a=1", originInput{Host: "ai.example.com"}, ""},
 		{"配置带 fragment", "https://ai.example.com/#a", originInput{Host: "ai.example.com"}, ""},
 		{"配置相对地址", "ai.example.com", originInput{Host: "ai.example.com"}, ""},

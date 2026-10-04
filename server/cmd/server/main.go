@@ -47,14 +47,25 @@ import (
 	"github.com/picoaide/picoaide/webadmin"
 )
 
+// envOr 返回环境变量的非空值，否则回落到默认值。
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
 // version is injectable at build time: go build -ldflags "-X main.version=x.y.z"
 var version = "dev"
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	dataDir := flag.String("data", "./data", "data directory (app data, not the DB — PG is external)")
+	// 原生（systemd）部署：这四项也可经环境变量提供（命令行显式参数优先）。
+	// 为什么要有：数据库口令放进命令行会出现在 `ps` / /proc/<pid>/cmdline 里，
+	// 任何本机用户都读得到；经 EnvironmentFile 注入则只有进程属主可读。
+	addr := flag.String("addr", envOr("PICOAI_ADDR", ":8080"), "listen address (env PICOAI_ADDR)")
+	dataDir := flag.String("data", envOr("PICOAI_DATA_DIR", "./data"), "data directory (env PICOAI_DATA_DIR; app data, not the DB — PG is external)")
 	dbDriver := flag.String("db-driver", "pg", "database backend: pg (default) or pg-external (alias)")
-	pgDSN := flag.String("pg-dsn", "", "PostgreSQL connection string (required, e.g. postgres://user:pass@host:5432/db)")
+	pgDSN := flag.String("pg-dsn", os.Getenv("PICOAI_PG_DSN"), "PostgreSQL connection string (env PICOAI_PG_DSN; required, e.g. postgres://user:pass@host:5432/db)")
 	bootstrapAdmin := flag.String("bootstrap-admin", "", "username of the initial admin (password from PICOAI_ADMIN_PASSWORD)")
 	resetMFA := flag.String("reset-mfa", "", "clear MFA for an admin username and revoke all their sessions (operation mode, no server started)")
 	opensRepair := flag.String("opens-rollup-repair-plan", "",

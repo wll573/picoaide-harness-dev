@@ -141,6 +141,12 @@ server/sockprobe
 channels/*
 !channels/README.md
 
+# 交付脚本与文档：面向具体客户的部署产物，含渠道 id / 产品名 / 品牌文案，
+# 全仓唯一允许出现这些字样（`shenji` + 两个汉字，「Shenji」「神机」任何形态）。
+# 本仓是**公开仓**，AGENTS.md 铁律 0 禁止客户身份进仓 —— 交付包随渠道私有仓分发。
+# 通用（不含客户身份）的部署说明仍走 docs/deploy/。
+packaging/intranet-deploy/
+
 # glitchtip-ops-check.mjs 的默认 cookie jar 位置（生产 GlitchTip 管理员会话）。
 # 本仓是公开仓：`git add -A` 绝不能把这个目录提交上去（2026-09-17 审计 S15-3）。
 .glitchtip-recon/
