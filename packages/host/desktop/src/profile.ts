@@ -134,6 +134,26 @@ const DESKTOP_WINDOWS_PWSH_SANDBOX_ROW_ID = 'desktop-windows-pwsh-sandbox'
 const DESKTOP_WINDOWS_PWSH_SANDBOX_PACKAGE = 'dsh-plugin-desktop/windows-pwsh-sandbox'
 const AGENT_PRESET_REGISTRY_ROW_ID = 'agent-preset-registry'
 const UPSTREAM_AGENT_PRESET_REGISTRY_PACKAGE = '@deepseek-ai/dsh-agent-preset-registry'
+/**
+ * 权限档位行（上游 `@deepseek-ai/dsh-permission-presets`）与其默认档位的覆盖。
+ *
+ * 上游默认把 `approval.policy` 绑在 `DSH_PERMISSION_MODE ?? 'workspace-write'` 上：
+ * 只有档位是 `danger-full-access` 时 policy 才是 `never`（不问即放行），其余档位是
+ * `ask`（必须有人回答审批，否则 fail-closed 直接拒绝）。
+ *
+ * 内网交付按客户要求把**默认档位设为完全权限**：日常操作不再逐一弹审批，对话不会
+ * 因为"审批没人答"而中断。这是**放宽**，不是收紧 —— 客户明确要求的行为。
+ *
+ * 注意这与下面 `ui-approval` 的修复是**两件事**，不能互相替代：
+ *   · 默认完全权限 ⇒ 普通操作不问，直接执行；
+ *   · ui-approval 装上 ⇒ 模型**显式**请求提权（`sandbox_permissions`）时，
+ *     审批面板真的能弹到用户面前，而不是 fail-closed。
+ * 少了后者，即使默认放宽，任何一次显式提权请求仍然会以"无应答方"失败。
+ */
+const PERMISSION_ROW_ID = 'permission'
+const UPSTREAM_PERMISSION_PACKAGE = '@deepseek-ai/dsh-permission-presets'
+/** 默认档位：完全权限。 */
+const DEFAULT_PERMISSION_MODE = 'danger-full-access'
 const DESKTOP_WINDOWS_AGENT_PRESET_REGISTRY_ROW_ID = 'desktop-windows-agent-preset-registry'
 const DESKTOP_WINDOWS_AGENT_PRESET_REGISTRY_PACKAGE = 'dsh-plugin-desktop/windows-agent-presets'
 const DEFAULT_DESKTOP_SHELL_MODE: DesktopShellMode = 'advanced'
@@ -1184,6 +1204,39 @@ export async function prepareDesktopProfile(
   const desktopShell = rows.get(DESKTOP_SHELL_ROW_ID)
   if (desktopShell === undefined) {
     throw new Error(`${BIN_NAME}: desktop profile has no ${DESKTOP_SHELL_ROW_ID} row`)
+  }
+  // 默认权限档位 = 完全权限（内网交付要求）。
+  //
+  // 动的是 **`permission` 行**（`@deepseek-ai/dsh-permission-presets`）的
+  // `defaultPreset`，既不是 `approval` 行，也不是环境变量：
+  //
+  //   · 为什么不设 `DSH_PERMISSION_MODE`：它要由启动器/快捷方式/systemd 去设，
+  //     少设一处就退回 `workspace-write`（每次写操作都要审批），而失效形态是
+  //     "对话中途卡住/失败"，排障时完全看不出与权限有关。profile 是每次启动都
+  //     必经的组装路径，钉在这里等于不可遗漏。
+  //
+  //   · 为什么不去覆盖 `approval.policy`：只改 policy 会让客户端**起不来**。
+  //     presets 插件构造期会拿"组装后的 sandbox 默认 × approval 默认"反查档位表
+  //     （`derive(EMPTY_KNOBS)`），查不到就抛 "composed sandbox and approval
+  //     defaults match no preset"。`sandbox-policy` 的默认仍是 `workspace-write`
+  //     （base 组合 `mode: DSH_PERMISSION_MODE ?? 'workspace-write'`），于是
+  //     (workspace-write, never) 在表里没有对应项 —— 构造期直接 throw。
+  //
+  //   · `defaultPreset` 是该行**真实存在**的配置字段（`Config.defaultPreset`，
+  //     volatile 语义 = 由 profile 注入而非用户设置），含义正是"新会话钉哪个档位"。
+  //     写它会经 `setSandboxMode` + `setApprovalPolicy` 两个规范 setter 同时落下
+  //     sandbox 与 approval 两个旋钮 —— 恰好是需求要的那一件事，不需要分别去改
+  //     `sandbox-policy` 与 `approval` 两行。
+  const permissionRow = rows.get(PERMISSION_ROW_ID)
+  if (permissionRow?.name === UPSTREAM_PERMISSION_PACKAGE) {
+    patches.push({
+      id: PERMISSION_ROW_ID,
+      disabled: false,
+      // 只改 defaultPreset 一个字段：`presets` 表（含
+      // `danger-full-access = danger-full-access + never` 那一档）逐字保留，
+      // 用户仍可在会话里用 `/permission` 切回更窄的档位。
+      config: { ...rowConfig(permissionRow), defaultPreset: DEFAULT_PERMISSION_MODE },
+    })
   }
   // 渠道包（随包分发的 channels/<id>/channel.json）在**组装期**生效：
   // 产品名/窗口标题在登录页出现时就已经可见，服务端地址更是登录前就要用

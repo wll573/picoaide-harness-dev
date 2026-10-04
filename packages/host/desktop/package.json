@@ -190,6 +190,7 @@
     "@deepseek-ai/dsh-client-modules": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-store": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-attachment": "0.1.7-rc.2",
+    "@deepseek-ai/dsh-client-ui-approval": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-commands": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-conversation": "0.1.7-rc.2",
     "@deepseek-ai/dsh-client-ui-directory-picker-browse": "0.1.7-rc.2",
