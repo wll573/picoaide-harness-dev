@@ -5,17 +5,11 @@
  * the zh key source directly so components stay dependency-free.
  */
 export const zh = {
-  'footMenu.label': '更多功能',
-  'footMenu.labelAttention': '更多功能（有等待处理的事项）',
   'footMenu.attention': 'AI 正在等待你的操作',
-  'footMenu.more': '更多',
 }
 
 export const en: Record<keyof typeof zh, string> = {
-  'footMenu.label': 'More',
-  'footMenu.labelAttention': 'More (something is waiting)',
   'footMenu.attention': 'The AI is waiting for you',
-  'footMenu.more': 'More',
 }
 
 /** Keys of the foot-menu dictionary. */

@@ -246,6 +246,11 @@ const REPO_EXACT_ROUTE_POLICY: ReadonlyMap<string, ExactRouteRow> = new Map<stri
     proof: 'none',
     reason: '纯读：查询服务端启用的登录方式（GET，服务端该端点本就是公开端），无状态变更。',
   }],
+  ['packages/host/enterprise/src/auth-gate.ts#\'/api/pico/auth/register\'', {
+    proof: 'all',
+    gate: 'packages/host/enterprise/src/auth-gate.ts#proofOfPossession',
+    localGate: '同 auth/login 条：`proofOfPossession` 是 `apply()` 内的局部闭包（第三轮写的同形实现），尚未收敛到 `@picoaide/dsh-host-locale/loopback`；本路由用 `required` 档（fence 缺席 fail-closed 503）。注册是**写**路径（在服务端建账号），必须挂证明。',
+  }],
   ['packages/host/enterprise/src/auth-gate.ts#\'/api/pico/auth/browser-login\'', {
     proof: 'all',
     gate: 'packages/host/enterprise/src/auth-gate.ts#proofOfPossession',

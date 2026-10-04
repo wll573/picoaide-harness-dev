@@ -20,27 +20,26 @@ describe('foot-menu 字典', () => {
   })
 
   it('zh 是 key 源（key 与取值一一对应，取值本身也是中文）', () => {
-    expect(zh['footMenu.more']).toBe('更多')
-    expect(zh['footMenu.label']).toBe('更多功能')
-    expect(zh['footMenu.labelAttention']).toContain('更多功能')
+    // 「更多」行已随导航改造下线（六个入口直显，不再有折叠菜单），
+    // `footMenu.label`/`labelAttention`/`more` 三个键随之删除 —— 留着它们会被
+    // `i18n-keys.spec.ts` 的"无死键"守卫判红。本 spec 只验字典**机制**，
+    // 因此拿仍在使用的那条（等待提示）当样本。
     expect(zh['footMenu.attention']).toContain('AI')
+    expect(zh['footMenu.attention']).toContain('等待')
   })
 
   it('未要求时用中文，切到 en 后立刻换英文', () => {
-    expect(t('footMenu.more')).toBe('更多')
+    expect(t('footMenu.attention')).toBe('AI 正在等待你的操作')
     setActiveLocale('en')
-    expect(t('footMenu.more')).toBe('More')
-    expect(t('footMenu.label')).toBe('More')
-    expect(t('footMenu.labelAttention')).toContain('More')
     expect(t('footMenu.attention')).toBe('The AI is waiting for you')
   })
 
   it('区域化 locale id 按前缀判定（en-US 走英文），未知语言回落中文', () => {
     setActiveLocale('en-US')
-    expect(t('footMenu.more')).toBe('More')
+    expect(t('footMenu.attention')).toBe('The AI is waiting for you')
     setActiveLocale('zh-Hans')
-    expect(t('footMenu.more')).toBe('更多')
+    expect(t('footMenu.attention')).toBe('AI 正在等待你的操作')
     setActiveLocale('fr')
-    expect(t('footMenu.more')).toBe('更多')
+    expect(t('footMenu.attention')).toBe('AI 正在等待你的操作')
   })
 })

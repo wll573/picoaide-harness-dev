@@ -26,9 +26,10 @@ const REPO_ROOT = fileURLToPath(new URL('../../../../', import.meta.url))
 const DICTIONARY_PACKAGES = [
   'packages/client/account-card',
   'packages/client/branding',
-  // 2026-09-21：底部「更多」行（并道改造）引入的客户端字典 —— 它的四条文案
-  // （more / label / labelAttention / attention）都必须有引用点，否则「更多」行会
-  // 静默退回中文或漏掉无障碍标签。
+  // 2026-09-21：底部「更多」行（并道改造）引入的客户端字典。
+  // 2026-10-04：导航改造下线了折叠菜单（六个入口直显），`more` / `label` /
+  // `labelAttention` 三条随之删除，只剩等待提示一条 —— 列表本身仍要登记，
+  // 否则这个包重新长出死键不会被发现。
   'packages/client/foot-menu',
   'packages/host/browser',
   'packages/host/connectors',

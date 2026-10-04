@@ -56,7 +56,9 @@ func TestQwenCaps(t *testing.T) {
 		t.Fatal("qwen channel not found")
 	}
 	cl, mo := ch.DefaultModelCaps()
-	if cl != 131072 || mo != 8192 {
+	// Qwen3.8 系列规格：256K 上下文 / 128K 输出（见 qwen.go 的 DefaultModelCaps 注释）。
+	// 旧值 131072/8192 是 Qwen2.5 时代的规格，实现已升级而这条断言没跟。
+	if cl != 262144 || mo != 131072 {
 		t.Fatalf("caps = %d/%d", cl, mo)
 	}
 }

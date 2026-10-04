@@ -734,11 +734,26 @@ if (contentInScope) {
     + ` 别把这次 EXIT=0 读成"迁移文件没被动过"。`)
 }
 
+/**
+ * 仓库相对路径，**一律正斜杠**。
+ *
+ * `relative()` 在 Windows 上产出反斜杠（`docs\planning\x.md`），而下游两组判据——
+ * `RECORD_SURFACES` 的豁免正则与 `ALLOW_MARKER` 的路径比较——都按正斜杠写
+ * （`/^docs\/planning\//u`）。不归一的后果不是报错而是**豁免静默失效**：记录面文档
+ * 全部被当成硬判面，本机实测 22 处误报。噪音会掩盖真正的漂移，所以归一化放在
+ * 唯一的产出点（`walk`），而不是各个消费点各自 `replace`。
+ * @param {string} absolute - 绝对路径。
+ * @returns {string} 正斜杠分隔的仓库相对路径。
+ */
+function repoRelative(absolute) {
+  return relative(root, absolute).split('\\').join('/')
+}
+
 function* walk(target) {
   const absolute = join(root, target)
   if (!existsSync(absolute)) return
   if (statSync(absolute).isFile()) {
-    if (absolute.endsWith('.md')) yield relative(root, absolute)
+    if (absolute.endsWith('.md')) yield repoRelative(absolute)
     return
   }
   for (const entry of readdirSync(absolute, { withFileTypes: true })) {
