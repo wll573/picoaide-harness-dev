@@ -1,5 +1,5 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { request } from '../../api'
 import { setCurrentAdmin } from '../../lib/rbac'
@@ -98,8 +98,9 @@ describe('用量中心 · 总览', () => {
     expect(await screen.findByText('110.00')).toBeInTheDocument() // DeepSeek 余额
     expect(await screen.findByText('赠金 10.00')).toBeInTheDocument()
     expect(screen.getByTestId('overview-kpis')).toBeInTheDocument()
-    expect(await screen.findByText('本月消耗')).toBeInTheDocument()
-    expect(await screen.findByText('今日消耗')).toBeInTheDocument()
+    // KPI 主口径已是 Token（2026-10 内网交付口径：管理端不展示金额/余额）。
+    expect(await screen.findByText('本月 Token')).toBeInTheDocument()
+    expect(await screen.findByText('今日 Token')).toBeInTheDocument()
     expect(screen.getByText('消耗趋势')).toBeInTheDocument()
     expect(screen.getByText('模型消耗 TOP 10')).toBeInTheDocument()
     expect(screen.getAllByTestId('chart-mock').length).toBeGreaterThanOrEqual(2)
@@ -181,13 +182,26 @@ describe('用量中心 · 部门用量', () => {
   it('渲染部门表与部门详情下钻', async () => {
     renderAt('/usage', <Departments />)
     expect(await screen.findByText('研发部')).toBeInTheDocument()
-    // 区间费用(部门预算已下线,列只剩区间费用与成员数)
-    expect((await screen.findAllByText('¥15.55')).length).toBeGreaterThanOrEqual(1)
-    // 点击部门行 → 详情(成员排行 + 模型花费)
+    // 2026-10 内网交付 §6(金额 → Token):「区间费用」列已删,换成「区间总 Token」。
+    // 夹具两行部门各 100 输入 + 50 输出 = 150 → fmtTokens(150)='150'。
+    expect(screen.getAllByRole('columnheader', { name: '区间总 Token' }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('columnheader', { name: /费用|金额/ })).toBeNull()
+    expect((await screen.findAllByText('150')).length).toBeGreaterThanOrEqual(1)
+    // 回归守卫:旧的钱文案(`¥15.55`)必须彻底消失。
+    expect(screen.queryByText(/¥/)).toBeNull()
+    // 点击部门行 → 详情(成员排行 + 模型用量)
     fireEvent.click(screen.getByText('研发部'))
-    expect(await screen.findByText('成员消费排行')).toBeInTheDocument()
+    expect(await screen.findByText('成员用量排行')).toBeInTheDocument()
     expect(await screen.findByText('alice')).toBeInTheDocument()
-    expect(await screen.findByText('模型花费')).toBeInTheDocument()
+    // 成员行的三列口径 = 输入/输出/总 Token(旧列「花费」已删)。
+    for (const col of ['输入 Token', '输出 Token', '总 Token']) {
+      expect(screen.getAllByRole('columnheader', { name: col }).length).toBeGreaterThanOrEqual(1)
+    }
+    expect(screen.queryByText('成员消费排行')).toBeNull() // 旧的金额口径标题
+    // 模型用量徽章(旧标题「模型花费」已删):deepseek-chat 100+50=150 Token。
+    expect(await screen.findByText('模型用量')).toBeInTheDocument()
+    expect(await screen.findByText('deepseek-chat 150 Token')).toBeInTheDocument()
+    expect(screen.queryByText('模型花费')).toBeNull()
     expect(screen.getByText('导出 CSV')).toBeInTheDocument()
   })
 })
@@ -198,11 +212,12 @@ describe('用量中心 · 成员用量', () => {
     expect(await screen.findByText('alice')).toBeInTheDocument()
     expect(screen.getByText('Bob')).toBeInTheDocument()
     expect(screen.getByText('研发部')).toBeInTheDocument() // 部门列
-    expect(screen.getByText('¥12.34')).toBeInTheDocument()
+    expect(screen.getByText('1K')).toBeInTheDocument() // alice 月度用量 monthly_usage=1000 → fmtTokens='1K'
+    expect(screen.getByText('90K')).toBeInTheDocument() // bob monthly_usage=90000 → '90K'
     expect(screen.getByRole('link', { name: /alice/ })).toHaveAttribute('href', '/usage/members/alice')
-    // 账户余额列(alice 88.5 / bob 未开通;配额已下线)
-    expect(screen.getByText('¥88.50')).toBeInTheDocument()
-    expect(screen.getByText('未开通')).toBeInTheDocument()
+    // 2026-10 内网交付 §6:旧的「账户余额」列(¥88.50)已删,回归守卫确认没有 ¥ 文案。
+    expect(screen.queryByText(/¥/)).toBeNull()
+    expect(screen.queryByText('未开通')).toBeNull()
     // P3: 员工数不再假设「仅一名超管」——3 个账号 1 个超管 → 2 名员工
     expect(screen.getByText('共 2 名员工')).toBeInTheDocument()
   })
@@ -210,27 +225,38 @@ describe('用量中心 · 成员用量', () => {
   it('个人详情:徽章 + 趋势 + 模型构成 + 最近请求', async () => {
     renderAt('/usage/members/alice', <MemberDetail />, '/usage/members/:username')
     expect(await screen.findByText('成员用量 · alice')).toBeInTheDocument()
-    expect(await screen.findByText(/本月消耗/)).toBeInTheDocument()
+    // 2026-10 内网交付 §6:徽章收敛成一条「月度用量」(旧「本月消耗 ¥… / 本月 tokens …」已删)。
+    expect(await screen.findByText(/月度用量/)).toBeInTheDocument()
     expect(await screen.findByText('模型构成')).toBeInTheDocument()
     expect((await screen.findAllByText('deepseek-chat')).length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('最近请求')).toBeInTheDocument()
     expect(screen.getByText(/2026-09-02 10:00:00/)).toBeInTheDocument()
     expect(screen.getAllByTestId('chart-mock').length).toBeGreaterThanOrEqual(1)
-    // 徽章用账户余额(配额已下线)
-    expect(screen.getByText('账户余额 ¥88.50')).toBeInTheDocument()
+    // 回归守卫:旧「账户余额 ¥88.50」徽章与「本月消耗」措辞都必须消失。
+    expect(screen.queryByText(/账户余额|¥|本月消耗/)).toBeNull()
   })
 })
 
 describe('用量中心 · 模型分析', () => {
-  it('渲染模型单价列、渠道消耗与占比图', async () => {
+  it('渲染模型 Token 明细列、渠道消耗与 Token 占比图', async () => {
     renderAt('/usage', <Models />)
     expect(await screen.findByText('模型明细')).toBeInTheDocument()
     expect(await screen.findByText('deepseek-chat')).toBeInTheDocument()
-    expect(await screen.findByText(/2\.00 \/ 8\.00/)).toBeInTheDocument() // 单价
-    expect(await screen.findByText('未定价')).toBeInTheDocument() // embed-model
+    // 2026-10 内网交付 §6:旧的「单价(¥/1M)」列与「未定价」徽章已删;
+    // 表头换成 Token 口径,«单价» 数字 2.00/8.00 不再出现在本页。
+    for (const col of ['输入 Token', '输出 Token', '缓存 Token', '总 Token']) {
+      expect(screen.getAllByRole('columnheader', { name: col }).length).toBeGreaterThanOrEqual(1)
+    }
+    expect(screen.queryByRole('columnheader', { name: /单价|费用|金额/ })).toBeNull()
+    expect(screen.queryByText('未定价')).toBeNull()
+    expect(screen.queryByText(/2\.00 \/ 8\.00/)).toBeNull() // 旧单价文案的回归守卫
+    // deepseek-chat:输入 100 + 输出 50 = 150 总 Token(模型明细行与渠道消耗行各一次)。
+    expect((await screen.findAllByText('150')).length).toBeGreaterThanOrEqual(2)
     expect(await screen.findByText('渠道消耗')).toBeInTheDocument()
     expect(screen.getByText('(未配置渠道)')).toBeInTheDocument()
-    expect(screen.getByText('金额占比')).toBeInTheDocument()
+    // 旧「金额占比」卡已被「Token 占比」取代(不是改名后的同一张金额图)。
+    expect(screen.getByText('Token 占比')).toBeInTheDocument()
+    expect(screen.queryByText('金额占比')).toBeNull()
   })
 })
 
@@ -248,60 +274,64 @@ describe('用量中心 · 请求日志', () => {
 })
 
 describe('用量中心 · 余额', () => {
-  it('策略未落地时写面禁用(即使员工表已加载完)', async () => {
-    // 2026-09-17 审计 F1 复现：闸门若挂在**员工列表**的 loading 上，`/users` 先回来、
-    // `/balance` 还在飞时写面就解锁，而 draft 仍是空串 ⇒ 点保存会 PUT
-    // monthly_amount=0（误清空）。所以断言点必须在"员工表已落地"之后。
-    let releaseBalance!: () => void
-    const gate = new Promise<void>((resolve) => { releaseBalance = resolve })
-    const base = mockRequest.getMockImplementation()!
-    mockRequest.mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === '/api/server/admin/balance' && (init?.method ?? 'GET') === 'GET') await gate
-      return base(path, init)
-    })
+  // 2026-10 内网交付 §6:路由 `/usage/balance` 保留,但页面内容从「钱的编辑面」
+  // 整体改成「Token 用量视图」—— 发放策略卡、额度输入、保存、立即补发、¥ 快捷金额、
+  // 行内「调整」与金额预览对话框**全部删除**。下面三条用例断言这一新读面,
+  // 并各自带一条「旧写面已消失」的回归守卫(不再是原来那三条写面用例)。
+  it('不再请求发放策略接口:没有任何写控件,读面照常渲染成员 Token 用量', async () => {
     renderAt('/usage', <Balance />)
-    // 员工表先落地（这曾经是"写面解锁"的充要条件）。
+    // 读面:成员列表(过滤掉 super_admin)与月度 Token 用量都在。
     expect(await screen.findByText('alice')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /保存/ })).toBeDisabled()
-    expect(screen.getByLabelText('每人每月额度(元)')).toBeDisabled()
-    expect(screen.getByText(/发放策略加载中/)).toBeInTheDocument()
-    releaseBalance()
-    await waitFor(() => expect(screen.getByRole('button', { name: /保存/ })).toBeEnabled())
-    expect(screen.queryByText(/发放策略加载中/)).toBeNull()
+    expect(screen.getByText('1K')).toBeInTheDocument() // alice monthly_usage=1000 → '1K'
+    expect(screen.queryByText('boss')).not.toBeInTheDocument() // super_admin 不入表
+
+    // 回归守卫:旧的余额写面一个都不许出现。
+    expect(screen.getAllByRole('button', { name: /用量明细/ }).length).toBe(2) // alice / bob
+    expect(screen.queryByRole('button', { name: /保存/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /立即补发本月/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /调整/ })).toBeNull()
+    expect(screen.queryByLabelText('每人每月额度(元)')).toBeNull()
+    for (const v of ['¥50', '¥100', '¥200', '¥500']) {
+      expect(screen.queryByRole('button', { name: v })).toBeNull()
+    }
+    // 旧口径的金额/余额文案不得回潮。
+    expect(screen.queryByText(/¥/)).toBeNull()
+    expect(screen.queryByText(/账户余额|发放策略|每人每月额度/)).toBeNull()
+
+    // 前端不再调用余额写/读接口(接口仍在服务端保留,只是本页不碰)。
+    const paths = mockRequest.mock.calls.map(([p]) => String(p))
+    expect(paths.some((p) => p.startsWith('/api/server/admin/balance'))).toBe(false)
+    expect(paths.some((p) => p.includes('/balance/ledger'))).toBe(false)
   })
 
-  it('策略加载失败时写面保持锁定并说明原因(不再静默吞错)', async () => {
-    const base = mockRequest.getMockImplementation()!
-    mockRequest.mockImplementation(async (path: string, init?: RequestInit) => {
-      if (path === '/api/server/admin/balance' && (init?.method ?? 'GET') === 'GET') {
-        throw new Error('balance unavailable')
-      }
-      return base(path, init)
-    })
+  it('打开用量明细弹窗:今日/月度用量按 Token 口径,不再有金额预览', async () => {
     renderAt('/usage', <Balance />)
-    expect(await screen.findByText(/发放策略加载失败/)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /保存/ })).toBeDisabled()
-  })
-
-  it('展示发放策略与员工余额,调整弹窗实时预览并提交', async () => {
-    renderAt('/usage', <Balance />)
-    // 发放策略卡：标题在数据落地前就渲染（Balance.tsx 静态 CardTitle），额度值必须自己等。
-    await waitFor(() => expect((screen.getByLabelText('每人每月额度(元)') as HTMLInputElement).value).toBe('100'))
-    // 员工余额表(过滤掉 super_admin)
-    expect(await screen.findByText('alice')).toBeInTheDocument()
-    expect(screen.queryByText('boss')).not.toBeInTheDocument()
-    expect(await screen.findByText('未开通')).toBeInTheDocument()
-    // 调整弹窗:预览 + 提交
-    fireEvent.click(screen.getAllByRole('button', { name: /调整/ })[0]!)
+    await screen.findByText('alice')
+    fireEvent.click(screen.getAllByRole('button', { name: /用量明细/ })[0]!)
     const dialog = await screen.findByRole('dialog')
-    expect(dialog).toBeInTheDocument()
-    const amountInput = dialog.querySelector('input[inputmode="decimal"]')
-    fireEvent.change(amountInput!, { target: { value: '20' } })
-    expect(await screen.findByText('¥108.50')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: /确认/ }))
-    await waitFor(() => expect(mockRequest).toHaveBeenCalledWith(
-      '/api/server/admin/users/1/balance',
-      expect.objectContaining({ method: 'POST', body: expect.stringContaining('"mode":"add"') }),
-    ))
+    expect(within(dialog).getByText('今日用量')).toBeInTheDocument()
+    expect(within(dialog).getByText('月度用量')).toBeInTheDocument()
+    // 弹窗内三张表统一 Token 口径。
+    for (const col of ['输入 Token', '输出 Token', '总 Token']) {
+      expect(within(dialog).getAllByRole('columnheader', { name: col }).length).toBeGreaterThanOrEqual(1)
+    }
+    // 回归守卫:旧的金额调整预览(`¥108.50` 之类)不在弹窗里。
+    expect(within(dialog).queryByText('¥108.50')).toBeNull()
+    expect(within(dialog).queryByText(/¥/)).toBeNull()
+    expect(within(dialog).queryByText(/调整余额|余额预览/)).toBeNull()
+  })
+
+  it('?user= 深链自动打开该成员的用量明细(读面深链仍可用)', async () => {
+    render(
+      <MemoryRouter future={ROUTER_FUTURE} initialEntries={['/usage/balance?user=alice']}>
+        <Routes>
+          <Route path="/usage/balance" element={<Balance />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('用量明细 · alice')).toBeInTheDocument()
+    // 深链打开的是用量面,不是旧的「调整余额」对话框。
+    expect(within(dialog).queryByText(/调整余额/)).toBeNull()
   })
 })

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request, ADMIN_API } from '../api'
-import { fmtTokens, fmtMoney } from '../lib/format'
-import { deptTreeOptions, cn } from '../lib/utils'
+import { fmtTokens } from '../lib/format'
+import { deptTreeOptions } from '../lib/utils'
 import { PERM_DEPT_WRITE, PERM_USER_WRITE, hasPermission } from '../lib/rbac'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -12,9 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 import { PageHeader } from '../components/page-header'
 import { EmptyState } from '../components/empty-state'
-import { Link, useNavigate } from 'react-router-dom'
 import { Card } from '../components/ui/card'
-import { Search, Users as UsersIcon, Wallet } from 'lucide-react'
+import { Search, Users as UsersIcon } from 'lucide-react'
 
 interface User {
   id: number
@@ -79,7 +78,6 @@ function fmtTime(s: string): string {
 
 
 export default function Users() {
-  const navigate = useNavigate()
   const [users, setUsers] = useState<User[]>([])
   // 2026-09-17 审计 F7：列表为空时的“暂无匹配用户”与“共 0 人”在**加载完成前**就渲染，
   // 读起来像“确实没有用户”。加已加载闸门（失败也解除，避免永久加载态）。
@@ -397,13 +395,6 @@ export default function Users() {
     }
   }
 
-  // ---- 余额(0061/0062)----
-  // 2026-09-11:发放策略与单人调整/流水统一收敛到「用量中心 → 余额」,
-  // 本页只保留余额列与跳转入口(编辑入口唯一,避免两处重复实现)。
-  function openBalance(u: User) {
-    navigate(`/usage/balance?user=${encodeURIComponent(u.username)}`)
-  }
-
   const pages = Math.max(1, Math.ceil(total / 20))
 
   // 体验层能力判定(护栏在服务端 RequirePermission):
@@ -417,7 +408,7 @@ export default function Users() {
     <div className="space-y-5">
       <PageHeader
         title="用户管理"
-        desc="企业成员账号、Token 用量、余额、部门归属与登录令牌"
+        desc="企业成员账号、Token 用量、部门归属与登录令牌"
         actions={
           <>
             <div className="relative">
@@ -443,10 +434,6 @@ export default function Users() {
           当前账号为只读视图(无 user:write 权限):可查看用户列表、部门归属与令牌,不能新建、改角色、重置密码/双重验证、禁用或删除用户。
         </div>
       )}
-      <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        余额的发放策略与单人调整/流水已统一到「<Link to="/usage/balance" className="text-primary hover:underline">用量中心 → 余额</Link>」。
-        本页余额列只读,点击行内「余额」按钮可直接跳到该员工的调整界面。
-      </div>
 
       <Card>
         <Table>
@@ -458,7 +445,6 @@ export default function Users() {
               <TableHead>角色</TableHead>
               <TableHead>状态</TableHead>
               <TableHead className="min-w-0">本月 tokens</TableHead>
-              <TableHead className="min-w-0">余额</TableHead>
               <TableHead className="min-w-0">上次改密</TableHead>
               <TableHead className="w-1 text-right">操作</TableHead>
             </TableRow>
@@ -492,13 +478,6 @@ export default function Users() {
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="font-mono text-xs">
-                  {u.balance_activated ? (
-                    <span className={cn('font-medium', (u.balance_money ?? 0) <= 0 ? 'text-destructive' : 'text-emerald-600')}>
-                      ¥{fmtMoney(u.balance_money ?? 0)}
-                    </span>
-                  ) : <span className="text-muted-foreground">未开通</span>}
-                </TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">
                   {/* 0057: 上次改密时间; 未改密(NULL)= 创建时初始密码 */}
                   {u.password_changed_at ? fmtTime(u.password_changed_at) : '初始密码'}
@@ -507,9 +486,6 @@ export default function Users() {
                 <div className="flex justify-end gap-2 whitespace-nowrap">
                   <Button size="sm" variant="outline" onClick={() => openTokens(u)}>令牌</Button>
                   {canAssignDept && <Button size="sm" variant="outline" onClick={() => openDept(u)}>部门</Button>}
-                  <Button size="sm" variant="outline" title="调整余额 / 充值(跳到余额页)" onClick={() => openBalance(u)}>
-                    <Wallet className="mr-1 h-3.5 w-3.5" />余额
-                  </Button>
                   {canWrite && <Button size="sm" variant="outline" title="修改角色(G3)" onClick={() => openRoleEdit(u)}>角色</Button>}
                   {/* 0057: 重置密码(local 用户; external 由 IdP 管理) */}
                   {canWrite && (

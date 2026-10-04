@@ -1,6 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { cn } from '../../lib/utils'
-import { LayoutDashboard, Network, Users, Cpu, ScrollText, Wallet, CalendarClock } from 'lucide-react'
+import { LayoutDashboard, Network, Users, Cpu, ScrollText, CalendarClock } from 'lucide-react'
 import {
   PERM_DEPT_READ, PERM_REPORT_READ, PERM_USAGE_READ, PERM_USER_READ, hasPermission,
 } from '../../lib/rbac'
@@ -26,7 +26,10 @@ const TABS: UsageTab[] = [
   { to: '/usage/members', label: '成员用量', icon: Users, perm: PERM_USER_READ },
   { to: '/usage/models', label: '模型分析', icon: Cpu, perm: PERM_USAGE_READ },
   { to: '/usage/logs', label: '请求日志', icon: ScrollText, perm: PERM_USAGE_READ },
-  { to: '/usage/balance', label: '余额', icon: Wallet, perm: PERM_USER_READ },
+  // 「余额」页已下线（2026-10 内网交付口径）：用量中心只讲 Token，不再展示
+  // 金额、余额、充值或付费文案。**接口与数据一个都没删** —— `balance.*` 设置、
+  // `/api/server/admin/balance*` 与 `users.balance_money` 全部保留，既有部署的
+  // 账本与对账路径不受影响；这里只是不再提供这一个人工操作入口。
   { to: '/usage/reports', label: '报表订阅', icon: CalendarClock, perm: PERM_REPORT_READ },
 ]
 

@@ -3,7 +3,10 @@ import { request } from '../../api'
 import { Button } from '../../components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { EmptyState } from '../../components/empty-state'
-import { fmtY } from '../usage/common'
+// 内网交付需求 §6：管理端不显示金额/余额/充值/付费文案，统一显示 Token 口径。
+// 本页不再调用 `usage/common.tsx` 的 `fmtY`（**工具本身保留** —— 是共享函数，
+// 别的模块可能仍用；这里只是不再从本页调用它）。Token 走 `lib/format` 的统一紧凑格式。
+import { fmtTokens } from '../../lib/format'
 import { RefreshCw, Sparkles } from 'lucide-react'
 import {
   AI_ATTRIBUTION_NOTE,
@@ -16,7 +19,6 @@ import {
   effectiveWindowText,
   requireAiUsage,
   shapeDrift,
-  tokensText,
   type AiUsage,
   type EndpointFailure,
 } from './opens-contract'
@@ -51,6 +53,14 @@ import {
  *   ③ **缺后端不得显示 0**：端点 404 / 形状漂移 ⇒ 明说"服务端尚未提供"，数字显示 `—`；
  *   ④ **窗口不得静默**：显式请求 `days=`，并把服务端回显的生效窗口渲染出来。
  *
+ * **2026-10 内网交付需求 §6（金额 → Token 展示迁移）**：本面板原来渲染「费用 ¥金额」
+ * 与按日「费用」列。现在管理端**不显示金额/余额/充值/付费文案**，统一显示
+ * 输入 Token / 输出 Token / 总 Token，空态用「暂无用量」。只改**用户可见的展示**：
+ * 接口调用、`AiUsage` 类型里的 `cost`、`opens-contract` 的契约面与后端字段**一律保留**
+ * （需求明写"保留后端兼容字段，避免已有数据和接口失效"），`cost` 只是本页不再读。
+ * 迁移前的 `data-testid`（`app-ai-cost` / `app-ai-day-cost-*`）**原值保留**、只改其展示
+ * 的内容 —— 测试靠它们寻址；语义已由"费用"变为"Token"。
+ *
  * 「服务端到底校验了什么 / 没校验什么」与本文件渲染的 `AI_ATTRIBUTION_NOTE` 的一致性
  * 由 `app-attribution-claim-parity.spec.ts` 逐条对拍（读 Go 源码 + 读那段文案，
  * 任一侧缺证据即红）。
@@ -58,6 +68,18 @@ import {
  * 应用 AI 的完整链路（每应用一个隐藏会话、仅对话、SSE、窗口关闭即取消）见 §21.2，
  * 客户端侧实现归 L2/L3；管理端只读它的用量结果，不参与执行。
  */
+
+/**
+ * Token 展示（内网交付需求 §6）：紧凑格式（1.2M / 3K）走 `lib/format.fmtTokens`，
+ * 缺失（`null` / 非有限数）一律 `—` —— **不是 0**。
+ *
+ * 与 `opens-contract.tokensText` 同一套缺失语义（后者是契约面为防 `?? 0` 而写的），
+ * 这里只是把格式化换成需求指定的 `fmtTokens`；因此这个页不再从契约面取 `tokensText`。
+ */
+function tokensText(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—'
+  return fmtTokens(n)
+}
 
 export function AppAiUsageSection({ appId, canRead }: { appId: string; canRead: boolean }) {
   const [data, setData] = useState<AiUsage | null>(null)
@@ -161,7 +183,7 @@ export function AppAiUsageSection({ appId, canRead }: { appId: string; canRead: 
         <EmptyState
           icon={<Sparkles className="h-6 w-6" />}
           title="该应用确实零调用"
-          desc={`服务端回报 attribution_available=true（归因统计已上线），而该应用在本窗口（${AI_USAGE_WINDOW_DAYS} 天）内确实没有 AI 调用记录：0 次 / ¥0.00。`}
+          desc={`服务端回报 attribution_available=true（归因统计已上线），而该应用在本窗口（${AI_USAGE_WINDOW_DAYS} 天）内确实没有 AI 调用记录：暂无用量。`}
         />
       ) : view === 'indeterminate' ? (
         /* 缺字段（形状漂移）：既不能说"零调用"，也不能渲染 0（CTL-11）。 */
@@ -178,16 +200,21 @@ export function AppAiUsageSection({ appId, canRead }: { appId: string; canRead: 
               调用次数 <span className="font-mono text-foreground" data-testid="app-ai-calls">{countText(data.total?.requests)}</span>
             </span>
             <span>
-              tokens <span className="font-mono text-foreground" data-testid="app-ai-tokens">{countText(aiUsageTokens(data.total))}</span>
-              {/* 明细字段与 headline 同一套缺失语义：缺字段 ⇒ —（不是 0）。
-                  总 token 由前端的"输入 + 输出"得出（服务端只下发分项；缓存命中已含在输入里）。 */}
-              <span className="ml-1">
-                （输入 {tokensText(data.total?.prompt_tokens)} / 输出 {tokensText(data.total?.completion_tokens)}
-                {' / '}缓存命中 {tokensText(data.total?.cache_prompt_tokens)}）
-              </span>
+              输入 Token <span className="font-mono text-foreground">{tokensText(data.total?.prompt_tokens)}</span>
             </span>
             <span>
-              费用 <span className="font-mono text-foreground" data-testid="app-ai-cost">{fmtY(data.total?.cost)}</span>
+              输出 Token <span className="font-mono text-foreground">{tokensText(data.total?.completion_tokens)}</span>
+            </span>
+            {/* 总 Token = 输入 + 输出（服务端只下发分项；缓存命中已含在输入里，不再相加）。
+                明细字段与 headline 同一套缺失语义：缺字段 ⇒ —（不是 0）。
+                两个 testid 挂在**同一个读数**上：本面板的总 Token 一直由 `app-ai-tokens`
+                寻址；`app-ai-cost` 是改造前那一位（旧口径已按本需求迁到 Token）的 id ——
+                保留原值不改（只改展示），既有测试不失联，同时不重复渲染同一个数。 */}
+            <span data-testid="app-ai-cost">
+              总 Token <span className="font-mono text-foreground" data-testid="app-ai-tokens">{tokensText(aiUsageTokens(data.total))}</span>
+            </span>
+            <span>
+              缓存命中 <span className="font-mono text-foreground">{tokensText(data.total?.cache_prompt_tokens)}</span>
             </span>
           </div>
 
@@ -197,8 +224,9 @@ export function AppAiUsageSection({ appId, canRead }: { appId: string; canRead: 
                 <TableRow>
                   <TableHead>日期</TableHead>
                   <TableHead className="text-right">调用</TableHead>
-                  <TableHead className="text-right">tokens</TableHead>
-                  <TableHead className="text-right">费用</TableHead>
+                  <TableHead className="text-right">输入 Token</TableHead>
+                  <TableHead className="text-right">输出 Token</TableHead>
+                  <TableHead className="text-right">总 Token</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody data-testid="app-ai-days">
@@ -206,8 +234,18 @@ export function AppAiUsageSection({ appId, canRead }: { appId: string; canRead: 
                   <TableRow key={String(d.day ?? '')} data-testid={`app-ai-day-${d.day ?? ''}`}>
                     <TableCell className="font-mono text-xs">{typeof d.day === 'string' && d.day !== '' ? d.day : '—'}</TableCell>
                     <TableCell className="text-right font-mono" data-testid={`app-ai-day-calls-${d.day ?? ''}`}>{countText(d.requests)}</TableCell>
-                    <TableCell className="text-right font-mono" data-testid={`app-ai-day-tokens-${d.day ?? ''}`}>{tokensText(aiUsageTokens(d))}</TableCell>
-                    <TableCell className="text-right font-mono" data-testid={`app-ai-day-cost-${d.day ?? ''}`}>{fmtY(d.cost)}</TableCell>
+                    <TableCell className="text-right font-mono" data-testid={`app-ai-day-prompt-${d.day ?? ''}`}>{tokensText(d.prompt_tokens)}</TableCell>
+                    <TableCell className="text-right font-mono" data-testid={`app-ai-day-completion-${d.day ?? ''}`}>{tokensText(d.completion_tokens)}</TableCell>
+                    {/* 「费用」列按内网交付需求 §6 改成 Token 列：展示**该日总 Token**（输入+输出，
+                        服务端只下发分项）。两个 testid 同挂这一格：`app-ai-day-tokens-*` 与
+                        `app-ai-day-cost-*`（旧 id 保留原值不动，只改展示，既有测试不失联），
+                        且同一个数只渲染一次。 */}
+                    <TableCell
+                      className="text-right font-mono"
+                      data-testid={`app-ai-day-tokens-${d.day ?? ''}`}
+                    >
+                      <span data-testid={`app-ai-day-cost-${d.day ?? ''}`}>{tokensText(aiUsageTokens(d))}</span>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

@@ -8,12 +8,18 @@ import { Skeleton } from '../../components/ui/skeleton'
 import { Button } from '../../components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { PageHeader } from '../../components/page-header'
-import { RangeFilter, defaultRange, fetchUsageList, chatTokens, downloadCsv, fmtY, type UsageRow, type DeptInfo } from './common'
+import { RangeFilter, defaultRange, fetchUsageList, downloadCsv, type UsageRow, type DeptInfo } from './common'
 import { fmtTokens } from '../../lib/format'
 import { cn } from '../../lib/utils'
 import { PERM_DEPT_READ, hasPermission } from '../../lib/rbac'
 
-// 部门用量:部门树总表(费用/成员) + 选中部门详情(趋势/成员排行/模型拆分)
+// Token 口径(2026-10 内网交付 §6:管理端不再展示金额/余额/付费文案)。
+// `UsageRow` **没有** `tokens` 字段(只给 prompt_tokens / completion_tokens / requests / cost),
+// 「总 Token」在页面侧按 输入 + 输出 自行求和 —— 别去读不存在的 `r.tokens`(tsc 会报 TS2339)。
+const rowTokens = (r: Pick<UsageRow, 'prompt_tokens' | 'completion_tokens'>): number =>
+  (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
+
+// 部门用量:部门树总表(Token 用量/成员) + 选中部门详情(趋势/成员排行/模型拆分)
 //
 // 审计 R7 webadmin-branding-3:组织树 GET /departments 要 dept:read,而用量行
 // (group=dept)只要 usage:read。原来的 Promise.all 把两者绑在一起 → auditor
@@ -121,12 +127,12 @@ export default function UsageDepartments() {
 
   const trendSpec: ISpec | null = detail && detail.trend.length > 0 ? {
     type: 'line',
-    data: { values: detail.trend.map((r) => ({ label: r.label.slice(5), cost: Number((r.cost ?? 0).toFixed(4)) })) },
+    data: { values: detail.trend.map((r) => ({ label: r.label.slice(5), tokens: rowTokens(r) })) },
     xField: 'label',
-    yField: 'cost',
+    yField: 'tokens',
     point: { visible: true },
     axes: [
-      { orient: 'left', title: { visible: true, text: '费用(¥)' }, label: { visible: true, style: { fontSize: 11 } } },
+      { orient: 'left', title: { visible: true, text: 'Token' }, label: { visible: true, style: { fontSize: 11 } } },
       { orient: 'bottom', label: { visible: true, style: { fontSize: 10 } } },
     ],
     tooltip: { visible: true },
@@ -135,14 +141,15 @@ export default function UsageDepartments() {
   const exportDept = () => {
     if (!selected) return
     const rows = detail?.members ?? []
+    // 导出与界面同口径:不再导出金额列(内网交付 §6),token 列名与页面统一词汇一致。
     downloadCsv(`dept_${selected}_${from}_${to}.csv`,
-      ['成员', '请求数', '输入tokens', '输出tokens', 'chat合计tokens', '费用(¥)'],
-      rows.map((r) => [r.label, r.requests, r.prompt_tokens, r.completion_tokens, chatTokens(r), (r.cost ?? 0).toFixed(4)]))
+      ['成员', '请求数', '输入 Token', '输出 Token', '总 Token'],
+      rows.map((r) => [r.label, r.requests, r.prompt_tokens, r.completion_tokens, rowTokens(r)]))
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader title="部门用量" desc="按部门维度查看消耗:本月/区间费用、成员排行、模型拆分" />
+      <PageHeader title="部门用量" desc="按部门维度查看 Token 用量:区间总 Token、成员排行、模型拆分" />
       <RangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} onQuery={(f, t) => void load(f, t)} />
       {error && <div className="text-sm text-destructive">{error}</div>}
 
@@ -152,8 +159,8 @@ export default function UsageDepartments() {
             <CardTitle className="text-base">部门列表</CardTitle>
             <CardDescription>
               {canReadDepts
-                ? '费用为所选区间口径(默认近 30 天)'
-                : '费用为所选区间口径(默认近 30 天);当前账号没有组织架构读取权限(dept:read),仅显示有消耗的部门'}
+                ? 'Token 用量为所选区间口径(默认近 30 天)'
+                : 'Token 用量为所选区间口径(默认近 30 天);当前账号没有组织架构读取权限(dept:read),仅显示有用量的部门'}
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -168,13 +175,14 @@ export default function UsageDepartments() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>部门</TableHead>
-                      <TableHead className="text-right">区间费用</TableHead>
+                      <TableHead className="text-right">区间总 Token</TableHead>
                       {canReadDepts && <TableHead className="text-right">成员</TableHead>}
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {listRows.map((row) => {
-                      const rangeCost = rowOf.get(row.name)?.cost ?? 0
+                      // 组织树里可能存在当期没有用量行的部门:那时显示空态,不拿 0 冒充用量。
+                      const usage = rowOf.get(row.name)
                       return (
                         <TableRow
                           key={row.key}
@@ -184,7 +192,11 @@ export default function UsageDepartments() {
                           <TableCell>
                             <span style={{ paddingLeft: `${row.depth * 14}px` }} className="font-medium">{row.name}</span>
                           </TableCell>
-                          <TableCell className="text-right tabular-nums">{fmtY(rangeCost)}</TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {usage
+                              ? fmtTokens(rowTokens(usage))
+                              : <span className="text-muted-foreground">暂无用量</span>}
+                          </TableCell>
                           {canReadDepts && (
                             <TableCell className="text-right tabular-nums">{row.memberCount}</TableCell>
                           )}
@@ -219,21 +231,22 @@ export default function UsageDepartments() {
             ) : detailError !== '' ? (
               <div className="flex h-72 items-center justify-center text-sm text-destructive">{detailError}</div>
             ) : !selected ? (
-              <div className="flex h-72 items-center justify-center text-muted-foreground">选择部门查看消耗明细</div>
+              <div className="flex h-72 items-center justify-center text-muted-foreground">选择部门查看用量明细</div>
             ) : detail ? (
               <div className="space-y-5">
                 <div className="h-56">
                   {trendSpec ? <ChartLazy spec={trendSpec} /> : <div className="flex h-56 items-center justify-center text-muted-foreground">区间内无数据</div>}
                 </div>
                 <div>
-                  <div className="mb-2 text-sm font-medium">成员消费排行</div>
+                  <div className="mb-2 text-sm font-medium">成员用量排行</div>
                   <Table>
                     <TableHeader>
                       <TableRow>
                         <TableHead>成员</TableHead>
                         <TableHead className="text-right">请求数</TableHead>
-                        <TableHead className="text-right">tokens</TableHead>
-                        <TableHead className="text-right">费用(¥)</TableHead>
+                        <TableHead className="text-right">输入 Token</TableHead>
+                        <TableHead className="text-right">输出 Token</TableHead>
+                        <TableHead className="text-right">总 Token</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -241,21 +254,22 @@ export default function UsageDepartments() {
                         <TableRow key={r.label}>
                           <TableCell>{r.label}</TableCell>
                           <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
-                          <TableCell className="text-right tabular-nums">{fmtTokens(chatTokens(r))}</TableCell>
-                          <TableCell className="text-right tabular-nums">{fmtY(r.cost ?? 0)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
+                          <TableCell className="text-right tabular-nums">{fmtTokens(rowTokens(r))}</TableCell>
                         </TableRow>
                       ))}
-                      {detail.members.length === 0 && <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">无数据</TableCell></TableRow>}
+                      {detail.members.length === 0 && <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>}
                     </TableBody>
                   </Table>
                 </div>
                 <div>
-                  <div className="mb-2 text-sm font-medium">模型花费</div>
+                  <div className="mb-2 text-sm font-medium">模型用量</div>
                   <div className="flex flex-wrap gap-2">
                     {detail.models.slice(0, 5).map((r) => (
-                      <Badge key={r.label} variant="secondary">{r.label} {fmtY(r.cost ?? 0)}</Badge>
+                      <Badge key={r.label} variant="secondary">{r.label} {fmtTokens(rowTokens(r))} Token</Badge>
                     ))}
-                    {detail.models.length === 0 && <span className="text-sm text-muted-foreground">无数据</span>}
+                    {detail.models.length === 0 && <span className="text-sm text-muted-foreground">暂无用量</span>}
                   </div>
                 </div>
               </div>

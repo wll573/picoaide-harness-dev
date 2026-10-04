@@ -7,10 +7,16 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Skeleton } from '../../components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { PageHeader } from '../../components/page-header'
-import { RangeFilter, defaultRange, fetchUsageList, chatTokens, sumRows, downloadCsv, fmtY, type UsageRow, type ModelInfo } from './common'
+import { RangeFilter, defaultRange, fetchUsageList, chatTokens, sumRows, downloadCsv, type UsageRow, type ModelInfo } from './common'
 import { fmtTokens, isModelPriced } from '../../lib/format'
 import { PERM_GATEWAY_READ, hasPermission } from '../../lib/rbac'
-// 模型分析:模型明细(含单价) + 金额占比 + 渠道消耗
+// 模型分析:模型明细(输入/输出/总 Token) + Token 占比 + 渠道消耗
+//
+// 2026-10 内网交付 §6(金额 → Token):管理端不再展示金额/单价/费用文案。
+// 本页原先的三处金额展示(「单价(¥/1M)」列、「费用」列、「金额占比」图卡)全部
+// 换成 Token 口径。定价仍是管理员必需的**配置**信息,但不再由本页承担展示
+// (见网关配置页);后端字段(ModelInfo.*_price_per_1m、UsageRow.cost)原样保留 ——
+// 需求明写兼容既有数据与接口,这里只改渲染,不动任何请求与类型。
 //
 // 审计 R7 残余(R7-RV-1):本页只要求 usage:read,但首屏原来用 Promise.all 把
 // GET /models(要 gateway:read,见 internal/router/router.go:285)和两个用量
@@ -59,12 +65,12 @@ export default function UsageModels() {
 
   useEffect(() => { void load(from, to) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const priceOf = (name: string) => models.find((m) => m.name === name)
   const s = sumRows(rows)
 
+  // Token 占比:同一份 rows 数据换度量(原按 cost,§6 起管理端不得展示金额)
   const pieSpec: ISpec | null = rows.length > 0 ? {
     type: 'pie',
-    data: { values: rows.map((r) => ({ name: r.label, value: Number((r.cost ?? 0).toFixed(4)) })) },
+    data: { values: rows.map((r) => ({ name: r.label, value: chatTokens(r) })) },
     categoryField: 'name',
     valueField: 'value',
     outerRadius: 0.8,
@@ -74,13 +80,13 @@ export default function UsageModels() {
 
   const exportCsv = () => {
     downloadCsv(`models_${from}_${to}.csv`,
-      ['模型', '请求数', '输入tokens', '输出tokens', '缓存tokens', '合计tokens(chat)', '费用(¥)'],
-      rows.map((r) => [r.label, r.requests, r.prompt_tokens, r.completion_tokens, r.cache_tokens ?? 0, chatTokens(r), (r.cost ?? 0).toFixed(4)]))
+      ['模型', '请求数', '输入 Token', '输出 Token', '缓存 Token', '总 Token'],
+      rows.map((r) => [r.label, r.requests, r.prompt_tokens, r.completion_tokens, r.cache_tokens ?? 0, chatTokens(r)]))
   }
 
   return (
     <div className="space-y-6">
-      <PageHeader title="模型分析" desc="哪些模型消耗了多少：单价、tokens、费用占比与渠道分布" />
+      <PageHeader title="模型分析" desc="哪些模型消耗了多少：输入 Token、输出 Token、总 Token 占比与渠道分布" />
       <RangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} onQuery={(f, t) => void load(f, t)} />
       {error && <div className="text-sm text-destructive">{error}</div>}
       {!canReadGateway && (
@@ -88,7 +94,7 @@ export default function UsageModels() {
         // 只要 usage:read —— 只读角色在这里必须看到"能看什么、为什么没有单价",
         // 而不是整页 403 或一排空荡荡的 "—"。
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          当前账号没有网关配置读取权限(gateway:read):模型消耗、费用与渠道分布照常显示,但模型目录与单价不可见(单价列显示「—」,不代表免费)。
+          当前账号没有网关配置读取权限(gateway:read):模型 Token 用量与渠道分布照常显示,但模型目录不可见。
         </div>
       )}
 
@@ -97,7 +103,7 @@ export default function UsageModels() {
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle className="text-base">模型明细</CardTitle>
-              <CardDescription>合计 {fmtY(s.cost)} · {fmtTokens(s.tokens)} tokens(chat)</CardDescription>
+              <CardDescription>合计 {fmtTokens(s.tokens)} 总 Token</CardDescription>
             </div>
             <Button size="sm" variant="outline" onClick={exportCsv}>导出 CSV</Button>
           </CardHeader>
@@ -107,33 +113,25 @@ export default function UsageModels() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>模型</TableHead>
-                    <TableHead className="text-right">单价(¥/1M)</TableHead>
                     <TableHead className="text-right">请求</TableHead>
-                    <TableHead className="text-right">输入</TableHead>
-                    <TableHead className="text-right">输出</TableHead>
-                    <TableHead className="text-right">缓存</TableHead>
-                    <TableHead className="text-right">费用</TableHead>
+                    <TableHead className="text-right">输入 Token</TableHead>
+                    <TableHead className="text-right">输出 Token</TableHead>
+                    <TableHead className="text-right">缓存 Token</TableHead>
+                    <TableHead className="text-right">总 Token</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => {
-                    const m = priceOf(r.label)
-                    const priced = isModelPriced(m)
-                    return (
-                      <TableRow key={r.label}>
-                        <TableCell className="font-medium">{r.label}</TableCell>
-                        <TableCell className="text-right tabular-nums text-muted-foreground">
-                          {m ? (priced ? `${(m.input_price_per_1m ?? 0).toFixed(2)} / ${(m.output_price_per_1m ?? 0).toFixed(2)}` : '未定价') : '—'}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtTokens(r.cache_tokens ?? 0)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{fmtY(r.cost ?? 0)}</TableCell>
-                      </TableRow>
-                    )
-                  })}
-                  {rows.length === 0 && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">暂无数据</TableCell></TableRow>}
+                  {rows.map((r) => (
+                    <TableRow key={r.label}>
+                      <TableCell className="font-medium">{r.label}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(r.cache_tokens ?? 0)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(chatTokens(r))}</TableCell>
+                    </TableRow>
+                  ))}
+                  {rows.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>}
                 </TableBody>
               </Table>
             )}
@@ -142,11 +140,11 @@ export default function UsageModels() {
 
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">金额占比</CardTitle>
-            <CardDescription>模型费用构成(¥)</CardDescription>
+            <CardTitle className="text-base">Token 占比</CardTitle>
+            <CardDescription>模型总 Token 构成</CardDescription>
           </CardHeader>
           <CardContent>
-            {loading ? <Skeleton className="h-60 w-full" /> : pieSpec ? <div className="h-60"><ChartLazy spec={pieSpec} /></div> : <div className="flex h-60 items-center justify-center text-muted-foreground">暂无数据</div>}
+            {loading ? <Skeleton className="h-60 w-full" /> : pieSpec ? <div className="h-60"><ChartLazy spec={pieSpec} /></div> : <div className="flex h-60 items-center justify-center text-muted-foreground">暂无用量</div>}
           </CardContent>
         </Card>
       </div>
@@ -163,8 +161,7 @@ export default function UsageModels() {
                 <TableRow>
                   <TableHead>渠道</TableHead>
                   <TableHead className="text-right">请求</TableHead>
-                  <TableHead className="text-right">tokens</TableHead>
-                  <TableHead className="text-right">费用</TableHead>
+                  <TableHead className="text-right">总 Token</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -173,10 +170,9 @@ export default function UsageModels() {
                     <TableCell className="font-medium">{r.label}</TableCell>
                     <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
                     <TableCell className="text-right tabular-nums">{fmtTokens(chatTokens(r))}</TableCell>
-                    <TableCell className="text-right tabular-nums">{fmtY(r.cost ?? 0)}</TableCell>
                   </TableRow>
                 ))}
-                {providers.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">暂无数据</TableCell></TableRow>}
+                {providers.length === 0 && <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>}
               </TableBody>
             </Table>
           )}
@@ -185,8 +181,8 @@ export default function UsageModels() {
 
       {canReadGateway && (!models.some((m) => isModelPriced(m))) && rows.length > 0 && (
         <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          存在未配置价格的模型:缺省策略下它们的调用会被拒绝(429 MODEL_NOT_PRICED,不转发也不产生费用);
-          确实免费/内部时请在网关配置单价,或把「未定价模型策略」改成「允许使用」(那时费用才按 0 记)。
+          存在未配置计价的模型:缺省策略下它们的调用会被拒绝(429 MODEL_NOT_PRICED,不转发也不计入用量);
+          确实无需计价时请在网关配置计价,或把「未定价模型策略」改成「允许使用」。
         </div>
       )}
     </div>

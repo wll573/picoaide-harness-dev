@@ -329,19 +329,37 @@ describe('AI 用量面板 · 「无归因记录」/「确实零调用」/ 有数
     expect(screen.queryByTestId('app-ai-calls')).toBeNull()
   })
 
-  it('有数据 ⇒ 次数 / tokens（输入+输出）/ 费用 + 按日明细（新到旧）', async () => {
+  it('有数据 ⇒ 次数 / Token（输入+输出）/ 总 Token + 按日明细（新到旧），且不再渲染金额（§6）', async () => {
     aiMode = 'data'
     render(<AppAiUsageSection appId="share-note" canRead />)
     expect(await screen.findByTestId('app-ai-calls')).toHaveTextContent('4')
-    // 服务端只给分项 ⇒ 总数 = 输入 1000 + 输出 500 = 1500（headline 用千分位）。
-    expect(screen.getByTestId('app-ai-tokens')).toHaveTextContent('1,500')
-    expect(screen.getByTestId('app-ai-cost').textContent).toContain('0.25')
+    // 服务端只给分项 ⇒ 总 Token = 输入 1000 + 输出 500 = 1500；§6 后 headline 走 Token
+    // 紧凑格式（`lib/format.fmtTokens`：1500 → 1.5K），不再是千分位（更不是金额）。
+    expect(screen.getByTestId('app-ai-tokens')).toHaveTextContent('1.5K')
+    // `app-ai-cost` 是改造前"费用"那一位（旧口径已按需求 §6 迁到 Token，旧 id 原值保留、
+    // 只改展示）：现在它渲染的是**同一个总 Token 读数**。这里两种断言都要 ——
+    // 先认新口径（总 Token 1.5K），再守住旧行为确实消失（没有 0.25 这个金额、也没有 ¥）。
+    const headlineCost = screen.getByTestId('app-ai-cost')
+    expect(headlineCost.textContent).toContain('总 Token')
+    expect(headlineCost.textContent).toContain('1.5K')
+    expect(headlineCost.textContent).not.toContain('0.25')
+    expect(headlineCost.textContent).not.toContain('¥')
     const days = screen.getByTestId('app-ai-days')
     expect(days.textContent).toContain('2026-09-19')
     expect(days.textContent).toContain('2026-09-18')
-    // 按日明细同样按服务端形状读（requests / 输入+输出 / cost）。
+    // 按日明细同样按服务端形状读（requests / 输入+输出 / 总 Token）。
     expect(screen.getByTestId('app-ai-day-calls-2026-09-19')).toHaveTextContent('3')
     expect(screen.getByTestId('app-ai-day-tokens-2026-09-19')).toHaveTextContent('1K')
+    // 按日行上的同一处迁移：旧的 `app-ai-day-cost-*` 单元格现在渲染**该日总 Token**
+    // （输入 700 + 输出 300 = 1000 → 1K），既认新口径、又守住旧金额文本（0.20 / ¥）已消失。
+    const dayCost = screen.getByTestId('app-ai-day-cost-2026-09-19')
+    expect(dayCost.textContent).toContain('1K')
+    expect(dayCost.textContent).not.toContain('0.20')
+    expect(dayCost.textContent).not.toContain('¥')
+    // 迁移守卫：整个面板不再出现金额/付费文案 —— 金额相关的列/徽章是**被删除**（不是改名）。
+    const block = screen.getByTestId('app-ai-usage-block')
+    expect(block.textContent).not.toContain('费用')
+    expect(block.textContent).not.toContain('¥')
     // 生效窗口来自服务端回显（不显示它 = 管理员不知道看的是哪一段）。
     expect(screen.getByTestId('app-ai-effective-window').textContent).toContain('2026-08-21 ~ 2026-09-19')
   })
@@ -365,14 +383,28 @@ describe('AI 用量面板 · 「无归因记录」/「确实零调用」/ 有数
     }))
     render(<AppAiUsageSection appId="share-note" canRead />)
     expect(await screen.findByTestId('app-ai-calls')).toHaveTextContent('2')
-    expect(screen.getByTestId('app-ai-cost').textContent).toContain('0.50')
+    // `app-ai-cost`（旧"费用"位）现在渲染总 Token。本档 `total` 缺 prompt_tokens /
+    // completion_tokens ⇒ 总 Token 是 `—`（不是 0，也不是服务端那个 0.5 金额）。
+    // 两种断言都要：既有新口径的形态「总 Token —」，又守住旧金额文本（0.50 / ¥）已消失。
+    const headlineCost = screen.getByTestId('app-ai-cost')
+    expect(headlineCost.textContent).toContain('总 Token')
+    expect(headlineCost.textContent).not.toContain('0.50')
+    expect(headlineCost.textContent).not.toContain('¥')
     const block = screen.getByTestId('app-ai-usage-block')
-    expect(block.textContent).toContain('输入 —')
-    expect(block.textContent).toContain('输出 —')
+    // 词汇已按需求 §6 统一成 `输入 Token` / `输出 Token`（旧文案只是「输入」/「输出」）；
+    // 分项缺失时值仍是 `—`（不是 0）—— 认新词汇、守旧缺失语义。
+    expect(block.textContent).toContain('输入 Token —')
+    expect(block.textContent).toContain('输出 Token —')
     expect(screen.getByTestId('app-ai-day-calls-2026-09-19')).toHaveTextContent('—')
-    expect(screen.getByTestId('app-ai-day-cost-2026-09-19')).toHaveTextContent('—')
-    // 总 token 由输入+输出得出 ⇒ 分项缺失时是 —（不是 0）。
+    // 按日那一格（旧 id `app-ai-day-cost-*` 保留）同样渲染该日**总 Token**：按日行缺
+    // prompt_tokens / completion_tokens ⇒ `—`（不是 0，也不是 0.5 金额），且不带 ¥。
+    const dayCost = screen.getByTestId('app-ai-day-cost-2026-09-19')
+    expect(dayCost).toHaveTextContent('—')
+    expect(dayCost.textContent).not.toContain('¥')
+    // 总 token 由输入+输出得出 ⇒ 分项缺失时是 —（不是 0）；`app-ai-tokens` 与
+    // `app-ai-cost` 挂在**同一个读数**上，两者都必须读到「—」（不是金额、不是 0）。
     expect(screen.getByTestId('app-ai-tokens')).toHaveTextContent('—')
+    expect(screen.getByTestId('app-ai-tokens').textContent).not.toContain('¥')
   })
 
   it('端点缺失 ⇒ 明说"服务端尚未提供该端点"（AI 用量维度随 0076 迁移落地）', async () => {

@@ -7,8 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Badge } from '../../components/ui/badge'
 import { Skeleton } from '../../components/ui/skeleton'
 import { PageHeader } from '../../components/page-header'
-import { CircleDollarSign, Activity, Coins, Wallet, RefreshCw, Landmark } from 'lucide-react'
-import { RangeFilter, defaultRange, sumRows, fmtY, type OverviewData, type ProviderInfo, type ProviderBalance } from './common'
+import { CircleDollarSign, Activity, Coins, RefreshCw, Landmark } from 'lucide-react'
+import { RangeFilter, defaultRange, sumRows, type OverviewData, type ProviderInfo, type ProviderBalance } from './common'
 import { fmtTokens, fmtFull } from '../../lib/format'
 import { PERM_GATEWAY_READ, hasPermission } from '../../lib/rbac'
 
@@ -69,19 +69,31 @@ export default function UsageOverview() {
   const rangeSum = data ? sumRows(data.trend) : null
   const topSum = data ? sumRows(data.top_models) : null
 
+  // KPI 主口径 = **Token**（2026-10 内网交付口径：界面不再展示金额/余额/付费文案）。
+  // 金额字段（`cost`）仍在 OverviewData 与接口里原样保留 —— 既有部署的对账路径
+  // 不受影响，这里只是不再把它作为首屏主视觉。
   const kpis = data ? [
-    { title: '本月消耗', value: fmtY(data.month.cost), desc: `本月请求 ${data.month.requests.toLocaleString()}`, icon: Wallet },
-    { title: '今日消耗', value: fmtY(data.today.cost), desc: `今日请求 ${data.today.requests.toLocaleString()}`, icon: Activity },
-    { title: '区间消耗', value: fmtY(rangeSum!.cost), desc: `${from} ~ ${to}`, icon: CircleDollarSign },
-    { title: '区间请求', value: rangeSum!.requests.toLocaleString(), desc: `平均每请求 ${rangeSum!.requests > 0 ? fmtY(rangeSum!.cost / rangeSum!.requests) : '—'}`, icon: Coins },
-    { title: '区间 tokens', value: fmtTokens(rangeSum!.tokens), desc: `chat 输入+输出,不含 embedding`, icon: Landmark },
+    { title: '本月 Token', value: fmtTokens(data.month.tokens), desc: `本月请求 ${data.month.requests.toLocaleString()}`, icon: Landmark },
+    { title: '今日 Token', value: fmtTokens(data.today.tokens), desc: `今日请求 ${data.today.requests.toLocaleString()}`, icon: Activity },
+    { title: '区间 Token', value: fmtTokens(rangeSum!.tokens), desc: `chat 输入+输出，不含 embedding`, icon: Coins },
+    { title: '区间请求', value: rangeSum!.requests.toLocaleString(), desc: `${from} ~ ${to}`, icon: CircleDollarSign },
   ] : []
+
+  // 趋势与排行都以 **Token** 为度量（2026-10 内网交付口径）。此前画的是费用，
+  // 服务端两种度量都在同一个响应里下发（`UsageRow` 同时带 tokens 与 cost），
+  // 所以换度量只是换取值，不涉及接口改动。
+  //
+  // 注意 `UsageRow` **没有** `tokens` 字段（它给的是 prompt_tokens / completion_tokens
+  // / requests / cost）—— 区间聚合的 `range.tokens` 才是已经加总好的那个值。
+  // 逐行取 token 时在这里自己加，别去读不存在的 `r.tokens`（那会让 tsc 直接报 TS2339）。
+  const rowTokens = (r: { prompt_tokens: number; completion_tokens: number }): number =>
+    (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
 
   const trendSpec: ISpec | null = data && data.trend.length > 0 ? {
     type: 'bar',
-    data: { values: data.trend.map((r) => ({ label: r.label.slice(5), cost: Number((r.cost ?? 0).toFixed(4)) })) },
+    data: { values: data.trend.map((r) => ({ label: r.label.slice(5), tokens: rowTokens(r) })) },
     xField: 'label',
-    yField: 'cost',
+    yField: 'tokens',
     axes: [
       { orient: 'left', label: { visible: true, style: { fontSize: 11 } } },
       { orient: 'bottom', label: { visible: true, style: { fontSize: 10 } }, title: { visible: true, text: '日期' } },
@@ -91,19 +103,19 @@ export default function UsageOverview() {
 
   const topSpec: ISpec | null = data && data.top_models.length > 0 ? {
     type: 'bar',
-    data: { values: data.top_models.map((r) => ({ label: r.label, cost: Number((r.cost ?? 0).toFixed(4)) })) },
+    data: { values: data.top_models.map((r) => ({ label: r.label, tokens: rowTokens(r) })) },
     xField: 'label',
-    yField: 'cost',
+    yField: 'tokens',
     axes: [
       { orient: 'left', label: { visible: true, style: { fontSize: 11 } } },
-      { orient: 'bottom', title: { visible: true, text: '费用(¥)' }, label: { formatMethod: (v: unknown) => fmtY(Number(v)).replace('¥', '') } },
+      { orient: 'bottom', title: { visible: true, text: 'Token' }, label: { formatMethod: (v: unknown) => fmtTokens(Number(v)) } },
     ],
     tooltip: { visible: true },
   } : null
 
   return (
     <div className="space-y-6">
-      <PageHeader title="用量总览" desc="企业整体消耗:上游账户余额 / 本月、今日、区间费用 / 消耗趋势 / 模型排行" />
+      <PageHeader title="用量总览" desc="企业整体 Token 用量：本月、今日、区间用量 / 消耗趋势 / 模型排行" />
 
       <RangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} onQuery={(f, t) => void load(f, t)} />
 
@@ -172,8 +184,8 @@ export default function UsageOverview() {
         </CardContent>
       </Card>
 
-      {/* KPI 行:金额为第一指标 */}
-      <div data-testid="overview-kpis" className="grid grid-cols-2 gap-4 lg:grid-cols-5">
+      {/* KPI 行:Token 为第一指标 */}
+      <div data-testid="overview-kpis" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {kpis.map((c) => (
           <Card key={c.title}>
             <CardContent className="flex h-full flex-col pt-5">
@@ -197,7 +209,7 @@ export default function UsageOverview() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">消耗趋势</CardTitle>
-            <CardDescription>按天费用(¥)· {from} ~ {to}{rangeSum ? ` · 合计 ${fmtY(rangeSum.cost)}` : ''}</CardDescription>
+            <CardDescription>按天 Token · {from} ~ {to}{rangeSum ? ` · 合计 ${fmtFull(rangeSum.tokens)}` : ''}</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-72 w-full" /> : trendSpec ? <div className="h-72"><ChartLazy spec={trendSpec} /></div> : <div className="flex h-72 items-center justify-center text-muted-foreground">暂无数据</div>}
@@ -206,7 +218,7 @@ export default function UsageOverview() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">模型消耗 TOP 10</CardTitle>
-            <CardDescription>按费用(¥)· 点击可查看全部分析{topSum ? ` · TOP10 合计 ${fmtY(topSum.cost)}` : ''}</CardDescription>
+            <CardDescription>按 Token · 点击可查看全部分析{topSum ? ` · TOP10 合计 ${fmtFull(topSum.tokens)}` : ''}</CardDescription>
           </CardHeader>
           <CardContent>
             {loading ? <Skeleton className="h-72 w-full" /> : topSpec ? <div className="h-72"><ChartLazy spec={topSpec} /></div> : <div className="flex h-72 items-center justify-center text-muted-foreground">暂无数据</div>}
@@ -215,9 +227,7 @@ export default function UsageOverview() {
       </div>
 
       <div className="text-[11px] text-muted-foreground">
-        费用口径:按模型定价折算,含 embedding;未定价模型在缺省策略下被拒绝调用(429,不产生费用记录),
-        「允许使用」策略下才按 0 计。
-        区间消耗合计 {rangeSum ? fmtY(rangeSum.cost) : '—'} ({fmtFull(rangeSum?.tokens ?? 0)} tokens)。
+        统计口径:chat 输入 + 输出 token,不含 embedding。区间合计 {fmtFull(rangeSum?.tokens ?? 0)} tokens。
       </div>
     </div>
   )
