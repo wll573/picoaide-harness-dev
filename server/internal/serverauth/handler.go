@@ -933,6 +933,10 @@ func (a *API) handleUsageSummary(c *gin.Context) {
 		"yesterday_cost":    s.YesterdayCost,
 		"total_usage":       s.TotalUsage,
 		"total_cost":        s.TotalCost,
+		// 方向拆分(内网交付口径):界面不再展示金额,用量靠这两个分量说清。
+		// `total_usage` = input_tokens + output_tokens(同源,不是独立口径)。
+		"input_tokens":  s.InputTokens,
+		"output_tokens": s.OutputTokens,
 	})
 }
 

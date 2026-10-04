@@ -61,6 +61,8 @@ const NON_NAV_ROUTES: RouteEntry[] = [
   { path: '/usage/logs', kind: 'child', reason: '用量中心「请求明细」子页' },
   { path: '/usage/balance', kind: 'child', reason: '用量中心「余额」子页' },
   { path: '/usage/reports', kind: 'child', reason: '用量中心「报表订阅」子页' },
+  // 2026-10-02(需求 §8.1):系统日志页是**侧栏条目**(见 lib/nav.ts)，因此它由
+  // NAV_ROUTES 那一份派生，这里不重复登记。
   { path: '/marketplace', kind: 'redirect', reason: '老书签：「市场 · 技能」已并入能力中心 → /capabilities?tab=market' },
   { path: '/app-center', kind: 'index', reason: '应用中心默认子页（应用列表），路径与父路由同为 /app-center' },
   { path: '/app-center/opens', kind: 'child', reason: '应用中心「运营看板」子页（打开次数 PV/UV）' },

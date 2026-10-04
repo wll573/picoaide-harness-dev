@@ -197,7 +197,7 @@ describe('审计员访问审计保留策略(R7-RV-2 残留)', () => {
     expect(screen.getByText(/audit:retention:write/)).toBeInTheDocument()
     // 读面不受影响:导出 CSV 与筛选仍在。
     expect(screen.getByRole('button', { name: /导出 CSV/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /筛选/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '筛选' })).toBeInTheDocument()
     // 且不会去写接口(只读 GET)。
     expect(mockRequest.mock.calls.map(([p]) => String(p)).some((p) => p.includes('/audit/settings'))).toBe(true)
   })
@@ -333,7 +333,7 @@ describe('审计动作表覆盖组织共享库动作(SG-5)', () => {
     setCurrentAdmin(SUPER)
     render(<Audit />)
     await waitForAuditRows(ORG_LOGS.length)
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     expect(await screen.findByRole('option', { name: '下架共享技能' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '重新上架共享技能' })).toBeInTheDocument()
   })
@@ -492,7 +492,10 @@ function goSourceFiles(dir: string, out: string[] = []): string[] {
 
 /** 服务端源码文件清单（webadmin/node_modules/data 不是服务端写入面）。 */
 const GO_SOURCES: GoSourceFile[] = goSourceFiles(SERVER_DIR).map((f) => ({
-  path: f.slice(SERVER_DIR.length + 1).replaceAll('\\', '/'),
+  // Windows 上 `readdir` 返回反斜杠路径，而库里存的断言键一律是 POSIX 形态。
+  // 用 `split/join` 而不是 `replaceAll`：后者是 ES2021，本包 tsconfig 的
+  // `lib` 停在 ES2020 ⇒ 直接 TS2550 编译错（webadmin 构建 = tsc -b && vite build）。
+  path: f.slice(SERVER_DIR.length + 1).split('\\').join('/'),
   text: readFileSync(f, 'utf8'),
 }))
 
@@ -624,7 +627,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
       expect(texts.has(ACTION_LABEL[action]!)).toBe(true)
     }
 
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     // 选项在 portal 里，同样一次查询取全集再比对（逐个 getByRole 是 N 次整文档扫描）。
     const options = new Set(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim()))
     for (const action of SERVER_ACTIONS) {
@@ -644,7 +647,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
     render(<Audit />)
     // 只等这一行落地（waitForAuditRows 只接受 >=2 行：空态占位行与 1 行同形）。
     expect(await screen.findByText('登录成功')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     const options = new Set(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim()))
     // 「全部操作」是固定首项；其余必须是 ACTION_LABEL 的全部取值。
     const labels = new Set(Object.values(ACTION_LABEL))
@@ -672,7 +675,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
     expect(screen.getByText(/数据范围超出用途所需/)).toBeInTheDocument()
     expect(screen.queryByText('wasm_app_release_reject')).toBeNull()
 
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     fireEvent.click(await screen.findByRole('option', { name: '拒绝应用版本' }))
     fireEvent.click(screen.getByRole('button', { name: '筛选' }))
     await waitFor(() => {

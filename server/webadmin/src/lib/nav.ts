@@ -9,7 +9,7 @@
 // 未声明 perms 的条目 fail-closed(仅超管可见),防止以后新增页面漏声明。
 import {
   HardDrive,
-  Users, Settings2, KeyRound, BarChart3, Store, ScrollText, Network, Server, Bug, Plug, Boxes, ShieldCheck,
+  Users, Settings2, KeyRound, BarChart3, Store, ScrollText, Network, Server, Bug, Plug, Boxes, ShieldCheck, FileClock,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -74,6 +74,11 @@ export const NAV_ENTRIES: NavEntry[] = [
   { to: '/server-info', label: '服务器信息', icon: Server, section: '运维', perms: [PERM_SERVERINFO_READ] },
   // 审计分区(auditor + super_admin 只读)
   { to: '/audit', label: '审计日志', icon: ScrollText, section: '审计', perms: [PERM_AUDIT_READ] },
+  // 2026-10-02(需求 §8.1):「敏感操作日志」从审计页拆出。登录/登出/管理员自助与
+  // 普通管理操作(login_*/admin_mfa_*/password_change/role_change/gateway_config 等)
+  // **不得混入交互审计列表**(那里是 Prompt/Response 全文)，保留的系统事件放本页。
+  // 数据源与服务端接口与审计页同一条(GET /audit)，凭据同点(读侧 audit:read)。
+  { to: '/system-logs', label: '系统日志', icon: FileClock, section: '审计', perms: [PERM_AUDIT_READ] },
 ]
 
 /** 单个条目是否对当前用户可见。 */

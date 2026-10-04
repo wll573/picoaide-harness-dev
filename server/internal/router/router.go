@@ -527,6 +527,9 @@ func registerServer(srv *gin.RouterGroup, d Deps) {
 	serverauth.AdminRoute(authed, "GET", "/server-info", serverauth.PermServerInfoRead, d.Admin.ServerInfo)
 	serverauth.AdminRoute(authed, "GET", "/audit", serverauth.PermAuditRead, d.Admin.ListAuditLogs)
 	serverauth.AdminRoute(authed, "GET", "/audit/transcripts", serverauth.PermAuditRead, d.Admin.ListTranscripts)
+	// 导出必须在 `:id` 之前声明：否则 gin 会把 "export" 当成 id 匹配到详情路由
+	// （路由树按静态段优先，但这里显式排前更稳妥，读代码的人也不必去推理优先级）。
+	serverauth.AdminRoute(authed, "GET", "/audit/transcripts/export", serverauth.PermAuditRead, d.Admin.ExportTranscripts)
 	serverauth.AdminRoute(authed, "GET", "/audit/transcripts/:id", serverauth.PermAuditRead, d.Admin.GetTranscript)
 	// G13 审计保留策略(可配; 写仅 super_admin)。
 	serverauth.AdminRoute(authed, "GET", "/audit/settings", serverauth.PermAuditRead, d.Admin.GetAuditSettings)

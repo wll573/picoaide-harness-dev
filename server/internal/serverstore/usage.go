@@ -921,6 +921,23 @@ func UserTotalUsageCost(db *sql.DB, userID int64) (usage int64, cost float64, er
 	return usage, cost, err
 }
 
+// UserTotalInputOutputTokens 返回用户全历史的 tokens **按方向拆分**
+// （输入 = prompt_tokens，输出 = completion_tokens）。
+//
+// 为什么单独一条：`UserTotalUsageCost` 只给总量，而客户端要分别展示"输入 Token /
+// 输出 Token"（内网交付口径：界面上不再有金额，用量只能靠这两个分量说清）。
+// 两条查询都走 idx_usage_user_time，代价与已有的总用量聚合同级。
+func UserTotalInputOutputTokens(db *sql.DB, userID int64) (input int64, output int64, err error) {
+	rd, err := newUsageReadConn(db)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rd.Close() //nolint:errcheck // 只读事务回滚
+	err = rd.QueryRow(`SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0)
+		FROM usage WHERE user_id = ?`, userID).Scan(&input, &output)
+	return input, output, err
+}
+
 // UsageSummary 员工用量概览(客户端余额/统计展示的数据源)。
 type UsageSummary struct {
 	MonthlyUsage   int64   `json:"monthly_usage"`   // 本月 tokens
@@ -931,6 +948,11 @@ type UsageSummary struct {
 	YesterdayCost  float64 `json:"yesterday_cost"`  // 昨日费用(元)
 	TotalUsage     int64   `json:"total_usage"`     // 历史总 tokens
 	TotalCost      float64 `json:"total_cost"`      // 历史总费用(元)
+	// InputTokens/OutputTokens 是历史总量的**方向拆分**（内网交付口径：
+	// 界面上不再展示金额，用量只能靠这两个分量说清）。`TotalUsage` 恒等于
+	// 两者之和 —— 不是独立口径，见 UserTotalInputOutputTokens。
+	InputTokens  int64 `json:"input_tokens"`
+	OutputTokens int64 `json:"output_tokens"`
 }
 
 // UserUsageSummary 一次取齐员工用量概览(月度/今日/昨日/总计)。
@@ -987,6 +1009,9 @@ func userUsageSummaryAt(db *sql.DB, userID int64, now time.Time) (*UsageSummary,
 		return nil, err
 	}
 	if s.TotalUsage, s.TotalCost, err = UserTotalUsageCost(db, userID); err != nil {
+		return nil, err
+	}
+	if s.InputTokens, s.OutputTokens, err = UserTotalInputOutputTokens(db, userID); err != nil {
 		return nil, err
 	}
 	return s, nil

@@ -150,6 +150,7 @@ type AdminHandlers struct {
 	ListAuditLogs     gin.HandlerFunc
 	ListTranscripts   gin.HandlerFunc // GET /audit/transcripts
 	GetTranscript     gin.HandlerFunc // GET /audit/transcripts/:id
+	ExportTranscripts gin.HandlerFunc // GET /audit/transcripts/export (需求 §8.2 按筛选导出)
 	GetAuditSettings  gin.HandlerFunc // GET /audit/settings 审计保留策略(G13)
 	PutAuditSettings  gin.HandlerFunc // PUT /audit/settings 审计保留策略(仅 super_admin)
 	GetAuthConfig     gin.HandlerFunc
@@ -200,6 +201,7 @@ func (a *AdminAPI) Handlers() *AdminHandlers {
 		ListAuditLogs:     a.listAuditLogs,
 		ListTranscripts:   a.listLLMTranscripts,
 		GetTranscript:     a.getLLMTranscript,
+		ExportTranscripts: a.exportLLMTranscripts,
 		GetAuditSettings:  a.getAuditSettings,
 		PutAuditSettings:  a.putAuditSettings,
 		GetAuthConfig:     a.getAuthConfig,

@@ -23,6 +23,9 @@ const GatewayFiles = lazy(() => import('./pages/GatewayFiles'))
 const Auth = lazy(() => import('./pages/Auth'))
 const ErrorMonitoring = lazy(() => import('./pages/ErrorMonitoring'))
 const Audit = lazy(() => import('./pages/Audit'))
+// 2026-10-02(需求 §8.1):系统日志页从审计面拆出 —— 登录/登出/管理员自助与普通
+// 管理操作不再混进 Prompt/Response 交互审计列表，单独成页(读权限同 audit:read)。
+const SystemLogs = lazy(() => import('./pages/SystemLogs'))
 const ServerInfo = lazy(() => import('./pages/ServerInfo'))
 // 2026-09-02:「市场 · 技能」与「能力中心」合并为单入口(与客户端 IA 对齐)。
 const CapabilityCenter = lazy(() => import('./pages/CapabilityCenter'))
@@ -389,6 +392,7 @@ export default function App() {
                       等价的那个子页(应用中心现在是「应用」「运营看板」「限制项」三页)。 */}
                   <Route path="/app-platform" element={<Navigate to="/app-center/limits" replace />} />
                   <Route path="/audit" element={<Audit />} />
+                  <Route path="/system-logs" element={<SystemLogs />} />
                   <Route path="/server-info" element={<ServerInfo />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

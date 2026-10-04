@@ -12,7 +12,7 @@ import (
 func TestTranscriptMiddlewareAuditsNonStreamingRoute(t *testing.T) {
 	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
 	upstream := newAuditR3Upstream(t)
-	router, db, userID, token := newAuditR3Gateway(t, upstream, 100, 0, 0, 0)
+	router, db, userID, token := newAuditR3Gateway(t, upstream, 100, 1, 1, 0)
 	requestBody := `{"model":"r3-model","messages":[{"role":"user","content":"audit me"}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(requestBody))
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -33,7 +33,11 @@ func TestTranscriptMiddlewareAuditsNonStreamingRoute(t *testing.T) {
 	if page.Total != 1 || len(page.Items) != 1 {
 		t.Fatalf("transcripts = %+v", page)
 	}
-	row := page.Items[0]
+	// 列表只返回元数据；正文要走详情接口（GetLLMTranscript）。
+	row, err := serverstore.GetLLMTranscript(db, page.Items[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if row.RequestBody != requestBody || row.AuditStatus != "complete" {
 		t.Fatalf("transcript metadata = %+v", row)
 	}
@@ -49,14 +53,15 @@ func TestTranscriptMiddlewareAuditsNonStreamingRoute(t *testing.T) {
 func TestTranscriptMiddlewareAuditsStreamingRouteInOrder(t *testing.T) {
 	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
 	upstream := newAuditR3Upstream(t)
-	upstream.setStream("data: first\n\ndata: second\n\n")
-	router, db, userID, token := newAuditR3Gateway(t, upstream, 100, 0, 0, 0)
+	// 必须带 [DONE]：没有收尾标记会被网关判为截断并追加错误事件（R15C）。
+	upstream.setStream("data: first\n\ndata: second\n\ndata: [DONE]\n\n")
+	router, db, userID, token := newAuditR3Gateway(t, upstream, 100, 1, 1, 0)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"r3-model","stream":true}`))
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
-	if resp.Code != http.StatusOK || resp.Body.String() != "data: first\n\ndata: second\n\n" {
+	if resp.Code != http.StatusOK || resp.Body.String() != "data: first\n\ndata: second\n\ndata: [DONE]\n\n" {
 		t.Fatalf("stream response = status %d body %q", resp.Code, resp.Body.String())
 	}
 

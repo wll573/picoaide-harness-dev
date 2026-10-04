@@ -635,10 +635,11 @@ function fixtureScopeText(text: string, body: string): string | null {
  */
 const PERM_ARG_POSITIVE_FIXTURES: PermArgPositiveFixture[] = [
   { rel: 'pages/usage/Departments.tsx', arg: 'PERM_DEPT_READ', testFile: 'pages/usage/usage-center.test.tsx', testName: '持有 dept:read 时必须请求组织树并渲染成员列(正向夹具)', kind: 'behavior' },
-  { rel: 'pages/usage/UsageLayout.tsx', arg: 't.perm', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有全部权限点时 7 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', kind: 'behavior' },
-  { rel: 'pages/usage/Models.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求模型目录并渲染单价(正向夹具)', kind: 'behavior' },
+  { rel: 'pages/usage/UsageLayout.tsx', arg: 't.perm', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有全部权限点时 6 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', kind: 'behavior' },
+  { rel: 'pages/usage/Models.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求模型目录并渲染 Token 口径(正向夹具)', kind: 'behavior' },
   { rel: 'pages/usage/Overview.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求上游渠道并渲染余额(正向夹具)', kind: 'behavior' },
-  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USER_WRITE', testFile: 'pages/usage/Balance.test.tsx', testName: 'user:write(admin)仍能看到全部写控件', kind: 'behavior' },
+  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USER_READ', testFile: 'pages/usage/Balance.test.tsx', testName: 'user:write(admin)仍能看到成员列表,但本页已无写控件,明细按 usage:read 降级', kind: 'behavior' },
+  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USAGE_READ', testFile: 'pages/usage/Balance.test.tsx', testName: '只有 user:read + usage:read 的部分权限集同样是完整读面(等价形态)', kind: 'behavior' },
   { rel: 'pages/Users.tsx', arg: 'PERM_USER_WRITE', testFile: 'pages/Users.test.tsx', testName: '持有 user:write/dept:write 时新建/角色/部门入口可见(正向夹具)', kind: 'behavior' },
   { rel: 'pages/Users.tsx', arg: 'PERM_DEPT_WRITE', testFile: 'pages/Users.test.tsx', testName: '持有 user:write/dept:write 时新建/角色/部门入口可见(正向夹具)', kind: 'behavior' },
   { rel: 'pages/BuiltinSkills.tsx', arg: 'PERM_CAP_READ', testFile: 'pages/BuiltinSkills.test.tsx', testName: '展示资产目录与镜像里那条技能的元数据', kind: 'behavior' },
@@ -939,8 +940,10 @@ describe('导航权限过滤(P2-43)', () => {
     expect(isNavVisible(retired, superAdmin)).toBe(false)
   })
 
-  it('审计员看到服务端允许的用户/用量/审计三页(不再只按 section 过滤)', () => {
-    expect(paths(auditor)).toEqual(['/users', '/usage', '/audit'])
+  it('审计员看到服务端允许的用户/用量/审计页(不再只按 section 过滤)', () => {
+    // 2026-10-02:新增 /system-logs(需求 §8.1 系统日志页),与审计日志同为审计分区、
+    // 同凭据 audit:read ⇒ auditor 的可见集合随之多一条(断言按新条目更新,用例数不变)。
+    expect(paths(auditor)).toEqual(['/users', '/usage', '/audit', '/system-logs'])
   })
 
   it('审计员看不到需要写/未授权页面', () => {
@@ -1008,7 +1011,9 @@ describe('导航权限过滤(P2-43)', () => {
 
   it('服务端未下发 permissions(旧版本)时退回角色判定,不放大可见面', () => {
     expect(paths({ role: 'super_admin' })).toEqual(NAV_ENTRIES.map((n) => n.to))
-    expect(paths({ role: 'auditor' })).toEqual(['/audit'])
+    // 2026-10-02:退回分支按 section === '审计' 放行 ⇒ 新增的 /system-logs(同为
+    // 审计分区)随之可见。它是只读日志页,不放大写面;断言按新条目更新,用例数不变。
+    expect(paths({ role: 'auditor' })).toEqual(['/audit', '/system-logs'])
     expect(paths({ role: 'user' })).toEqual([])
     expect(paths(null)).toEqual([])
   })
