@@ -902,6 +902,27 @@ func sanitizeUpstreamError(body []byte, secrets []string) []byte {
 // 在拿到真实 usage chunk 与不过度占用上游资源之间折中。
 const streamDrainTimeout = 2 * time.Minute
 
+// streamKeepAliveEvery 是两次 SSE 心跳注释之间的最短间隔(需求 §12「代理缓冲导致
+// 前端长时间无响应」)。
+//
+// 为什么必须有它:整条链路只在"收到上游行"时才写字节。长思考模型在 reasoning
+// 阶段可以几分钟不吐 token,那段时间连接上**一个字节都不流动** —— 三个后果:
+//
+//	① nginx 等反代的 proxy_read_timeout 会掐断空闲连接(缺省 60s,正好落在
+//	   reasoning 的常见时长里);
+//	② 服务端自己的 WriteTimeout(5min)同样会掐断;
+//	③ 客户端分不出"模型在思考"与"连接死了",界面一直转圈。
+//
+// 心跳是 SSE 的**注释行**(`: ...`),按规范客户端必须忽略它 —— 因此它不改变
+// 事件语义,只让字节重新流动、刷新两侧的超时计时器。
+//
+// 取 15s 的理由:必须显著小于最常见的 60s 反代缺省(留出抖动余量),又不能让
+// 空闲流每分钟多写几十行(注释行同样占用带宽与日志面)。
+//
+// 与 streamIdleTimeout 同样做成可注入的 var(唯一理由是测试要把沉默窗口压到
+// 毫秒级 —— 真等 15s 的用例没人会跑,而不跑的判据等于没有)。
+var streamKeepAliveEvery = 15 * time.Second
+
 func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, secrets []string, requestBody clientBody, promptTokenCap int64) {
 	defer resp.Body.Close()
 	// upstream 4xx: no SSE to stream, the pending row is dropped
@@ -1001,6 +1022,11 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 	idleTick := time.NewTicker(time.Second)
 	defer idleTick.Stop()
 	lastLineAt := time.Now()
+	// lastClientWriteAt 是"上次向客户端写出字节"的时刻(含心跳注释行)。与
+	// lastLineAt 分开跟踪:后者回答"上游还活着吗"(空闲超时判据),前者回答
+	// "连接上多久没有字节流动了"(心跳判据)—— 一个健康但沉默的上游正是心跳
+	// 要覆盖的场景,拿 lastLineAt 当心跳判据就永远发不出去。
+	lastClientWriteAt := time.Now()
 	// F4:客户端断开后的 drain 上限,防止上游长时间占资源。
 	drainDeadline := time.Time{}
 
@@ -1076,9 +1102,12 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 					if _, werr := c.Writer.WriteString(line); werr != nil {
 						clientGone = true
 						drainDeadline = time.Now().Add(streamDrainTimeout)
-					} else if fl != nil {
-						touchSSEWriteDeadline(c)
-						fl.Flush()
+					} else {
+						lastClientWriteAt = time.Now()
+						if fl != nil {
+							touchSSEWriteDeadline(c)
+							fl.Flush()
+						}
 					}
 				}
 			}
@@ -1129,6 +1158,25 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 				}
 			}
 		case <-idleTick.C:
+			// 心跳优先于空闲判定:连接沉默超过 streamKeepAliveEvery 就写一条注释行,
+			// 让反代与服务端 WriteTimeout 的计时器重新起算。放在 idle 判定**之前**
+			// 是有意的 —— 上游正在长思考(idle 尚未超时)时正是心跳最该发的时候;
+			// 若放到后面,只有"已经超时"的流才会收到心跳,而那时已经在收尾了。
+			if !clientGone && time.Since(lastClientWriteAt) >= streamKeepAliveEvery {
+				if _, werr := c.Writer.WriteString(": keep-alive\n\n"); werr != nil {
+					clientGone = true
+					drainDeadline = time.Now().Add(streamDrainTimeout)
+				} else {
+					// 时间戳**无条件**更新:字节已经进到 ResponseWriter 了,是否拿到
+					// Flusher 只影响"何时真正发出",不影响"我们刚写过"。挂在 fl 分支里
+					// 会让 fl==nil 的路径每 tick 都重发一次心跳。
+					lastClientWriteAt = time.Now()
+					if fl != nil {
+						touchSSEWriteDeadline(c)
+						fl.Flush()
+					}
+				}
+			}
 			if time.Since(lastLineAt) > streamIdleTimeout {
 				idleTimedOut = true
 				mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "idle_timeout", ErrorMessage: "上游响应空闲超时"})
