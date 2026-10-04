@@ -99,6 +99,18 @@ var searchPathRelations = map[string]searchPathRelation{
 	// 列表读的也是 shadow ⇒ 两侧自洽，"审计 0 条"看不出是读错了对象）。
 	"audit_logs": {searchPathRelFamily, "审计哈希链：静默落到 shadow = 审计事实整体丢失且不可自证"},
 
+	// —— R27 新增（0083–0087 交付面）——
+	// `llm_transcripts` / `llm_transcript_chunks`：Prompt/Response 审计正文。与
+	// `audit_logs` **完全同型** —— shadow 同名表存在时审计正文写进 shadow，public 链
+	// 一行不动，而管理端列表读的也是 shadow ⇒ 两侧自洽，"审计 0 条"看不出是读错了
+	// 对象。这是本批交付的核心审计面，必须进族内集合。
+	"llm_transcripts":       {searchPathRelFamily, "Prompt/Response 审计台账：静默落到 shadow = 交互审计整体丢失，且两侧自洽（同 audit_logs）"},
+	"llm_transcript_chunks": {searchPathRelFamily, "审计正文分块：与 llm_transcripts 同链，静默写错对象 = 正文与台账错配"},
+	// `gateway_provider_api_keys`：多 Key 池的密钥池。父表 `gateway_providers` 已是
+	// 族内；子表遮蔽的后果是**静默改路由**（拿 shadow 里的诱饵 Key 发请求，请求打到
+	// 错上游、账单记到错账号），且没有任何错误面。同族。
+	"gateway_provider_api_keys": {searchPathRelFamily, "上游多 Key 池（api_key_enc）⇒ 静默改路由/记错账单（同父表 gateway_providers）"},
+
 	// —— 族内关系的物理分区（同面，随父表收口）——
 	"usage_202608":     {searchPathRelPartition, "usage 的首月分区（后续月分区由 DDL 动态构造）"},
 	"usage_daily_2026": {searchPathRelPartition, "usage_daily 的 2026 年度分区"},
@@ -133,6 +145,12 @@ var searchPathRelations = map[string]searchPathRelation{
 	"wasm_app_opens_daily":          {searchPathRelNonFamily, "应用打开日汇总：同上"},
 	"wasm_call_events":              {searchPathRelNonFamily, "应用调用事件：独立计数面"},
 	"brand_snapshots":               {searchPathRelNonFamily, "品牌快照表（0047 建、品牌模块已下线）：全仓无 Go 读面"},
+	// 托管策略（0085/0086 交付面，R27）：全部是**面板读数**，遮蔽读的后果可见 ——
+	// 托管配置/技能策略/设备清单在管理端与客户端策略页当场显示为空或报错，用户立刻
+	// 会发现并来查，不会静默错数字。不参与金额链、不参与审计链。
+	"managed_user_configs":   {searchPathRelNonFamily, "托管用户配置：遮蔽读 ⇒ 策略页可见地空/失败，不静默"},
+	"managed_skill_policies": {searchPathRelNonFamily, "托管技能策略：同上"},
+	"managed_client_devices": {searchPathRelNonFamily, "托管设备清单：遮蔽读 ⇒ 设备列表可见地空/失败"},
 
 	// —— 迁移期临时表 / 已被后续迁移 DROP ——
 	"agent_presets_new": {searchPathRelNonFamily, "0035 建后立即 RENAME 成 agent_presets（迁移期临时名）"},
@@ -211,10 +229,14 @@ var searchPathGuardPackages = map[string]searchPathPkgClass{
 	"internal/clientrelease":       searchPathPkgNoFamilySQL,
 	"internal/connectors":          searchPathPkgNoFamilySQL,
 	"internal/llmgateway/channels": searchPathPkgNoFamilySQL,
-	"internal/marketplace":         searchPathPkgNoFamilySQL,
-	"internal/portal":              searchPathPkgNoFamilySQL,
-	"internal/reports":             searchPathPkgNoFamilySQL,
-	"internal/router":              searchPathPkgNoFamilySQL,
+	// 托管策略（用户配置 / 技能策略 / 设备上报）的 HTTP 面：本身不含任何族内关系
+	// SQL，全部经 `serverstore` 的池上入口（GetManagedUserConfig /
+	// SaveManagedUserConfig / ReportManagedClientDevice 等）读写。
+	"internal/managedconfig": searchPathPkgNoFamilySQL,
+	"internal/marketplace":   searchPathPkgNoFamilySQL,
+	"internal/portal":        searchPathPkgNoFamilySQL,
+	"internal/reports":       searchPathPkgNoFamilySQL,
+	"internal/router":        searchPathPkgNoFamilySQL,
 	// R14-K（D-02）：`collectDBStats` 的表名/语句已改成字面量（原先是
 	// `SELECT COUNT(*) FROM " + t` 的动态形态，既逃逸 SQL 尺子又读自 shadow），
 	// ⇒ 本包从 no-family-sql 升为 family-bearing，函数逐条登记在下方 §③。
@@ -291,6 +313,11 @@ var searchPathCrossPackageInventory = map[string]r13gePinMode{
 	"internal/llmgateway.loadUpstreamsDB":             r13gePinned,
 	"internal/llmgateway.syncedModelNames":            r13geViaCaller,
 	"internal/llmgateway.providerModelConfigSnapshot": r13geViaCaller,
+	// R27：0087 之后 `gateway_provider_api_keys` 收进族内集合（与父表同族），
+	// Key 池的结局回写因此也必须钉到 public —— 本函数经导出接缝
+	// `serverstore.WithUsageSearchPath` 各开一个已钉事务（成功分支一条 UPDATE，
+	// 失败分支的 SELECT + UPDATE 同事务），不自己写 `BEGIN + SET LOCAL`。
+	"internal/llmgateway.finish": r13gePinned,
 	// R14-K（D-02）：管理端「服务器信息」页的族内关系行数统计（settings /
 	// gateway_providers / models / usage / audit_logs）。语句是字面量，每条读经
 	// serverstore.NewUsageReadConn（唯一 pin 实现）各自开一个已钉只读事务。

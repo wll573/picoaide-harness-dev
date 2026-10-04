@@ -345,6 +345,21 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"writeAuditBatch":   r13gePinned,    // audit.go —— usageWriteTx
 	"BalanceLedgerPage": r13gePinned,    // balance.go
 	"BalanceLedgerSum":  r13gePinned,    // balance.go
+	// R27（0083–0087 交付面）：审计正文与 Key 池收进族内集合后，触碰它们的函数
+	// 一律改走池上已钉入口 —— 读用 withUsageSearchPathRead，写用 withUsageSearchPath。
+	"AddGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"UpdateGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"DeleteGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"ResetGatewayProviderAPIKey":  r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"ListGatewayProviderAPIKeys":  r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"GetGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"CreateLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
+	"AppendLLMTranscriptChunk":    r13gePinned, // transcript.go —— withUsageSearchPath
+	"FinishLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
+	"GetLLMTranscript":            r13gePinned, // transcript.go —— withUsageSearchPathRead
+	"ReadLLMTranscriptResponse":   r13gePinned, // transcript.go —— withUsageSearchPathRead
+	"PurgeOldLLMTranscripts":      r13gePinned, // transcript.go —— withUsageSearchPath
+	"ListLLMTranscriptsFiltered":  r13gePinned, // transcript.go —— withUsageSearchPathRead
 	// R18C-02：两个认领入口都只是 claimGatewayFile 的薄包装（认领协议的唯一实现，
 	// 已钉写事务在那里），所以它们是 via-caller。
 	"ClaimExpiredGatewayFile":              r13geViaCaller, // gateway_files.go —— claimGatewayFile
@@ -399,6 +414,7 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"UserMonthlyCostBatch":                 r13gePinned,    // usage.go
 	"UserMonthlyUsage":                     r13gePinned,    // usage.go
 	"UserMonthlyUsageBatch":                r13gePinned,    // usage.go
+	"UserTotalInputOutputTokens":           r13gePinned,    // usage.go —— newUsageReadConn
 	"UserTotalUsageCost":                   r13gePinned,    // usage.go
 	"gatewayFileReapClaimActive":           r13gePinned,    // gateway_files.go
 	"GrantMonthlyBalance":                  r13gePinned,    // balance.go —— 事务内 pinUsageSearchPath
