@@ -23,8 +23,8 @@
  *     ⇒ 「激活把焦点移进面板」红；
  *   - `close()` 不归还焦点 / 不判"焦点是否还在面板里" ⇒ 对应两条红。
  *
- * 组合判据（真浮层 + 真装载器，含"打开面板后焦点进面板、Esc 后回到触发元素"的闭环）
- * 在 `@picoaide/dsh-foot-menu` 的 `tests/panel-focus-handoff.spec.tsx` —— 单包用例
+ * 组合判据（真导航行 + 真装载器，含"打开面板后焦点进面板"的闭环）
+ * 在 `@picoaide/dsh-foot-menu` 的 `tests/foot-nav-rows.spec.tsx` —— 单包用例
  * 证明不了跨包交接。
  */
 import { act } from 'react'

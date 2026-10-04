@@ -1,9 +1,10 @@
 /**
- * 客户端半边：字典 + 提供 `picoFootMenu` 服务 + 注册**唯一**一个底部座位占用者。
+ * 客户端半边：字典 + 提供 `picoFootMenu` 服务 + 注册底部导航行的渲染。
  *
- * 座位（`sidebar.footer.action`）以前有五个占用者（定时任务 / 能力中心 / 连接器 /
- * 浏览器 / 应用中心，各一整行）。现在只有这一个：它渲染「更多」行 + 向上浮层，
- * 条目由兄弟插件经 `picoFootMenu` 登记（见 `contract.ts`）。
+ * 座位（`sidebar.footer.action`）由本包**独占**：兄弟插件不直接注册槽位，而是经
+ * `ctx.picoFootMenu.add(...)` 登记条目（见 `contract.ts`）。这个间接层是两轮相反
+ * 改造都能低成本落地的原因 —— 2026-09-21 把五项并成一个「更多」浮层、以及现在
+ * 改回逐行直显，五个插件的登记代码都一行没动。
  *
  * 纪律：运行时的值导入只允许平台模块表里的包；`@deepseek-ai/*` 与兄弟包一律 type-only
  * 进入（跨插件协作只走 Cordis 服务与槽位）。
@@ -20,7 +21,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createFootMenuService, installFootMenu } from './contract.ts'
-import { FootMenuRow } from './FootMenuRow.tsx'
+import { FootNavRows } from './FootNavRows.tsx'
 import { en, setActiveLocale, type FootMenuKey, zh } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -77,8 +78,7 @@ export function apply(ctx: ClientContext): void {
     return locale.subscribe(sync)
   }, 'foot-menu: follow active locale')
 
-  // Hover/focus feedback for the row and the popover items (行内几何 + 注入的少量
-  // 全局样式：与浏览器/连接器插件原先的 `.pico-*-trigger:hover` 写法同源)。
+  // 行 hover 反馈（行内几何 + 注入的少量全局样式：与账户行同一写法）。
   //
   // **透明底必须与 hover 底同处一张样式表**：行内 `background: transparent` 的
   // 优先级高于任何选择器规则，写进行内联样式就等于把 `:hover` 永久压死
@@ -89,27 +89,27 @@ export function apply(ctx: ClientContext): void {
     if (typeof document === 'undefined') return () => {}
     const style = document.createElement('style')
     style.textContent = [
-      '.pico-foot-menu-trigger { background: transparent; }',
-      '.pico-foot-menu-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }',
-      '.pico-foot-menu-item { background: transparent; }',
-      '.pico-foot-menu-item:hover, .pico-foot-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }',
+      '.pico-foot-nav-row { background: transparent; }',
+      '.pico-foot-nav-row:hover { background: var(--dsw-alias-interactive-bg-hover); }',
+      '.pico-foot-nav-row:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }',
     ].join('\n')
     document.head.appendChild(style)
     return () => { style.remove() }
-  }, 'foot-menu: hover styles')
+  }, 'foot-menu: nav row hover styles')
 
   // 登记表：条目跨 bundle 传数据（ReactNode 不过界），兄弟插件在各自的 apply 里
   // 用 `ctx.picoFootMenu.add(...)` 登记，注销函数由它们的 `ctx.effect` 调用。
   const service = createFootMenuService()
   ctx.effect(() => installFootMenu(ctx, service), 'foot-menu: menu registry')
 
-  // 唯一占用者：整个底部功能区只剩这一行（账目卡与设置各自在别的座位）。
+  // 唯一占用者：整个底部功能区由本包渲染成**若干条一级导航行**
+  //（条目来自登记表；账目卡与设置各自在别的座位）。
   ctx.effect(
     () => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
       name: 'sidebar.footer.action',
       id: 'pico-foot-menu',
       order: 10,
-    }, FootMenuRow)),
-    'foot-menu: sidebar row',
+    }, FootNavRows)),
+    'foot-menu: sidebar rows',
   )
 }

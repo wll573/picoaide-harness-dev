@@ -20,6 +20,7 @@ function payload(monthly_cost: number): UsagePayload {
     is_admin: false, monthly_usage: 0, monthly_cost,
     today_usage: 0, today_cost: 0, yesterday_usage: 0, yesterday_cost: 0,
     total_usage: 0, total_cost: 0,
+    input_tokens: 0, output_tokens: 0,
   }
 }
 

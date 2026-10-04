@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { apply, inject, name } from '../src/client/index.ts'
 import { currentFootMenuService } from '../src/client/contract.ts'
-import { FootMenuRow } from '../src/client/FootMenuRow.tsx'
+import { FootNavRows } from '../src/client/FootNavRows.tsx'
 import { en, zh } from '../src/client/locales.ts'
 
 interface Registered {
@@ -120,12 +120,12 @@ describe('客户端半边：apply 注册面', () => {
     expect((f.provided[0]?.value as { snapshot: () => unknown[] }).snapshot()).toHaveLength(1)
   })
 
-  it('注册唯一一个底部座位占用者：id/order 固定，组件是「更多」行', () => {
+  it('注册唯一一个底部座位占用者：id/order 固定，组件渲染一级导航行', () => {
     const f = fixture()
     apply(f.ctx)
     expect(f.slots).toEqual(['sidebar.footer.action'])
     expect(f.registered).toEqual([expect.objectContaining({ name: 'sidebar.footer.action', id: 'pico-foot-menu', order: 10 })])
-    expect(f.components).toEqual([FootMenuRow])
+    expect(f.components).toEqual([FootNavRows])
   })
 
   it('注册 zh/en 双语文案（zh 是 key 源）', () => {
@@ -140,16 +140,15 @@ describe('客户端半边：apply 注册面', () => {
   it('注入 hover/focus 样式（含透明底），并在卸载时移除 style 标签', () => {
     const f = fixture()
     apply(f.ctx)
-    const styles = [...document.querySelectorAll('style')].filter(element => element.textContent?.includes('.pico-foot-menu-trigger'))
+    const styles = [...document.querySelectorAll('style')].filter(element => element.textContent?.includes('.pico-foot-nav-row'))
     expect(styles).toHaveLength(1)
     const css = styles[0]!.textContent ?? ''
     // 透明底与 hover 底必须在同一张表里：行内 `background` 会压死 `:hover`。
-    expect(css).toContain('.pico-foot-menu-trigger { background: transparent; }')
-    expect(css).toContain('.pico-foot-menu-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }')
-    expect(css).toContain('.pico-foot-menu-item { background: transparent; }')
-    expect(css).toContain('.pico-foot-menu-item:hover, .pico-foot-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }')
-    f.disposers.get('foot-menu: hover styles')?.()
-    expect([...document.querySelectorAll('style')].filter(element => element.textContent?.includes('.pico-foot-menu-trigger'))).toHaveLength(0)
+    expect(css).toContain('.pico-foot-nav-row { background: transparent; }')
+    expect(css).toContain('.pico-foot-nav-row:hover { background: var(--dsw-alias-interactive-bg-hover); }')
+    expect(css).toContain('.pico-foot-nav-row:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }')
+    f.disposers.get('foot-menu: nav row hover styles')?.()
+    expect([...document.querySelectorAll('style')].filter(element => element.textContent?.includes('.pico-foot-nav-row'))).toHaveLength(0)
   })
 
   it('插件卸载后登记表单例被清掉（不再有"半挂"的行）', () => {

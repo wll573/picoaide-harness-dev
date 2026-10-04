@@ -5,7 +5,7 @@
 export const zh = {
   'panel.title': '连接器',
   'panel.backToChat': '返回聊天',
-  'panel.subtitle': '把企业系统接进对话：连一次，之后 AI 就能直接调用',
+  'panel.subtitle': '把内部系统接进对话：连一次，之后 AI 就能直接调用',
   'search.placeholder': '搜索连接器…',
   'filter.all': '全部',
   'filter.connected': '已连接',
@@ -66,7 +66,7 @@ export const zh = {
 export const en: Record<keyof typeof zh, string> = {
   'panel.title': 'Connectors',
   'panel.backToChat': 'Back to chat',
-  'panel.subtitle': 'Bring company systems into the conversation — connect once, then the AI can call them',
+  'panel.subtitle': 'Bring internal systems into the conversation — connect once, then the AI can call them',
   'search.placeholder': 'Search connectors…',
   'filter.all': 'All',
   'filter.connected': 'Connected',

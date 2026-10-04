@@ -85,7 +85,10 @@ const AUTH_LOGGED_IN: Reply = {
   body: { loggedIn: true, username: USERNAME, serverURL: 'https://gw.example' },
 }
 
-/** 一条 usage 快照（字段形状来自 usage-contract）。 */
+/** 一条 usage 快照（字段形状来自 usage-contract）。
+ *
+ * 注意 `total_usage` 默认**非 0**：界面的空态判据是"所有 Token 分量都为 0 或
+ * 缺失 ⇒ 暂无用量"，全 0 的快照会渲染成空态，那是另一条用例要覆盖的形态。 */
 function usageSnapshot(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     balance_money: 89.65,
@@ -94,14 +97,16 @@ function usageSnapshot(overrides: Record<string, unknown> = {}): Record<string, 
     balance_monthly: 100,
     balance_mode: 'add',
     is_admin: false,
-    monthly_usage: 0,
+    monthly_usage: 12_300,
     monthly_cost: 12.3,
-    today_usage: 0,
+    today_usage: 1_200,
     today_cost: 1.2,
     yesterday_usage: 0,
     yesterday_cost: 0,
-    total_usage: 0,
+    total_usage: 135_500,
     total_cost: 0,
+    input_tokens: 120_000,
+    output_tokens: 15_500,
     ...overrides,
   }
 }
@@ -239,45 +244,44 @@ function buttonByText(scope: HTMLElement, text: string): HTMLButtonElement {
   return found as HTMLButtonElement
 }
 
-describe('行内余额状态（spec §6）', () => {
-  it('已开通：行显示用户名 + 金额，无警示圆点', async () => {
+describe('行内用量状态（spec §6）', () => {
+  it('有用量：行显示用户名 + 总 Token，无警示圆点', async () => {
     await renderCard()
     const row = rowButton()
     expect(row.textContent).toContain(USERNAME)
-    expect(row.textContent).toContain('¥89.65')
-    const balance = [...row.querySelectorAll('span')].find((span) => span.textContent === '¥89.65')
-    expect(balance?.style.color).toBe('var(--dsw-alias-label-primary)')
-    expect(row.querySelector('[data-attention]')).toBeNull()
+    expect(row.textContent).toContain('135,500')
+    const usage = [...row.querySelectorAll('span')].find((span) => span.textContent === '135,500')
+    expect(usage?.style.color).toBe('var(--dsw-alias-label-primary)')
     expect(row.getAttribute('aria-haspopup')).toBe('dialog')
     expect(row.getAttribute('aria-expanded')).toBe('false')
     expect(row.getAttribute('aria-label')).toContain(USERNAME)
-    expect(row.getAttribute('aria-label')).toContain('¥89.65')
+    expect(row.getAttribute('aria-label')).toContain('135,500')
   })
 
-  it('余额为 0：金额用错误色 + 行上出现警示圆点 + aria-label 说明余额不足', async () => {
-    routes.set(`GET ${USAGE_PATH}`, usageReply({ balance_money: 0 }))
+  it('没有任何用量：行内显示「暂无用量」而不是误导性的 0', async () => {
+    routes.set(`GET ${USAGE_PATH}`, usageReply({
+      monthly_usage: 0, today_usage: 0, total_usage: 0, input_tokens: 0, output_tokens: 0,
+    }))
     await renderCard()
     const row = rowButton()
-    expect(row.textContent).toContain('¥0.00')
-    const balance = [...row.querySelectorAll('span')].find((span) => span.textContent === '¥0.00')
-    expect(balance?.style.color).toBe('var(--dsw-alias-state-error-primary)')
-    expect(row.querySelector('[data-attention]')).not.toBeNull()
-    expect(row.getAttribute('aria-label')).toContain('余额不足')
+    expect(row.textContent).toContain('暂无用量')
+    // 行内不得出现格式化后的用量数字（用户名本身含数字，所以按 span 判）。
+    const usageSpans = [...row.querySelectorAll('span')].map((span) => span.textContent ?? '')
+    expect(usageSpans).not.toContain('0')
   })
 
-  it('取数失败（stale）：行显示 —（次要色）而不是旧金额', async () => {
+  it('取数失败（stale）：行显示 —（次要色）而不是旧用量', async () => {
     routes.set(`GET ${USAGE_PATH}`, {
       body: { data: usageSnapshot(), fetchedAt: 1, state: 'error', error: 'boom' },
     })
     await renderCard()
     const row = rowButton()
-    expect(row.textContent).not.toContain('¥89.65')
+    expect(row.textContent).not.toContain('135,500')
     expect(row.textContent).toContain('—')
     const placeholder = [...row.querySelectorAll('span')].find((span) => span.textContent === '—')
     expect(placeholder?.style.color).toBe('var(--dsw-alias-label-secondary)')
-    expect(row.getAttribute('aria-label')).toContain('余额获取失败')
-    expect(row.getAttribute('title')).toContain('余额获取失败')
-    expect(row.querySelector('[data-attention]')).toBeNull()
+    expect(row.getAttribute('aria-label')).toContain('用量获取失败')
+    expect(row.getAttribute('title')).toContain('用量获取失败')
   })
 
   it('加载中：行显示 …', async () => {
@@ -286,20 +290,10 @@ describe('行内余额状态（spec §6）', () => {
     expect(rowButton().textContent).toContain('…')
   })
 
-  it('未开通余额：行内只有 —，说明只在 title / aria-label', async () => {
-    routes.set(`GET ${USAGE_PATH}`, usageReply({ balance_activated: false, balance_money: 0 }))
-    await renderCard()
-    const row = rowButton()
-    expect(row.textContent).toContain('—')
-    // 长文案不得出现在行内（行只有 34px）。
-    expect(row.textContent).not.toContain('余额未开通')
-    expect(row.getAttribute('title')).toContain('余额未开通')
-    expect(row.getAttribute('aria-label')).toContain(USERNAME)
-    expect(row.getAttribute('aria-label')).toContain('余额未开通')
-  })
-
-  it('管理员未开通：说明文案是「管理员」', async () => {
-    routes.set(`GET ${USAGE_PATH}`, usageReply({ balance_activated: false, is_admin: true }))
+  it('管理员且无用量：说明文案是「管理员」', async () => {
+    routes.set(`GET ${USAGE_PATH}`, usageReply({
+      is_admin: true, monthly_usage: 0, today_usage: 0, total_usage: 0, input_tokens: 0, output_tokens: 0,
+    }))
     await renderCard()
     expect(rowButton().getAttribute('aria-label')).toContain('管理员')
   })
@@ -316,10 +310,13 @@ describe('向上浮层（spec §6）', () => {
     expect(row.getAttribute('aria-expanded')).toBe('true')
     expect(panel!.getAttribute('aria-label')).toBe('账户')
     const text = panel!.textContent ?? ''
-    expect(text).toContain('¥89.65')
-    expect(text).toContain('账户余额')
-    expect(text).toContain('每月发放 ¥100.00')
-    expect(text).toContain('本月已用 ¥12.30 · 今日 ¥1.20')
+    expect(text).toContain('135,500')
+    expect(text).toContain('Token 用量')
+    expect(text).toContain('输入 120,000 · 输出 15,500')
+    expect(text).toContain('今日 1,200 · 本月 12,300')
+    // 内网交付口径：界面上不再出现任何金额/余额/充值字样。
+    expect(text).not.toContain('¥')
+    expect(text).not.toContain('余额')
     expect(buttonByText(panel!, '刷新').textContent).toContain('↻')
     expect(buttonByText(panel!, '退出登录')).toBeDefined()
     expect(panel!.textContent).toContain(USERNAME)
@@ -364,15 +361,15 @@ describe('向上浮层（spec §6）', () => {
 })
 
 describe('浮层里的接口调用（行为不丢）', () => {
-  it('刷新打到 ?refresh=1、更新金额、浮层保持打开', async () => {
+  it('刷新打到 ?refresh=1、更新用量、浮层保持打开', async () => {
     await renderCard()
     await press(rowButton())
     const panel = dialog()!
-    routes.set(`GET ${REFRESH_PATH}`, usageReply({ balance_money: 42.5 }))
+    routes.set(`GET ${REFRESH_PATH}`, usageReply({ total_usage: 42_500, input_tokens: 40_000, output_tokens: 2_500 }))
     await press(buttonByText(panel, '刷新'))
     expect(calls).toContain(`GET ${REFRESH_PATH}`)
     expect(dialog()).not.toBeNull()
-    expect(dialog()!.textContent).toContain('¥42.50')
+    expect(dialog()!.textContent).toContain('42,500')
   })
 
   it('刷新有重入闸：同一批次连点两次只发一次 ?refresh=1（审计 P2-c）', async () => {
@@ -380,13 +377,15 @@ describe('浮层里的接口调用（行为不丢）', () => {
     await press(rowButton())
     const panel = dialog()!
     // 请求挂起 → 按钮还没变 disabled，第二次点击真的会再次进 handler。
-    routes.set(`GET ${REFRESH_PATH}`, { ...usageReply({ balance_money: 42.5 }), defer: true })
+    routes.set(`GET ${REFRESH_PATH}`, {
+      ...usageReply({ total_usage: 42_500, input_tokens: 40_000, output_tokens: 2_500 }), defer: true,
+    })
     const refresh = buttonByText(panel, '刷新')
     await act(async () => { refresh.click(); refresh.click() })
     expect(calls.filter((call) => call === `GET ${REFRESH_PATH}`)).toHaveLength(1)
     releaseDeferred()
     await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0) }) })
-    expect(dialog()!.textContent).toContain('¥42.50')
+    expect(dialog()!.textContent).toContain('42,500')
   })
 
   it('退出登录打到 POST /api/pico/auth/logout，失败就地显示错误', async () => {
@@ -439,16 +438,16 @@ describe('浮层里的接口调用（行为不丢）', () => {
 })
 
 describe('令牌失效（2026-09-12 P1-5 规则）', () => {
-  it('轮询撞上服务端 401：行立刻转 —，不再显示上一次成功取的金额（审计 P2-a）', async () => {
+  it('轮询撞上服务端 401：行立刻转 —，不再显示上一次成功取的用量（审计 P2-a）', async () => {
     // 假表必须在挂载前装：轮询的 setInterval 是在挂载期创建的。
     vi.useFakeTimers()
     try {
       await act(async () => { root.render(<AccountCard {...slotProps(true)} />) })
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      expect(rowButton().textContent).toContain('¥89.65')
+      expect(rowButton().textContent).toContain('135,500')
 
       // 第二拍：会话失效（路由层 401）。**响应体仍带着上一次的快照**（真实
-      // 网关 401 时宿主缓存也还没清）—— 只按 body 走就会把过期金额当当前余额
+      // 网关 401 时宿主缓存也还没清）—— 只按 body 走就会把过期用量当当前用量
       // 显示出来，这正是 P1-5 规则要拦的那条。
       routes.set(`GET ${USAGE_PATH}`, {
         status: 401,
@@ -457,12 +456,12 @@ describe('令牌失效（2026-09-12 P1-5 规则）', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
 
       const row = rowButton()
-      expect(row.textContent).not.toContain('¥89.65')
+      expect(row.textContent).not.toContain('135,500')
       expect(row.textContent).toContain('—')
       const placeholder = [...row.querySelectorAll('span')].find((span) => span.textContent === '—')
       expect(placeholder?.style.color).toBe('var(--dsw-alias-label-secondary)')
-      expect(row.getAttribute('aria-label')).toContain('余额获取失败')
-      expect(row.getAttribute('title')).toContain('余额获取失败')
+      expect(row.getAttribute('aria-label')).toContain('用量获取失败')
+      expect(row.getAttribute('title')).toContain('用量获取失败')
     } finally {
       vi.useRealTimers()
     }
@@ -573,7 +572,7 @@ describe('窄轨（wide === false）', () => {
     expect(row.getAttribute('aria-expanded')).toBe('true')
     const panel = dialog()
     expect(panel).not.toBeNull()
-    expect(panel!.textContent).toContain('¥89.65')
+    expect(panel!.textContent).toContain('135,500')
     expect(panel!.textContent).toContain('退出登录')
     // 浮层比 56px 轨道宽，靠 fixed 定位而不是被裁掉。
     expect(panel!.style.position).toBe('fixed')
@@ -615,7 +614,11 @@ describe('字典（zh 是 key 源）', () => {
     expect(zh['account.rowLabel']).toContain('{username}')
     expect(zh['account.rowLabel']).toContain('{balance}')
     expect(en['account.rowLabel']).toContain('{username}')
-    expect(zh['account.rowLabelLow']).not.toBe(zh['account.rowLabel'])
-    expect(en['account.rowLabelLow']).not.toBe(en['account.rowLabel'])
+    // 用量面新增的四个键必须中英成对（`account.rowLabelLow` 随金额面一起下线，
+    // 这里改成断言 Token 面的键）。
+    for (const key of ['account.tokens', 'account.inputTokens', 'account.outputTokens', 'account.noUsage'] as const) {
+      expect(zh[key], `${key} 缺中文`).toBeTruthy()
+      expect(en[key], `${key} 缺英文`).toBeTruthy()
+    }
   })
 })

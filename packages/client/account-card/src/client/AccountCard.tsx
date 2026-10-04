@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { t } from './locales.ts'
-import { formatMoney } from './money.ts'
+import { formatTokens } from './tokens.ts'
 import type { UsagePayload } from '../usage-contract.ts'
 
 /** `/api/pico/auth/state` body (enterprise auth-gate). */
@@ -53,9 +53,6 @@ const POPOVER_GAP = 6
 const POPOVER_MIN_WIDTH = 200
 const POPOVER_VIEWPORT_MARGIN = 8
 const POPOVER_Z_INDEX = 1100
-
-/** 警示态配色：与侧边栏其余警示圆点一致（浏览器「AI 在等你」同色）。 */
-const ATTENTION_COLOR = '#d97706'
 
 // ---- design tokens (official DSH alias set; adapts to light/dark) ----
 
@@ -258,25 +255,9 @@ const ROW_CHEVRON: CSSProperties = {
   color: 'var(--dsw-alias-label-secondary)',
 }
 
-const ATTENTION_DOT: CSSProperties = {
-  position: 'absolute',
-  top: 4,
-  right: 4,
-  width: 7,
-  height: 7,
-  borderRadius: '50%',
-  background: ATTENTION_COLOR,
-  pointerEvents: 'none',
-}
-
 /** Initials: first character of the username, uppercased. */
 function initial(username: string | undefined): string {
   return (username ?? '?').slice(0, 1).toUpperCase()
-}
-
-/** Guard: value is a finite number (excludes null/undefined/NaN/Infinity). */
-function isMoney(v: unknown): v is number {
-  return typeof v === 'number' && Number.isFinite(v)
 }
 
 /** 尾部 chevron：收起朝下，展开朝上（与「更多」行同一条规则）。 */
@@ -653,45 +634,61 @@ export function AccountCard({ wide }: PropsRuntime<'sidebar.footer.action'>) {
   //  区分"未开通余额账户"(不渲染余额行)与"已开通"。
   //  未开通 = 从未入账 → 网关闸门也不约束他,展示"未开通"而不是 ¥0.00
   //  (否则会出现"显示 0 却能用"的矛盾界面)。
+  // 用量解析（2026-10 内网交付口径）。
+  //
+  // 改动前这里解析的是**余额与金额**（balance_money / monthly_cost / today_cost），
+  // 卡片主视觉是「¥89.65 · 账户余额」。内网交付要求界面上不再出现金额、余额、
+  // 充值或付费文案，统一显示 Token 用量，所以主视觉改成 输入/输出/总 Token。
+  //
+  // **后端字段一个都没删**：`balance_*` 与 `*_cost` 仍在契约与响应里（既有部署的
+  // 历史数据与接口不受影响），只是这个组件不再读它们。要恢复金额展示，把下面
+  // 这几行换回 `formatMoney(data.balance_money)` 即可，不必动服务端。
   const admin = data?.is_admin === true
-  const activated = data !== null && data.balance_activated === true
-  const balanceMoney = activated && isMoney(data!.balance_money) ? data!.balance_money : null
-  const monthly = data !== null && isMoney(data.balance_monthly) ? data.balance_monthly : 0
-  // R16B-01：`low` 决定行上的红色余额与警示圆点 —— 不能由**不可信**的快照点亮。
-  const low = !stale && balanceMoney !== null && balanceMoney <= 0
+  // Token 计数字段：非法/缺省一律当"没有数据"（`null`），而不是渲染 0 ——
+  // 「暂无用量」与「确实用了 0」在界面上必须是两件事。
+  const tokenCount = (v: unknown): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null
+  const inputTokens = data === null ? null : tokenCount(data.input_tokens)
+  const outputTokens = data === null ? null : tokenCount(data.output_tokens)
+  const totalTokens = data === null ? null : tokenCount(data.total_usage)
+  const monthlyTokens = data === null ? null : tokenCount(data.monthly_usage)
+  const todayTokens = data === null ? null : tokenCount(data.today_usage)
+  // 「本月 / 今日」两个分量是这份快照是否**有内容**的判据：全为 0 或缺失即空态。
+  const hasUsage = !stale && data !== null
+    && [inputTokens, outputTokens, totalTokens, monthlyTokens, todayTokens]
+      .some(v => v !== null && v > 0)
 
   const metaParts: string[] = []
-  // R16B-01：用量与余额同属一份快照。身份不符/取数失败时**整行一起作废** ——
-  // 只作废金额而留着「本月已用 ¥X」等于把上一个账号的用量交给新账号。
-  if (data !== null && !stale) {
-    // 审计修复: 字段缺省/非法时跳过,不再进入 formatMoney(undefined)
-    if (isMoney(data.monthly_cost)) metaParts.push(`${t('account.usedThisMonth')} ${formatMoney(data.monthly_cost)}`)
-    if (isMoney(data.today_cost)) metaParts.push(`${t('account.today')} ${formatMoney(data.today_cost)}`)
+  // R16B-01：用量同属一份快照。身份不符/取数失败时**整行一起作废** ——
+  // 把上一个账号的用量交给新账号与错数余额是同一个缺陷。
+  if (hasUsage) {
+    if (todayTokens !== null) metaParts.push(`${t('account.today')} ${formatTokens(todayTokens)}`)
+    if (monthlyTokens !== null) metaParts.push(`${t('account.usedThisMonth')} ${formatTokens(monthlyTokens)}`)
   }
 
-  // 行内余额三态（+ 未开通）与无障碍文案共用同一份判定。
-  const rowBalanceText = stale || (data !== null && balanceMoney === null)
+  // 行内三态（+ 空态）与无障碍文案共用同一份判定。
+  const rowUsageText = stale
     ? '—'
     : data === null
       ? '…'
-      : formatMoney(balanceMoney!)
-  const rowBalanceColor = low
-    ? 'var(--dsw-alias-state-error-primary)'
-    : stale || data === null || balanceMoney === null
-      ? 'var(--dsw-alias-label-secondary)'
-      : 'var(--dsw-alias-label-primary)'
-  // 行内只有 `—`/金额，说不清的部分（加载中/取数失败/未开通/余额不足）走
+      : hasUsage && totalTokens !== null
+        ? formatTokens(totalTokens)
+        : t('account.noUsage')
+  const rowUsageColor = stale || data === null || !hasUsage
+    ? 'var(--dsw-alias-label-secondary)'
+    : 'var(--dsw-alias-label-primary)'
+  // 行内只有 `—`/数字，说不清的部分（加载中/取数失败/暂无用量）走
   // title + aria-label，不塞进这一行。
-  const balanceStateText = stale
+  const usageStateText = stale
     ? t('account.stale')
     : data === null
       ? t('account.loading')
-      : balanceMoney === null
-        ? (admin ? t('account.admin') : t('account.notActivated'))
-        : formatMoney(balanceMoney)
-  const rowLabel = t(low ? 'account.rowLabelLow' : 'account.rowLabel', { username, balance: balanceStateText })
-  // 行内已经是金额时不需要 tooltip；`—`（取数失败/未开通）与余额不足才需要文字解释。
-  const rowTitle = stale || low || balanceMoney === null ? rowLabel : undefined
+      : hasUsage && totalTokens !== null
+        ? formatTokens(totalTokens)
+        : (admin ? t('account.admin') : t('account.noUsage'))
+  const rowLabel = t('account.rowLabel', { username, balance: usageStateText })
+  // 行内已经是 Token 数时不需要 tooltip；`—`（取数失败）与「暂无用量」才需要文字解释。
+  const rowTitle = stale || data === null || !hasUsage ? rowLabel : undefined
 
   const row = (
     <button
@@ -712,11 +709,10 @@ export function AccountCard({ wide }: PropsRuntime<'sidebar.footer.action'>) {
           <span style={ROW_AVATAR} aria-hidden="true">{initial(username)}</span>
           <span style={ROW_USERNAME}>{username}</span>
           <span style={ROW_SEPARATOR} aria-hidden="true">·</span>
-          <span style={{ ...ROW_BALANCE, color: rowBalanceColor }}>{rowBalanceText}</span>
+          <span style={{ ...ROW_BALANCE, color: rowUsageColor }}>{rowUsageText}</span>
           <span style={ROW_CHEVRON}><Chevron open={open} /></span>
         </>
       ) : initial(username)}
-      {low && <span data-attention="true" style={ATTENTION_DOT} aria-hidden="true" />}
     </button>
   )
 
@@ -742,26 +738,25 @@ export function AccountCard({ wide }: PropsRuntime<'sidebar.footer.action'>) {
               <span style={{ ...BALANCE_AMOUNT, color: 'var(--dsw-alias-label-secondary)' }}>…</span>
               <span style={BALANCE_CAPTION}>{t('account.loading')}</span>
             </div>
-          ) : balanceMoney !== null ? (
+          ) : hasUsage ? (
             <>
               <div style={BALANCE_ROW}>
-                <span style={{ ...BALANCE_AMOUNT, color: low ? 'var(--dsw-alias-state-error-primary)' : 'var(--dsw-alias-label-primary)' }}>
-                  {formatMoney(balanceMoney)}
-                </span>
-                <span style={BALANCE_CAPTION}>{t('account.balance')}</span>
+                <span style={BALANCE_AMOUNT}>{totalTokens === null ? '—' : formatTokens(totalTokens)}</span>
+                <span style={BALANCE_CAPTION}>{t('account.tokens')}</span>
               </div>
-              {low ? (
-                <div style={{ fontSize: 11, color: 'var(--dsw-alias-state-error-primary)' }}>{t('account.lowBalance')}</div>
-              ) : monthly > 0 ? (
-                <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>
-                  {t('account.monthlyGrant')} {formatMoney(monthly)}
-                </div>
-              ) : null}
+              {/* 输入 / 输出 拆分。两个分量都可能缺失（旧服务端不下发），
+                  缺哪个就跳过哪个，不渲染 0 —— "没有这个数据"与"确实是 0"要能区分。 */}
+              <div style={{ fontSize: 11, color: 'var(--dsw-alias-label-secondary)' }}>
+                {[
+                  inputTokens === null ? null : `${t('account.inputTokens')} ${formatTokens(inputTokens)}`,
+                  outputTokens === null ? null : `${t('account.outputTokens')} ${formatTokens(outputTokens)}`,
+                ].filter((part): part is string => part !== null).join(' · ')}
+              </div>
             </>
           ) : (
             <div style={BALANCE_ROW}>
               <span style={{ ...BALANCE_AMOUNT, color: 'var(--dsw-alias-label-secondary)' }}>—</span>
-              <span style={BALANCE_CAPTION}>{admin ? t('account.admin') : t('account.notActivated')}</span>
+              <span style={BALANCE_CAPTION}>{admin ? t('account.admin') : t('account.noUsage')}</span>
             </div>
           )}
           <div style={META_ROW}>
