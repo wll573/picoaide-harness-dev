@@ -466,6 +466,30 @@
       "file": "0085_managed_client_policy.sql",
       "bytes": 1531,
       "sha256": "1f85bf96ca843a6596fb51bb251ed7e803c1fd087dffec033711e2ae60e9e348"
+    },
+    {
+      "version": "0086",
+      "file": "0086_llm_transcript_detail.sql",
+      "bytes": 3714,
+      "sha256": "42af3cca8d9a18dcee69f3fc5b17cff58ae748db982a8032ebc44cde2c2e8d66"
+    },
+    {
+      "version": "0087",
+      "file": "0087_provider_key_stats.sql",
+      "bytes": 2157,
+      "sha256": "e5d445e6686a1079fca81519e2f427321390a19970c43112a30eedc79ee10709"
+    },
+    {
+      "version": "0088",
+      "file": "0088_models_hidden.sql",
+      "bytes": 2956,
+      "sha256": "7c03d1a206772147ad99ceeb40b54ad8432297b18d685c95ceca32fc7847c2b3"
+    },
+    {
+      "version": "0089",
+      "file": "0089_provider_policy.sql",
+      "bytes": 3509,
+      "sha256": "e854f634892e08bfccab7f2bff241ba32df4d240d28c8598de51c4de90cba93e"
     }
   ]
 }

@@ -117,7 +117,7 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIChat)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -189,19 +189,26 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 				return
 			}
 		}
-		attempt, lease, keyErr := a.upstreamWithKey(ups[i])
-		if keyErr != nil {
-			err = keyErr
-		} else {
-			resp, err = a.forward(c, &attempt, body, req.Stream)
-			recordLeaseResponse(lease, resp, err)
-		}
+		// 需求 §7.3：同 provider 内换 Key 重试（最多 maxKeyAttemptsPerProvider 次，
+		// 失败过的 Key 不再选，且只在没有产生可交付内容时重试）。见 forwardWithKeyRetry。
+		// 请求体由闭包捕获（不是形参）—— 见 forwardSendFunc 的注释：outbound_identity_test
+		// 的 AST 守卫要求每个 forward* 调用的实参可追溯到 prepareOutboundBody 的产物，
+		// 而闭包捕获的外层变量仍在判据可见范围内。
+		var attempt Upstream
+		var lease *keyLease
+		attempt, lease, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forward(c, up, body, req.Stream)
+		})
+		_ = lease // 租约的成败已在 forwardWithKeyRetry 内逐次记账（recordLeaseResponse）
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
 			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			// 0086（需求 §8.1「模型和供应商」）：把实际命中的供应商名交给审计中间件。
+			// 用 merge 而非整体 set —— 后面对截断打标时不能把它清掉。
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			// P1-6:pending 行在调用上游前插入(失败即拒绝),provider 此刻才
 			// 确定 —— 补一次绑定,让回填结算按实际 provider 取价。
 			if usageID > 0 {
@@ -636,6 +643,11 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 	if stream {
 		client = a.sse
 	}
+	// 0089（需求 §7「超时策略」）：该上游显式配了超时时改用专属客户端。
+	// 语义是**首字节超时**（ResponseHeaderTimeout），与上游默认的 120s 同一档，
+	// 不是整个请求的总时限 —— 用 client.Timeout 会把长报告生成掐断（审计2026-M11
+	// 踩过：全量 client.Timeout 截断长响应），流式更是会整条流被杀。
+	client = clientForTimeout(client, up.TimeoutSeconds)
 	// F4: 流式请求的 context 与客户端断开解耦 —— 客户端断线后 serveStream
 	// 仍会 drain 上游直到拿到 usage chunk,否则按已转发内容估算计费;若沿用
 	// 客户端 context,取消会让上游停止、用量永远拿不到(免费漏洞)。
@@ -664,6 +676,35 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 // nonStreamBodyTimeout bounds reading a non-stream upstream body once headers
 // arrived (审计2026-M11:全量 client.Timeout 会截断长报告生成;这里只限 body 读)
 var nonStreamBodyTimeout = 10 * time.Minute
+
+// upstreamHeaderTimeoutCache 缓存"按超时值定制的客户端"，键是超时秒数。
+//
+// 为什么必须缓存：http.Client 的主要成本在 Transport（连接池）。每个请求新建一个
+// 客户端 = 每次请求新建一套连接池 ⇒ 连接无法复用、TLS 握手与 TCP 重建开销翻倍，
+// 高并发下表现为连接数暴涨。这里按**超时值**复用（取值域很小，实际就是管理员配的
+// 那几个数）；Transport 仍是各自的，但同一上游的请求共享同一个池。
+var upstreamHeaderTimeoutCache sync.Map // int → *http.Client
+
+// clientForTimeout 返回带指定首字节超时的客户端；seconds <= 0 表示"用内置默认"，
+// 直接返回传入的客户端（与今天完全一致）。
+//
+// 注意 Transport 是**复用同一份** newUpstreamTransport() 的结果还是新建：
+// 这里新建，因为 ResponseHeaderTimeout 是 Transport 上的字段，改它会影响所有
+// 共用该 Transport 的上游。新建的 Transport 与默认那份配置完全相同（含
+// SafeOutboundTransport 的 SSRF 复检），只有超时不同。
+func clientForTimeout(base *http.Client, seconds int) *http.Client {
+	if seconds <= 0 {
+		return base
+	}
+	if v, ok := upstreamHeaderTimeoutCache.Load(seconds); ok {
+		return v.(*http.Client)
+	}
+	t := newUpstreamTransport()
+	t.ResponseHeaderTimeout = time.Duration(seconds) * time.Second
+	c := &http.Client{Transport: t}
+	actual, _ := upstreamHeaderTimeoutCache.LoadOrStore(seconds, c)
+	return actual.(*http.Client)
+}
 
 // passHeaders 是透传给客户端的上游响应头白名单:其余头(Set-Cookie/Server/
 // hop-by-hop 等)一律丢弃(审计2026-L10)
@@ -1045,6 +1086,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 				if errors.Is(r.err, errStreamLineTooLong) {
 					// P2-8: 单行超过上限——不回传半行,直接中断该流。
 					lineTooLong = true
+					mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "line_too_long", ErrorMessage: "上游响应单行过大,流被中断"})
 					log.Printf("gateway: upstream stream line exceeds %d bytes, terminating", maxStreamLineBytes)
 					if !clientGone {
 						fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应单行过大"}}`)
@@ -1077,6 +1119,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 							"(forwarded=%d bytes, delivered_content=%d bytes, chunks=%d): "+
 							"treating as truncated and closing with an error event",
 							forwardedBytes, deliveredContentBytes, deliveredContentChunks)
+						mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "truncated", ErrorMessage: "上游流在完成标记之前中断"})
 						fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游流在完成标记之前中断"}}`)
 						if fl != nil {
 							touchSSEWriteDeadline(c)
@@ -1088,6 +1131,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 		case <-idleTick.C:
 			if time.Since(lastLineAt) > streamIdleTimeout {
 				idleTimedOut = true
+				mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "idle_timeout", ErrorMessage: "上游响应空闲超时"})
 				log.Printf("gateway: stream idle timeout after %v, terminating", streamIdleTimeout)
 				if !clientGone {
 					fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应空闲超时"}}`)

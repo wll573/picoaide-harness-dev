@@ -64,7 +64,7 @@ func (a *API) handleResponses(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIResponses)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -124,13 +124,10 @@ func (a *API) handleResponses(c *gin.Context) {
 				return
 			}
 		}
-		attempt, lease, keyErr := a.upstreamWithKey(ups[i])
-		if keyErr != nil {
-			err = keyErr
-		} else {
-			resp, err = a.forwardEndpoint(c, &attempt, body, req.Stream, "/responses")
-			recordLeaseResponse(lease, resp, err)
-		}
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/responses")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}

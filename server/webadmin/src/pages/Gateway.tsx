@@ -28,6 +28,14 @@ interface ProviderKey {
   failure_count: number
   last_used_at?: string
   last_error_at?: string
+  // 需求 §7.3:Key 状态/最近错误/冷却/成功率(后端 providerKeyJSON 下发)。
+  // success_rate 为 number|null —— **null 表示 total_count=0(尚无样本)**,
+  // 与"一直失败(0%)"是完全不同的运维结论,界面上必须分开显示。
+  success_count?: number
+  total_count?: number
+  success_rate?: number | null
+  last_error_status?: number
+  last_error_message?: string
 }
 
 interface Provider {
@@ -39,6 +47,11 @@ interface Provider {
   enabled: boolean
   channel: string
   protocol: string // 0043: openai(默认 chat/embeddings) | anthropic(/v1/messages)
+  // 0089（需求 §7）：0 / true = 用内置默认，与今天一致。
+  timeout_seconds?: number
+  max_key_attempts?: number
+  responses_enabled?: boolean
+  chat_enabled?: boolean
 }
 
 interface Channel {
@@ -62,6 +75,12 @@ interface Model {
   provider_name?: string // 审计修复 M3:上游名(管理端展示全部模型)
   provider_channel?: string
   provider_enabled?: boolean
+  // CatalogMissing:系统判定「上游目录里已经没有它了」(0080)。行仍保留价格/参数,
+  // 管理端仍可见以便判断"上游真下架"还是"目录抖动一轮"。
+  catalog_missing?: boolean
+  // Hidden:管理员**主动隐藏**(0088,需求 §7.1)。与 catalog_missing 是两个不同原因,
+  // 展示上必须能区分(见模型行的两个徽章)。隐藏可恢复、保留价格与参数;删除不可逆。
+  hidden?: boolean
 }
 
 // 手动型渠道占位值:Radix Select 不允许空串 value
@@ -163,9 +182,114 @@ function sameModelList(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((name, i) => name === b[i])
 }
 
+// cooldownText 把冷却截止时间渲染成可读的「还剩 X 分钟」(需求 §7.3)。
+//   已过期/解析不出/未传 ⇒ ''(调用方不渲染冷却文案);其余按分/小时/天分档。
+//   返回 null(而非空串)表示**确实在冷却中但无法给出剩余时长**(时钟偏差导致
+//   倒计时为负/NaN)——调用方据此显示"冷却中",而不是让这把不可用的 Key
+//   看起来完全正常。
+function cooldownText(raw?: string, now: number = Date.now()): string | null {
+  if (!raw) return ''
+  const t = new Date(raw).getTime()
+  if (!Number.isFinite(t)) return ''
+  const ms = t - now
+  if (ms <= 0) return ''
+  const mins = Math.ceil(ms / 60000)
+  if (mins < 60) return `还剩 ${mins} 分钟`
+  const hours = Math.ceil(ms / 3600000)
+  if (hours < 24) return `还剩 ${hours} 小时`
+  return `还剩 ${Math.ceil(ms / 86400000)} 天`
+}
+
 // 密码/密钥输入(审计修复 P3-4):显隐切换按钮,复用 Input 样式;密码管理工具与粘贴不受影响
 // 已在 components/secret-input.tsx 提取为共享组件(Gateway 与 Auth 页共用)。
 // 删除本地实现,使用共享导入。
+
+// ProviderAdvancedFields 是上游的「高级」配置块（0089，需求 §7）：首字节超时、
+// 换 Key 次数上限、以及两个端点开关。
+//
+// 抽成一个组件而不是在创建/编辑两个弹窗里各写一份：两处各写一遍必然漂移，
+// 而漂移的表现是"编辑弹窗里改了超时、创建弹窗里没有这一项"这种难察觉的不一致。
+type ProviderAdvancedForm = {
+  timeout_seconds: string
+  max_key_attempts: string
+  responses_enabled: boolean
+  chat_enabled: boolean
+}
+
+function ProviderAdvancedFields<T extends ProviderAdvancedForm>({
+  form,
+  setForm,
+}: {
+  form: T
+  // 接受 `setState` 的完整签名：调用点传的是各自表单的 setter，它们的 state
+  // 比这里多几个字段（name/base_url/…）。只声明成 (v: ProviderAdvancedForm) => void
+  // 会让传进来的 setter 不被接受（参数逆变），而且 by-value 的写法还会**丢掉**
+  // 调用方 state 里的其它字段。
+  setForm: (v: T) => void
+}) {
+  // 两个端点都关 = 该上游完全不接请求。服务端也会拒（VALIDATION），这里提前拦，
+  // 免得管理员填完一整张表单才在提交时被拒。
+  const bothOff = !form.responses_enabled && !form.chat_enabled
+  return (
+    <div className="space-y-2 rounded-md border border-border/60 p-3">
+      <div className="text-xs font-semibold">高级（超时 / 重试 / 端点开关）</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <Label>首字节超时（秒）</Label>
+          <Input
+            type="number"
+            min={0}
+            max={600}
+            placeholder="0 = 用默认（120 秒）"
+            value={form.timeout_seconds}
+            onChange={(e) => setForm({ ...form, timeout_seconds: e.target.value })}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            等待上游返回响应头的上限。留空或 0 = 默认 120 秒。
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Label>换 Key 次数上限</Label>
+          <Input
+            type="number"
+            min={0}
+            max={10}
+            placeholder="0 = 用默认（3 次）"
+            value={form.max_key_attempts}
+            onChange={(e) => setForm({ ...form, max_key_attempts: e.target.value })}
+          />
+          <p className="text-[11px] text-muted-foreground">
+            同一上游内失败后换 Key 重试的次数（含首次）。留空或 0 = 默认 3；填 1 表示不换 Key。
+          </p>
+        </div>
+      </div>
+      <div className="flex flex-wrap items-center gap-4">
+        <label className="flex items-center gap-2 text-xs">
+          <Switch
+            checked={form.responses_enabled}
+            onCheckedChange={(v) => setForm({ ...form, responses_enabled: v })}
+          />
+          承接 /v1/responses
+        </label>
+        <label className="flex items-center gap-2 text-xs">
+          <Switch
+            checked={form.chat_enabled}
+            onCheckedChange={(v) => setForm({ ...form, chat_enabled: v })}
+          />
+          承接 /v1/chat/completions
+        </label>
+      </div>
+      {bothOff && (
+        <p role="alert" className="text-[11px] text-destructive">
+          两个端点不能都关 —— 那等于停用该上游，请改用「启用」开关。
+        </p>
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        关掉的那种端点不再派给这个上游（内网自建推理服务常常只实现其中一种）。
+      </p>
+    </div>
+  )
+}
 
 export default function Gateway() {
   const [providers, setProviders] = useState<Provider[]>([])
@@ -208,7 +332,7 @@ export default function Gateway() {
   const [keyErr, setKeyErr] = useState('')
 
   const [provDialog, setProvDialog] = useState(false)
-  const [provForm, setProvForm] = useState({ name: '', channel: '', base_url: '', api_key: '', models: '', protocol: '' })
+  const [provForm, setProvForm] = useState({ name: '', channel: '', base_url: '', api_key: '', models: '', protocol: '', timeout_seconds: '', max_key_attempts: '', responses_enabled: true, chat_enabled: true })
   // 对话框内联错误(UX 改进):操作失败信息必须显示在用户操作处,而非页面顶部
   const [provErr, setProvErr] = useState('')
   const [editProvErr, setEditProvErr] = useState('')
@@ -218,7 +342,7 @@ export default function Gateway() {
   const [modelForm, setModelForm] = useState({ name: '', provider_id: '', display_name: '', input_modalities: 'text', input_price_per_1m: '', output_price_per_1m: '', cache_input_price_per_1m: '', offpeak_discount: '' })
   // 上游编辑(审计修复 M3):复用创建字段 + enabled 开关
   const [editProv, setEditProv] = useState<Provider | null>(null)
-  const [editProvForm, setEditProvForm] = useState({ name: '', channel: '', base_url: '', api_key: '', models: '', enabled: true, protocol: '' })
+  const [editProvForm, setEditProvForm] = useState({ name: '', channel: '', base_url: '', api_key: '', models: '', enabled: true, protocol: '', timeout_seconds: '', max_key_attempts: '', responses_enabled: true, chat_enabled: true })
 
   async function openKeyDialog(provider: Provider) {
     setKeyDialogProvider(provider)
@@ -257,6 +381,23 @@ export default function Gateway() {
       await request(`${ADMIN_API}/providers/${keyDialogProvider.id}/keys/${key.id}/reset`, { method: 'POST' })
       setProviderKeys((prev) => prev.map((item) => item.id === key.id ? { ...item, cooldown_until: undefined, failure_count: 0, last_error_at: undefined } : item))
     } catch (e) { setKeyErr(e instanceof Error ? e.message : '密钥重置失败') } finally { setBusy(null) }
+  }
+
+  // 需求 §7.3:启用/停用开关(UPDATE /providers/:id/keys/:key_id 已支持 enabled)。
+  // 停用 ≠ 删除:停用保留该 Key(不参与轮询,可随时恢复);删除不可逆。
+  // 后端 PUT 返回的是 providerKeyJSON(含最新统计),直接以响应覆盖本地行,
+  // 而不是只改 enabled 字段 —— 否则成功/失败计数会停在旧值。
+  async function toggleProviderKeyEnabled(key: ProviderKey, enabled: boolean) {
+    if (!keyDialogProvider) return
+    setBusy(`toggle-key-${key.id}`)
+    setKeyErr('')
+    try {
+      const r = await request(`${ADMIN_API}/providers/${keyDialogProvider.id}/keys/${key.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ enabled }),
+      })
+      setProviderKeys((prev) => prev.map((item) => item.id === key.id ? { ...item, ...(r as Partial<ProviderKey>), enabled } : item))
+    } catch (e) { setKeyErr(e instanceof Error ? e.message : '密钥状态更新失败') } finally { setBusy(null) }
   }
 
   const load = useCallback(async () => {
@@ -422,6 +563,11 @@ export default function Gateway() {
           api_key: provForm.api_key,
           models: provForm.models.split(',').map((s) => s.trim()).filter(Boolean),
           protocol: provForm.protocol || 'openai',
+          // 0089：空串 = 不传（服务端按"用内置默认"处理）；填了数字才提交。
+          ...(provForm.timeout_seconds === '' ? {} : { timeout_seconds: Number(provForm.timeout_seconds) }),
+          ...(provForm.max_key_attempts === '' ? {} : { max_key_attempts: Number(provForm.max_key_attempts) }),
+          responses_enabled: provForm.responses_enabled,
+          chat_enabled: provForm.chat_enabled,
         }),
       })
       const sync = r.sync
@@ -436,7 +582,7 @@ export default function Gateway() {
         flash('已保存')
       }
       setProvDialog(false)
-      setProvForm({ name: '', channel: '', base_url: '', api_key: '', models: '', protocol: '' })
+      setProvForm({ name: '', channel: '', base_url: '', api_key: '', models: '', protocol: '', timeout_seconds: '', max_key_attempts: '', responses_enabled: true, chat_enabled: true })
       load()
     } catch (err: any) {
       setProvErr(err.message)
@@ -463,6 +609,11 @@ export default function Gateway() {
         base_url: editProvForm.base_url,
         enabled: editProvForm.enabled,
         protocol: editProvForm.protocol || 'openai',
+        // 0089：与服务端"字段缺省 = 不修改"一致，空串就不放进请求体。
+        ...(editProvForm.timeout_seconds === '' ? {} : { timeout_seconds: Number(editProvForm.timeout_seconds) }),
+        ...(editProvForm.max_key_attempts === '' ? {} : { max_key_attempts: Number(editProvForm.max_key_attempts) }),
+        responses_enabled: editProvForm.responses_enabled,
+        chat_enabled: editProvForm.chat_enabled,
       }
       // 密钥留空 = 不更换;模型清单渠道型不提交(服务端切渠道时自动清空手动清单)
       if (editProvForm.api_key.trim() !== '') body.api_key = editProvForm.api_key
@@ -714,6 +865,32 @@ export default function Gateway() {
     }
   }
 
+  // 需求 §7.1:按 provider 单点同步(POST /providers/:id/sync,此前只有顶部全量同步
+  // 与保存后自动同步,单个上游没有入口)。失败时服务端同步逻辑本身**保留旧配置**
+  // (SyncProvider 出错即早退,不动 models 表),这里把 err.message 落到页面上,
+  // 满足「获取失败时保留旧配置并显示可读错误」。
+  async function syncOne(p: Provider) {
+    if (busy) return // P1-6: 双击守卫
+    setBusy(`sync-one-${p.id}`)
+    try {
+      const r = await request(`${ADMIN_API}/providers/${p.id}/sync`, { method: 'POST' })
+      const res: { added?: number; removed?: number; skipped?: boolean; error?: string } = r.result ?? {}
+      setError('')
+      if (res.error) {
+        setSyncMsg(`${p.name} 同步失败:${res.error}(旧配置保留,可重试)`)
+      } else if (res.skipped) {
+        setSyncMsg(`${p.name} 为手动型上游,无需同步`)
+      } else {
+        setSyncMsg(`${p.name} 同步完成:+${res.added ?? 0}/-${res.removed ?? 0}`)
+      }
+      load()
+    } catch (err: any) {
+      setError(`${p.name} 同步失败:${err.message}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
   function openProviderEdit(p: Provider) {
     setEditProv(p)
     setEditProvForm({
@@ -724,6 +901,12 @@ export default function Gateway() {
       models: p.models.join(', '),
       enabled: p.enabled,
       protocol: p.protocol || 'openai',
+      timeout_seconds: p.timeout_seconds ? String(p.timeout_seconds) : '',
+      max_key_attempts: p.max_key_attempts ? String(p.max_key_attempts) : '',
+      // 缺字段（旧服务端/替身）按"都开"处理，与服务端默认一致 —— 否则界面会把
+      // 未配置的上游显示成"两个端点都关了"，管理员一保存就真关掉了。
+      responses_enabled: p.responses_enabled !== false,
+      chat_enabled: p.chat_enabled !== false,
     })
   }
 
@@ -733,6 +916,24 @@ export default function Gateway() {
     try {
       await request(`${ADMIN_API}/providers/${p.id}`, { method: 'PUT', body: JSON.stringify({ enabled }) })
       setError('')
+      load()
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // 需求 §7.1「支持隐藏不需要的模型」:PUT /models/:id { hidden }。
+  // hidden 是 optionalBool(三态):必须**显式传布尔值**,不能省略 —— 省略 = 不覆盖。
+  // 隐藏可恢复、保留价格与参数;与不可逆的删除严格区分(见模型卡片说明与确认框)。
+  async function toggleModelHidden(m: Model, hidden: boolean) {
+    if (busy) return // P1-6: 双击守卫(Switch 无按钮态,handler 层防连点)
+    setBusy(`hide-model-${m.id}`)
+    try {
+      await request(`${ADMIN_API}/models/${m.id}`, { method: 'PUT', body: JSON.stringify({ name: m.name, hidden }) })
+      setError('')
+      flash(hidden ? '模型已隐藏(可随时恢复)' : '模型已恢复显示')
       load()
     } catch (err: any) {
       setError(err.message)
@@ -846,6 +1047,17 @@ export default function Gateway() {
                     <Switch checked={p.enabled} onCheckedChange={(v) => toggleProviderEnabled(p, v)} aria-label={`启用 ${p.name}`} />
                   </TableCell>
                   <TableCell className="text-right space-x-2">
+                    {/* 需求 §7.1:按 provider 单点同步(手动型上游服务端会回 skipped)。
+                        渠道为空 = 手动型上游,没有目录可拉,禁用而非隐藏(保留列宽与可解释性)。 */}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy !== null || !p.channel}
+                      title={p.channel ? '从该上游重新拉取模型目录' : '手动型上游没有上游目录,无需同步'}
+                      onClick={() => syncOne(p)}
+                    >
+                      {busy === `sync-one-${p.id}` ? '同步中…' : '同步'}
+                    </Button>
                     <Button size="sm" variant="outline" onClick={() => openProviderEdit(p)}>编辑</Button>
                     <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => deleteProvider(p.id)}>{busy === `del-provider-${p.id}` ? '删除中…' : '删除'}</Button>
                   </TableCell>
@@ -860,6 +1072,13 @@ export default function Gateway() {
         <CardHeader>
           <CardTitle>模型管理</CardTitle>
           <CardDescription>对客户端可见的模型列表(含已停用上游的模型,停用后客户端不可见)</CardDescription>
+          {/* 需求 §7.1:隐藏 vs 删除必须说清楚 —— 否则管理员会拿不可逆的删除去"不想展示"。
+              hidden = 可恢复(价格/参数全保留);catalog_missing = 系统判定上游目录里没有它;
+              两者是**两个不同原因**,行上分别打徽章。 */}
+          <p className="text-xs text-muted-foreground">
+            隐藏(开关) = 可恢复,行、价格与参数全部保留,仅客户端目录与路由不可见可调用;
+            删除 = 不可逆。「上游目录缺失」是系统判定(该模型已不在上游目录里),与手动隐藏无关,两者分别标注。
+          </p>
           <div className="flex justify-end gap-2">
             <Button size="sm" variant="outline" disabled={busy !== null} onClick={syncAll}>{busy === 'sync-all' ? '同步中…' : '立即同步'}</Button>
             <Button size="sm" onClick={() => setModelDialog(true)}>新增模型</Button>
@@ -874,14 +1093,15 @@ export default function Gateway() {
                 <TableHead>上游</TableHead>
                 <TableHead>能力</TableHead>
                 <TableHead>计费(元/百万 token)</TableHead>
+                <TableHead>隐藏</TableHead>
                 <TableHead className="text-right">操作</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading ? (
-                <TableRow data-testid="gateway-loading"><TableCell colSpan={6}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
+                <TableRow data-testid="gateway-loading"><TableCell colSpan={7}><Skeleton className="h-8 w-full" /></TableCell></TableRow>
               ) : models.length === 0 ? (
-                <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无模型,添加手动型上游或点击「立即同步」</TableCell></TableRow>
+                <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">暂无模型,添加手动型上游或点击「立即同步」</TableCell></TableRow>
               ) : models.map((m) => {
                 const priced = isModelPriced(m) // 审计修复 M6:输入价>0 或 输出价>0 即已定价
                 const offpeak = m.offpeak_discount !== null && m.offpeak_discount !== undefined && m.offpeak_discount > 0 && m.offpeak_discount < 1
@@ -891,6 +1111,14 @@ export default function Gateway() {
                       {m.name}
                       {m.input_modalities?.includes('image') && (
                         <Badge variant="secondary" className="ml-1 text-[10px]">图片</Badge>
+                      )}
+                      {/* 被隐藏的行仍要能被看到(否则没法恢复),用徽章醒目标出 */}
+                      {m.hidden && (
+                        <Badge variant="default" className="ml-1 text-[10px]" title="管理员隐藏:可随时用行末开关恢复">已隐藏</Badge>
+                      )}
+                      {/* 与 hidden 区分:系统判定「上游目录里已经没有它了」(0080) */}
+                      {m.catalog_missing && (
+                        <Badge variant="destructive" className="ml-1 text-[10px]" title="上游目录中已没有该模型(系统判定,价格与参数保留)">上游目录缺失</Badge>
                       )}
                     </TableCell>
                     <TableCell>{m.display_name}</TableCell>
@@ -913,6 +1141,16 @@ export default function Gateway() {
                       ) : (
                         <Badge variant="outline" className="text-[10px]">未定价</Badge>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      {/* 开关语义:开 = 隐藏(勾上"隐藏"),与后端 hidden 字段同向,避免反向开关的误操作。
+                          停用后的行仍在表里(徽章「已隐藏」),随时可恢复。 */}
+                      <Switch
+                        checked={!!m.hidden}
+                        disabled={busy !== null}
+                        onCheckedChange={(v) => toggleModelHidden(m, v)}
+                        aria-label={`隐藏 ${m.name}`}
+                      />
                     </TableCell>
                     <TableCell className="text-right space-x-2">
                       <Button size="sm" variant="outline" title="编辑显示名/上游/参数/模态/价格" onClick={() => openModelPricing(m)}>配置</Button>
@@ -1202,6 +1440,7 @@ export default function Gateway() {
                 Anthropic 协议上游供 web_search 走服务端代理使用(如 https://api.deepseek.com/anthropic/v1)
               </p>
             </div>
+            <ProviderAdvancedFields form={provForm} setForm={setProvForm} />
             <div className="space-y-1">
               <Label>名称(如 deepseek)</Label>
               <Input placeholder="如 deepseek" value={provForm.name} onChange={(e) => setProvForm({ ...provForm, name: e.target.value })} />
@@ -1278,6 +1517,7 @@ export default function Gateway() {
                 </SelectContent>
               </Select>
             </div>
+            <ProviderAdvancedFields form={editProvForm} setForm={setEditProvForm} />
             <div className="space-y-1">
               <Label>名称</Label>
               <Input value={editProvForm.name} onChange={(e) => setEditProvForm({ ...editProvForm, name: e.target.value })} />
@@ -1559,8 +1799,62 @@ export default function Gateway() {
           <DialogHeader><DialogTitle>管理上游密钥{keyDialogProvider ? ` · ${keyDialogProvider.name}` : ''}</DialogTitle><DialogDescription>密钥只在服务端加密保存，列表永远不显示明文。429、401/403 和网络故障会自动冷却并切换。</DialogDescription></DialogHeader>
           {keyErr && <div className="text-sm text-destructive">{keyErr}</div>}
           <div className="space-y-2">
-            {providerKeys.length === 0 ? <p className="text-sm text-muted-foreground">暂无独立密钥，当前仍使用 Provider 的兼容密钥。</p> : providerKeys.map((key) => <div key={key.id} className="flex items-center justify-between rounded border p-2 text-sm"><div><div className="font-medium">{key.label || `密钥 ${key.id}`} · {key.api_key}</div><div className="text-xs text-muted-foreground">优先级 {key.priority} · 失败 {key.failure_count}{key.cooldown_until ? ` · 冷却至 ${new Date(key.cooldown_until).toLocaleString()}` : ''}</div></div><div className="flex gap-1"><Button size="sm" variant="outline" onClick={() => resetProviderKey(key)} disabled={busy !== null}>重置</Button><Button size="sm" variant="destructive" onClick={() => removeProviderKey(key)} disabled={busy !== null}>删除</Button></div></div>)}
+            {providerKeys.length === 0 ? <p className="text-sm text-muted-foreground">暂无独立密钥，当前仍使用 Provider 的兼容密钥。</p> : providerKeys.map((key) => {
+              // 需求 §7.3:管理端显示 Key 状态、最近错误、冷却时间和成功率,不显示完整 Key。
+              // 成功率的三态是本块的核心:null = 尚无样本(total_count=0),必须显示
+              // "暂无数据"而**不是** 0% —— "还没用过"和"一直失败"在运维上是完全不同的结论。
+              const hasSamples = typeof key.success_rate === 'number'
+              const cd = cooldownText(key.cooldown_until)
+              return (
+                <div key={key.id} className="space-y-1 rounded border p-2 text-sm">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-medium">
+                      {key.label || `密钥 ${key.id}`} · <span className="font-mono text-xs text-muted-foreground">{key.api_key}</span>
+                      {/* 状态徽章:停用是"保留 Key 但不参与轮询",与删除是两回事 */}
+                      {key.enabled ? (
+                        <Badge variant="success" className="ml-1 text-[10px]">启用中</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="ml-1 text-[10px]">已停用</Badge>
+                      )}
+                      {cd !== '' && <Badge variant="outline" className="ml-1 text-[10px] text-amber-600">{cd === null ? '冷却中' : cd}</Badge>}
+                    </div>
+                    <Switch
+                      checked={key.enabled}
+                      disabled={busy !== null}
+                      onCheckedChange={(v) => toggleProviderKeyEnabled(key, v)}
+                      aria-label={`启用密钥 ${key.label || key.id}`}
+                    />
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    <div>
+                      优先级 {key.priority} · 失败 {key.failure_count}
+                      {/* 成功率:null(无样本)与 0%(全失败)分开 */}
+                      {' · 成功率 '}
+                      {hasSamples
+                        ? <>{((key.success_rate as number) * 100).toFixed(1)}%（成功 {key.success_count ?? 0}/共 {key.total_count ?? 0}）</>
+                        : '暂无数据（尚无调用样本）'}
+                    </div>
+                    {/* 冷却时间用可读形式("还剩 X 分钟"),不裸展示时间戳 */}
+                    {cd !== '' && <div className="text-amber-600">冷却{cd === null ? '中（剩余时长不可读）' : `中，${cd}`}</div>}
+                    {/* 最近错误:last_error_message 可能为空 ⇒ 为空不显示 */}
+                    {(key.last_error_message || (key.last_error_status ?? 0) > 0) && (
+                      <div className="text-destructive">
+                        最近错误{key.last_error_status ? `（HTTP ${key.last_error_status}）` : ''}
+                        {key.last_error_message ? `：${key.last_error_message}` : ''}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-1">
+                    <Button size="sm" variant="outline" onClick={() => resetProviderKey(key)} disabled={busy !== null}>重置</Button>
+                    <Button size="sm" variant="destructive" onClick={() => removeProviderKey(key)} disabled={busy !== null}>删除</Button>
+                  </div>
+                </div>
+              )
+            })}
           </div>
+          <p className="text-xs text-muted-foreground">
+            停用与删除的区别:停用<strong>保留</strong>该密钥但不再参与轮询,可随时用开关恢复;删除不可逆。
+          </p>
           <div className="grid grid-cols-2 gap-2"><div><Label>标签</Label><Input value={keyForm.label} onChange={(e) => setKeyForm({ ...keyForm, label: e.target.value })} /></div><div><Label>优先级</Label><Input type="number" value={keyForm.priority} onChange={(e) => setKeyForm({ ...keyForm, priority: e.target.value })} /></div></div>
           <div><Label>新增 API Key</Label><SecretInput placeholder="sk-..." value={keyForm.api_key} onChange={(e) => setKeyForm({ ...keyForm, api_key: e.target.value })} /></div>
           <Button onClick={addProviderKey} disabled={busy !== null}>{busy?.startsWith('add-key-') ? '添加中…' : '添加密钥'}</Button>

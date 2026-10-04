@@ -275,6 +275,56 @@ type providerReq struct {
 	// Protocol(0043):openai(默认)或 anthropic(/v1/messages 兼容端点)。
 	// nil/缺省/空串 = openai;非法值拒绝。
 	Protocol *string `json:"protocol"`
+	// 0089（需求 §7）：超时 / 换 Key 次数 / 协议开关。指针语义同上 ——
+	// nil = 不修改，显式值 = 覆盖。0 对前两项表示"用内置默认"。
+	TimeoutSeconds   *int  `json:"timeout_seconds"`
+	MaxKeyAttempts   *int  `json:"max_key_attempts"`
+	ResponsesEnabled *bool `json:"responses_enabled"`
+	ChatEnabled      *bool `json:"chat_enabled"`
+}
+
+// applyProviderPolicy 把 0089 的四个可选项从请求体落到 provider 上，并校验取值。
+//
+// 校验放在**只依赖请求体**的阶段（与 protocol 校验同处）：不读库、不做 DNS，
+// 因此可以在持行锁之前或之后安全调用。返回 false 表示已写出错误响应。
+//
+// 边界（都对应真实的误配置）：
+//   - timeout_seconds：0 = 内置默认；允许 1~600。上限 600s：再长的上游等待会让
+//     连接与 goroutine 长时间占着，且用户侧早已超时；需要更长时应改用异步任务。
+//   - max_key_attempts：0 = 内置默认；允许 1~10。1 = 不换 Key。
+//   - 两个协议开关不允许**同时为 false** —— 那等于把上游整个关掉，而"关掉上游"
+//     已经有 Enabled 这个更明确的开关；允许它会造出"看起来启用、实际不接任何请求"
+//     的上游，排障时极难定位。
+func applyProviderPolicy(c *gin.Context, req providerReq, p *serverstore.GatewayProvider) bool {
+	if req.TimeoutSeconds != nil {
+		v := *req.TimeoutSeconds
+		if v < 0 || v > 600 {
+			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "timeout_seconds 必须在 0~600 秒之间（0 = 用内置默认）")
+			return false
+		}
+		p.TimeoutSeconds = v
+	}
+	if req.MaxKeyAttempts != nil {
+		v := *req.MaxKeyAttempts
+		if v < 0 || v > 10 {
+			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "max_key_attempts 必须在 0~10 之间（0 = 用内置默认，1 = 不换 Key）")
+			return false
+		}
+		p.MaxKeyAttempts = v
+	}
+	if req.ResponsesEnabled != nil {
+		p.ResponsesEnabled = *req.ResponsesEnabled
+	}
+	if req.ChatEnabled != nil {
+		p.ChatEnabled = *req.ChatEnabled
+	}
+	// 两个都不开 = 上游完全不接请求，用 Enabled 表达更清楚。
+	if !p.ResponsesEnabled && !p.ChatEnabled {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION",
+			"responses_enabled 与 chat_enabled 不能同时为 false（要停用该上游请用 enabled=false）")
+		return false
+	}
+	return true
 }
 
 func providerJSON(p serverstore.GatewayProvider) gin.H {
@@ -295,6 +345,11 @@ func providerJSON(p serverstore.GatewayProvider) gin.H {
 		"enabled":  p.Enabled == 1,
 		"channel":  p.Channel,
 		"protocol": protocol,
+		// 0089：原样回传，界面据此回显；0 / true 表示"用内置默认"。
+		"timeout_seconds":   p.TimeoutSeconds,
+		"max_key_attempts":  p.MaxKeyAttempts,
+		"responses_enabled": p.ResponsesEnabled,
+		"chat_enabled":      p.ChatEnabled,
 	}
 }
 
@@ -361,7 +416,13 @@ func createProvider(c *gin.Context, db *sql.DB) {
 		return
 	}
 	// 渠道型上游的模型由同步维护,不落手动模型清单(审计修复 M3 附带)
-	p := &serverstore.GatewayProvider{Name: req.Name, BaseURL: req.BaseURL, APIKeyEnc: enc, Channel: channel, Enabled: 1, Protocol: protocol}
+	// 0089：协议开关的**零值是 false**，所以先按"都开"起底，再由请求体覆盖；
+	// 忘了这一步会让新建的上游两个端点全关（一个请求都不接）。
+	p := &serverstore.GatewayProvider{Name: req.Name, BaseURL: req.BaseURL, APIKeyEnc: enc, Channel: channel, Enabled: 1, Protocol: protocol,
+		ResponsesEnabled: true, ChatEnabled: true}
+	if !applyProviderPolicy(c, req, p) {
+		return
+	}
 	if channel == "" {
 		p.Models = req.Models
 	}
@@ -471,6 +532,22 @@ func updateProvider(c *gin.Context, db *sql.DB) {
 			return
 		}
 	}
+	// 0089：四个可选项的**取值**校验也放在只依赖请求体的这一段（不读库、不出网，
+	// 因此不受下面持行锁的影响）。校验通过的值先记在 req 上，真正落地在锁内那次
+	// FOR UPDATE 重读之后（否则会被重读覆盖）。
+	if req.TimeoutSeconds != nil && (*req.TimeoutSeconds < 0 || *req.TimeoutSeconds > 600) {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "timeout_seconds 必须在 0~600 秒之间（0 = 用内置默认）")
+		return
+	}
+	if req.MaxKeyAttempts != nil && (*req.MaxKeyAttempts < 0 || *req.MaxKeyAttempts > 10) {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "max_key_attempts 必须在 0~10 之间（0 = 用内置默认，1 = 不换 Key）")
+		return
+	}
+	if req.ResponsesEnabled != nil && req.ChatEnabled != nil && !*req.ResponsesEnabled && !*req.ChatEnabled {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION",
+			"responses_enabled 与 chat_enabled 不能同时为 false（要停用该上游请用 enabled=false）")
+		return
+	}
 	if req.BaseURL != "" {
 		if err := validateUpstreamBaseURL(req.BaseURL); err != nil {
 			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", err.Error())
@@ -570,6 +647,12 @@ func updateProvider(c *gin.Context, db *sql.DB) {
 		} else {
 			p.Enabled = 0
 		}
+	}
+	// 0089：四个可选项落地。**必须在锁下重读之后**——上面那次 FOR UPDATE 重读
+	// 拿到的是数据库当前值，若在重读前赋值就会被覆盖回原值（表现为"改了没生效"，
+	// 而且没有任何报错）。
+	if !applyProviderPolicy(c, req, p) {
+		return
 	}
 	// models 行的"运营方配置"快照(价格/缓存价/峰谷折扣/default_params/模态),
 	// 用于把"价格被改/被清"纳入本次审计(G-01)。必须在上面的 provider 写入与
@@ -856,11 +939,23 @@ func deleteProvider(c *gin.Context, db *sql.DB) {
 }
 
 func providerKeyJSON(key serverstore.GatewayProviderAPIKey) gin.H {
+	// 需求 §7.3：管理端要显示「Key 状态、最近错误、冷却时间和成功率，不显示完整 Key」。
+	//   - api_key 恒为掩码（MaskSecret），真实 Key 从不下发 —— 这条是硬边界；
+	//   - success_rate 为 nil 时表示**尚无样本**（total_count=0），前端显示"暂无数据"
+	//     而不是 0%（"还没用过"与"一直失败"在运维上是完全不同的结论）。
+	var successRate *float64
+	if key.TotalCount > 0 {
+		rate := float64(key.SuccessCount) / float64(key.TotalCount)
+		successRate = &rate
+	}
 	return gin.H{
 		"id": key.ID, "provider_id": key.ProviderID, "label": key.Label,
 		"api_key": serverauth.MaskSecret, "enabled": key.Enabled, "priority": key.Priority,
 		"cooldown_until": key.CooldownUntil, "failure_count": key.FailureCount,
 		"last_used_at": key.LastUsedAt, "last_error_at": key.LastErrorAt,
+		"success_count": key.SuccessCount, "total_count": key.TotalCount,
+		"success_rate":      successRate,
+		"last_error_status": key.LastErrorStatus, "last_error_message": key.LastErrorMessage,
 	}
 }
 
@@ -1041,12 +1136,37 @@ type modelReq struct {
 	// CacheInputPricePer1M 缓存命中输入价(0029):nil/未传 = 不覆盖;0 = 清空(未配置)。
 	CacheInputPricePer1M optionalFloat `json:"cache_input_price_per_1m"`
 	OffpeakDiscount      optionalFloat `json:"offpeak_discount"` // 0023:0<d<=1 低谷折扣;nil/1 = 无峰谷
+	// Hidden 管理员隐藏开关(0088,需求 §7.1「隐藏不需要的模型」):
+	// 未传 = 不覆盖;显式 true/false = 设为该值。隐藏只影响"员工能否看到/能否调用",
+	// 行、价格、参数全部保留,随时可恢复(与不可逆的删除区分开)。
+	Hidden optionalBool `json:"hidden"`
 }
 
 // optionalFloat 记录 JSON 字段是否出现(Set)与解析出的值(Value,nil = null)。
 type optionalFloat struct {
 	Set   bool
 	Value *float64
+}
+
+// optionalBool 与 optionalFloat 同语义（审计修复 L6 的三态口径）：
+// 未传（Set=false）= 不覆盖；显式 true/false（Set=true）= 设为该值。
+//
+// 为什么不能直接用 bool：模型更新是**部分更新**（PUT 只覆盖请求体里出现的字段），
+// 用裸 bool 就无法区分"调用方没提隐藏这回事"与"调用方要求显示出来" —— 前者必须
+// 保持现值，后者必须改成 false。前端每加一个开关都会踩一次这个坑。
+type optionalBool struct {
+	Set   bool
+	Value bool
+}
+
+func (o *optionalBool) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	var v bool
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
 }
 
 func (o *optionalFloat) UnmarshalJSON(b []byte) error {
@@ -1141,6 +1261,15 @@ func priceStr(p *float64) string {
 		return "未定价"
 	}
 	return strconv.FormatFloat(*p, 'g', -1, 64)
+}
+
+// boolCn 把开关值写成审计明细里的中文（"已隐藏/显示" 比 "true/false" 好读，
+// 且与同一条明细里其它字段的中文口径一致）。
+func boolCn(v bool) string {
+	if v {
+		return "已隐藏"
+	}
+	return "显示"
 }
 
 func createModel(c *gin.Context, db *sql.DB) {
@@ -1334,6 +1463,10 @@ func updateModel(c *gin.Context, db *sql.DB) {
 	if req.OffpeakDiscount.Set {
 		m.OffpeakDiscount = req.OffpeakDiscount.Value
 	}
+	// 0088:隐藏开关(三态,同价格字段的「未传不覆盖」口径)。
+	if req.Hidden.Set {
+		m.Hidden = req.Hidden.Value
+	}
 	if err := serverstore.UpdateModelTx(tx, m); err != nil {
 		if errors.Is(err, serverstore.ErrDuplicate) {
 			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "模型名已存在")
@@ -1370,6 +1503,11 @@ func updateModel(c *gin.Context, db *sql.DB) {
 	}
 	if !optF64Eq(m.OffpeakDiscount, orig.OffpeakDiscount) {
 		ch = append(ch, "offpeak:"+priceStr(orig.OffpeakDiscount)+"→"+priceStr(m.OffpeakDiscount))
+	}
+	// 0088:隐藏/恢复必须留痕 —— 它改变的是"员工能不能用"，属于可见性变更，
+	// 与改价一样要能回答"谁在什么时候把它藏起来了"。
+	if m.Hidden != orig.Hidden {
+		ch = append(ch, "hidden:"+boolCn(orig.Hidden)+"→"+boolCn(m.Hidden))
 	}
 	// 审计与业务写**同事务**(R16C-01):价格/参数变更明细的口径即计费,
 	// 审计写不进去就整体回滚,不留"改了价没留痕"的组合。

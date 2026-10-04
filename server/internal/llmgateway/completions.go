@@ -129,13 +129,10 @@ func (a *API) handleCompletions(c *gin.Context) {
 				return
 			}
 		}
-		attempt, lease, keyErr := a.upstreamWithKey(ups[i])
-		if keyErr != nil {
-			err = keyErr
-		} else {
-			resp, err = a.forwardEndpoint(c, &attempt, body, req.Stream, "/completions")
-			recordLeaseResponse(lease, resp, err)
-		}
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/completions")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}

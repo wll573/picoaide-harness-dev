@@ -422,13 +422,10 @@ func (a *API) handleMessages(c *gin.Context) {
 	var respSecrets []string   // 成功 provider 的官方 key(响应脱敏用)
 	var chosenProviderID int64 // 实际命中的 provider(计费取价用,P1-6)
 	for i := range ups {
-		attempt, lease, keyErr := a.upstreamWithKey(ups[i])
-		if keyErr != nil {
-			err = keyErr
-		} else {
-			resp, err = a.forwardAnthropic(c, &attempt, outbound, req.Stream)
-			recordLeaseResponse(lease, resp, err)
-		}
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardAnthropic(c, up, outbound, req.Stream)
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
