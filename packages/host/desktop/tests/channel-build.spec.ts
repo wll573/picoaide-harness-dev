@@ -292,6 +292,13 @@ describe('packagedAppId：产物身份判据的真源（B1-02）', () => {
 })
 
 describe('channel build validation (fail loud)', () => {
+  it('uses the local default unless an explicit channel overrides it', () => {
+    expect(resolveBuildChannelId({}, 'acme')).toBe('acme')
+    expect(resolveBuildChannelId({ [CHANNEL_ENV]: 'beta' }, 'acme')).toBe('beta')
+    expect(resolveBuildChannelId({})).toBe('official')
+    expect(() => resolveBuildChannelId({}, 'invalid channel')).toThrow(/不是合法渠道 id/u)
+  })
+
   it('rejects a malformed channel id', () => {
     expect(() => resolveBuildChannelId({ [CHANNEL_ENV]: 'Acme Corp' })).toThrow(/不是合法渠道 id/u)
   })
@@ -543,4 +550,3 @@ describe('channel builder overrides never enter the packaged app root', () => {
     expect(existsSync(join(paths.configDir!, CHANNEL_BUILDER_CONFIG_FILENAME))).toBe(true)
   })
 })
-

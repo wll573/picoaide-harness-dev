@@ -8,7 +8,8 @@
  *
  * 现在：
  *   - 渠道由环境变量 `DSH_BUILD_CHANNEL` 选择（CI 的渠道矩阵注入）；
- *   - 缺省 `official`，此时**全部输出与改造前一致**（官方默认值见下表）。
+ *   - 本地构建可用被忽略的 `channels/.build-default` 指定默认渠道；
+ *   - 未配置本地默认值或在 CI 中时缺省 `official`（官方默认值见下表）。
  *
  * 为什么用 `--config.*` CLI 覆盖而不是改 package.json：仓库里的一份
  * package.json 要同时服务官方与所有渠道，只有 CLI 覆盖才能让同一个检出
@@ -135,11 +136,11 @@ function record(value: unknown): Record<string, unknown> {
 /**
  * 解析渠道 id（环境变量）。
  * @param env - 进程环境。
+ * @param defaultChannel - 本地配置的默认渠道，环境变量优先。
  * @returns 渠道 id；非法即抛错（构建期 fail-loud，不产出错误渠道的包）。
  */
-export function resolveBuildChannelId(env: NodeJS.ProcessEnv = process.env): string {
-  const raw = text(env[CHANNEL_ENV])
-  if (raw === undefined) return 'official'
+export function resolveBuildChannelId(env: NodeJS.ProcessEnv = process.env, defaultChannel = 'official'): string {
+  const raw = text(env[CHANNEL_ENV]) ?? text(defaultChannel) ?? 'official'
   if (!CHANNEL_ID_PATTERN.test(raw)) {
     throw new Error(
       `channel-build: ${CHANNEL_ENV}=${JSON.stringify(raw)} 不是合法渠道 id`
@@ -261,7 +262,7 @@ function defaultRepoRoot(): string {
 /**
  * 解析本次构建的渠道上下文。
  *
- * 官方渠道（未设 `DSH_BUILD_CHANNEL`）返回的全是官方默认值，且 `brandDir`
+ * 官方渠道（未设环境变量或本地默认值）返回的全是官方默认值，且 `brandDir`
  * 指向 `brands/official/` —— 与改造前一致。
  * @param options - 环境与仓库根（测试可覆盖）。
  * @returns 渠道 id、素材目录与 electron-builder 覆盖参数。
@@ -272,7 +273,12 @@ export function resolveChannelBuildContext(
 ): ChannelBuildContext {
   const env = options.env ?? process.env
   const repoRoot = options.repoRoot ?? defaultRepoRoot()
-  const channelId = resolveBuildChannelId(env)
+  // Private checkout preference; explicit environments and CI remain deterministic.
+  const localDefaultFile = join(repoRoot, 'channels', '.build-default')
+  const localDefault = options.env === undefined && !env.CI && existsSync(localDefaultFile)
+    ? readFileSync(localDefaultFile, 'utf8').trim()
+    : 'official'
+  const channelId = resolveBuildChannelId(env, localDefault)
   const official = channelId === 'official'
   const channelDir = join(repoRoot, 'channels', channelId)
   const branding = official ? {} : readChannelDesktopBranding(channelDir)
