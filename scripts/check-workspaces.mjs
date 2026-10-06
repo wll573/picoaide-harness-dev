@@ -618,7 +618,7 @@ function scheduleTableProblems() {
 /** 影响全仓的顶层文件(改动即视为全量门禁)。 */
 const GLOBAL_PREFIXES = [
   'package.json', 'yarn.lock', '.yarnrc.yml', 'patches/', 'scripts/', '.github/',
-  'brands/', 'tsconfig', 'deepseek-harness', 'AGENTS.md', 'CLAUDE.md',
+  'brands/', 'tsconfig', 'deepseek-harness', 'AGENTS.md',
   // upstream.json is an input of check:layout (submodule URL/commit/version):
   // without it a pin-only change selected zero packages and the early exit
   // skipped every root guard — a false-green fast gate.

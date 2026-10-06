@@ -2,7 +2,7 @@
 
 [中文文档](README.md)
 
-This directory is the documentation entry for PicoAide Harness. **User documentation has moved to the official wiki** ([Desktop Client](https://www.picoaide.com/en/docs/desktop/) · [Product Philosophy](https://www.picoaide.com/en/docs/philosophy/) · [FAQ](https://www.picoaide.com/en/docs/faq/)); this directory keeps maintainer-oriented material. Want to contribute? See [CONTRIBUTING](../CONTRIBUTING.en.md).
+This directory contains product, deployment, and development documentation. See the [project README](../README.md) for changes and build commands in this development repository, and the [illustrated client guide](client-guide.md) for desktop usage. The upstream wiki remains a reference ([Desktop Client](https://www.picoaide.com/en/docs/desktop/) · [Product Philosophy](https://www.picoaide.com/en/docs/philosophy/) · [FAQ](https://www.picoaide.com/en/docs/faq/)).
 
 ## Read by goal
 

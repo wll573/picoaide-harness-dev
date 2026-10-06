@@ -57,7 +57,7 @@ if (!existsSync(CLASSIFIER)) {
 const PUSH_CASES = [
   ['只改 docs/**', 'false', ['docs/a.md']],
   ['只改 site/**', 'false', ['site/a.md']],
-  ['只改仓库根 markdown', 'false', ['CONTRIBUTING.md']],
+  ['只改仓库根 markdown', 'false', ['README.md']],
   ['改 docs/** + 根 md', 'false', ['docs/a.md', 'README.md']],
   ['改 server/skills 下的 .md（随包文档，判据在 Go 测试里）', 'true', ['server/skills/x.md']],
   ['改 packages 下的 .md（随包文档，判据在包 check 里）', 'true', ['packages/host/desktop/x.md']],

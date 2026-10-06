@@ -4,8 +4,8 @@
 改动。本文记录这轮审计的方法、确认与驳回的结论、修复落点、**明确接受不修的残留**，以及
 仓库 CodeQL 面板的处置口径。
 
-方法与提示词见 `docs/playbooks/multi-agent-regression-audit.md`。台账原文（含逐条 id、
-文件行号与变异记录）在 `temp/audit-v275/LEDGER.md`（工作区临时目录，不随仓库发布）。
+审计方法概述见下文。台账原文（含逐条 id、文件行号与变异记录）在
+`temp/audit-v275/LEDGER.md`（工作区临时目录，不随仓库发布）。
 
 ## 一、方法
 

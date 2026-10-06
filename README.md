@@ -13,7 +13,7 @@
 | 需要做什么 | 入口 |
 | --- | --- |
 | 学习客户端操作 | [客户端图文教程](docs/client-guide.md) |
-| 加入协作开发 | [协作开发指南](CONTRIBUTING.md) |
+| 查看相对原项目的改动 | [本次更新](#本次更新) |
 | 从源码启动客户端 | [开发环境与客户端启动](#开发环境与客户端启动) |
 | 启动服务端和管理后台 | [服务端本地开发](#服务端本地开发) |
 | 了解注册与历史记录 | [注册审批与账号数据](#注册审批与账号数据) |
@@ -38,17 +38,111 @@
 
 可用模型、登录方式、能力与权限由实际连接的服务端决定。图文教程使用中性品牌与演示数据，具体界面可能随渠道配置变化。
 
-## 最近完成的改进
+## 本次更新
 
-| 内容 | 变化 | 对应提交 |
+本节记录在原 `picoaide-harness` 基础上合入本开发分支的修改，基线为共同祖先 **`8757735dd`**（`v2.8.2-beta.3` 交付说明所在提交），按 `8757735dd..HEAD` 的实际差异整理。这里列的是本分支新增或修改的行为；上方“主要功能”介绍的是整个项目的能力，两者范围不同。
+
+### 1. 客户端界面与日常操作
+
+| 修改项 | 当前行为 | 主要代码位置 |
 | --- | --- | --- |
-| 本地账号数据隔离 | 会话原始记录、索引和投影缓存按服务端与账号分别保存；切换账号时完整重启宿主 | `7583a21a4` |
-| 注册成功提示 | 注册后提示联系管理员审批，不再立即尝试登录 | `7df219b05` |
-| 白天主题侧边栏 | 根据解析后的主题设置背景，避免部分电脑在白天主题下显示黑色 | `a8eee098b` |
-| 本地渠道构建 | 支持私有的本地默认渠道，减少重复打包时的渠道选择错误 | `bd20b5eb6` |
-| 客户端图文教程 | 补充登录、工作区、对话、设置、能力中心与账户等操作说明 | `cd589392a` |
+| 左侧导航直显 | 定时任务、能力中心、连接器、浏览器、应用中心从“更多”浮层改为独立入口；收紧行高、间距与内边距，保留折叠图标、激活态和等待提示 | `packages/client/foot-menu/` |
+| 面板切换 | 同步导航选中状态与面板焦点，处理面板关闭后状态清理，完善客户端插件之间的导航交接 | `packages/client/panel-surface/`、`packages/client/foot-menu/` |
+| 账户显示 Token 用量 | 账户卡主展示改为输入、输出、总 Token，并显示今日 / 当月用量；缺数据与零用量分别处理 | `packages/client/account-card/` |
+| 白天主题侧边栏 | 使用解析后的主题背景，修复部分电脑开启白天主题但侧边栏仍为黑色的问题 | `packages/host/desktop/src/client/styles.ts` |
+| 账号会话隔离 | 按服务端地址与用户名保存会话、索引和缓存；切换身份时完整重启宿主，避免混入前一个账号的数据 | `packages/host/host-home/src/account-data.ts`、desktop `main.ts` / `profile.ts`、enterprise `session-service.ts` |
+| 登录地址记忆 | 保存最近连接的服务端地址；退出登录后可直接进入该服务端的账号登录流程 | `packages/host/enterprise/src/session-service.ts`、`auth-gate.ts` |
+| 自助注册与审批提示 | 从服务端读取注册开关；注册成功提示联系管理员审批，不再立即登录并误报账号或密码错误 | `packages/host/enterprise/src/auth-gate.ts`、`server/internal/serverauth/` |
+| 审批面板与默认权限 | 将工具执行审批面板纳入桌面配置，默认权限档位设为完全权限；仍由实际工具权限和审批机制控制执行 | `packages/host/desktop/src/profile.ts` |
+| 定时任务服务依赖 | 显式依赖工作区 UI 服务，修复定时任务页面缺少服务注入的问题 | `packages/host/cron/src/client/index.ts` |
+| 本地化与文案 | 调整客户端、管理后台和门户相关文案，统一使用“单位”等称呼，并同步导航与用量相关语言项 | client locales、`server/internal/portal/`、`server/webadmin/src/pages/` |
 
-本分支还包含定时任务入口、工作区服务注入、客户端面板自动化验证，以及网关供应商和输入 / 输出 Token 的审计记录等改进。
+### 2. 模型网关与思考参数
+
+| 修改项 | 当前行为 | 主要代码位置 |
+| --- | --- | --- |
+| 供应商适配 | 新增 Qwen、GLM、MiniMax、Hunyuan 的兼容适配；沿用配置的供应商地址进行模型发现与请求转发 | `server/internal/llmgateway/channels/` |
+| 思考档位映射 | 将客户端的 off / low / high / max 按适配器转换为上游参数；Qwen 对应 none / low / medium / xhigh，移除冲突或不支持的参数 | `channels/qwen.go`、`channels/openai_compat.go`、`upstream.go` |
+| 按模型呈现思考选项 | 支持模型级 `_thinking_adapter`，可以显示不同档位、只显示关闭 / 默认，或隐藏选择器；从模型参数解析上下文窗口 | `packages/host/enterprise/src/bootstrap.ts` |
+| 多 API Key 管理 | 同一供应商维护多把加密 Key，支持标签、启停、优先级、重置与删除，旧单 Key 可迁移到池中 | `keypool.go`、网关 `admin.go`、`serverstore/provider_keys.go` |
+| 轮询、重试与冷却 | 分配可用 Key；网络错误和指定上游错误可换 Key 重试，失败后冷却；记录使用、成功、失败与最近错误 | `server/internal/llmgateway/keypool.go` |
+| Key 成功率展示 | 管理后台显示每把 Key 的成功次数、请求次数与成功率；没有样本时显示暂无数据 | `server/webadmin/src/pages/Gateway.tsx` |
+| 隐藏不需要的模型 | 增加独立的管理员隐藏开关，客户端模型列表过滤隐藏模型；目录同步不会覆盖管理员的隐藏意图 | `serverstore/gateway.go`、`llmgateway/models.go`、`Gateway.tsx` |
+| 上游调用策略 | 增加供应商级超时、最大 Key 尝试次数、Chat Completions 与 Responses 开关，并在转发路径执行这些配置 | `llmgateway/admin.go`、`upstream.go`、`handler.go` |
+| 流式心跳 | 上游沉默期发送 SSE 心跳，降低中间代理因空闲关闭长请求的风险 | `server/internal/llmgateway/handler.go` |
+
+模型最终可用性仍取决于实际服务端配置、上游协议与访问权限。某台部署机上调整的密钥、模型参数和用户授权保存在数据库中，不会因为提交源码自动同步到其他环境。
+
+### 3. Prompt / Response 全文审计
+
+| 修改项 | 当前行为 | 主要代码位置 |
+| --- | --- | --- |
+| 网关全文留存 | 在相关网关路由记录原始请求和响应；流式响应按加密分块保存，避免一次性积累完整流到内存 | `llmgateway/transcript_middleware.go`、`serverstore/transcript.go` |
+| 审计详情字段 | 记录模型、实际供应商、输入 / 输出 / 总 Token、耗时、流式状态、会话 / 工作区标签和错误信息 | `serverstore/transcript.go`、`llmgateway/handler.go` |
+| 完整性状态 | 区分进行中、完整、未正常收尾与本地写入失败，避免将上游 HTTP 200 但截断的流当作正常完成 | `llmgateway/handler.go`、`transcript_middleware.go` |
+| 正文可读展示 | 从 Chat Completions、Anthropic 和 Responses JSON / SSE 中提取可读的用户输入与模型回复，同时保留原始数据 | `serverauth/transcript_readable.go`、`webadmin/src/components/transcript-detail.tsx` |
+| 查询与导出 | 提供分页、用户 / 模型 / 会话 / 时间等筛选、详情与 CSV 导出，保留对应管理权限控制 | `serverauth/transcript_admin.go`、`webadmin/src/pages/Audit.tsx` |
+| 留存与敏感操作日志 | 将全文审计留存任务接入调度；敏感操作日志与 LLM 请求 / 响应展示分开整理 | `server/internal/auditretention/`、`webadmin/src/pages/SystemLogs.tsx` |
+| 审计计量补齐 | 将最终计量的输入 / 输出 Token 和命中的供应商传递到审计结果，减少有用量但详情字段为空的问题 | `llmgateway/handler.go`、`transcript_middleware.go` |
+
+### 4. 管理后台与托管客户端
+
+| 修改项 | 当前行为 | 主要代码位置 |
+| --- | --- | --- |
+| 管理后台 Token 口径 | 调整概览、成员、部门、模型、日志、报告和账户相关页面，以 Token 统计作为主要展示；对应服务端查询补齐计数 | `server/webadmin/src/pages/usage/`、`serverstore/usage.go`、`serverauth/handler.go` |
+| 托管配置管理 | 增加管理员配置界面和客户端策略接口，保存用户设置、Skill 策略和设备同步状态 | `server/internal/managedconfig/`、`serverstore/managed_client_policy.go`、`webadmin/src/pages/ManagedConfig.tsx` |
+| 默认模型与思考档位下发 | 客户端登录与同步时应用服务端指定的默认模型和 reasoning effort，并处理旧服务端缺少策略接口的情况 | `packages/host/enterprise/src/managed-policy.ts`、`bootstrap.ts` |
+| Skill 策略执行 | 支持必装、允许与禁止策略；按策略下载、核对版本 / 校验值、安装或移除 Skill，并上报客户端执行状态 | `managed-policy.ts`、`skill-install.ts` |
+| 权限与路由同步 | 为新审计和托管页面补齐客户端接口、管理接口、后台导航、路由与 RBAC 声明 | `server/internal/router/`、`serverauth/rbac.go`、`webadmin/src/lib/` |
+
+Token 展示调整不等于删除原有计费与余额账本；底层资金记录仍按服务端实现保留。
+
+### 5. 内网部署、离线构建与更新
+
+| 修改项 | 当前行为 | 主要代码位置 |
+| --- | --- | --- |
+| 内网 HTTP 适配 | 增加 HTTP 部署的 Caddy / Compose 入口与运行配置；客户端连接、技能安装、安装包下载和更新地址支持部署所需的 HTTP 表面 | `server/Caddyfile.http`、`docker-compose.http.yml`、desktop / enterprise 的地址处理 |
+| 更新说明与发布放行 | 扩展客户端发布元数据和更新说明，在客户端更新流程展示相关信息；调整运行配置与下载校验的接入 | `server/internal/clientrelease/`、desktop `desktop-release.ts` / `updates.ts` / `update-download.ts` |
+| 服务端离线构建 | 新增联网准备、Go / npm / Yarn / pnpm 缓存、Ubuntu 工具链、基础镜像、服务端镜像导入导出和 SHA256 校验流程 | `packaging/offline/`、`server/Dockerfile`、`server/Makefile` |
+| Windows 离线打包 | 新增 Windows 工具链与依赖缓存准备、缓存恢复、原生安装包构建与登记流程 | `packaging/offline/*.ps1`、`register-windows-installer.sh` |
+| 本地构建与 WSL 同步 | 扩展本机构建矩阵，提供 Windows / WSL 同步脚本；同步脚本中的本机路径需要按实际环境配置 | `packaging/local-build-matrix.mjs`、`scripts/wsl-sync.*` |
+| 本地默认渠道 | 显式环境变量优先，非 CI 环境可读取私有 `channels/.build-default`，减少重复打包时的渠道遗漏 | `packages/host/desktop/scripts/channel-build.ts` |
+| 项目 Logo 素材 | 将现用主 Logo、深色版和应用图标原样公开到独立目录，并在 README 展示；未采用的概念稿不进入发布素材 | [brands/project](brands/project/README.md) |
+
+### 6. 数据迁移、文档与验证
+
+本分支新增 PostgreSQL 迁移 **0083–0089**，分别覆盖全文审计 / 加密响应分块、供应商 Key 池、托管策略与设备、审计详情字段、Key 成功率、模型隐藏、供应商调用策略。相应迁移校验、查询、测试与数据库说明同步调整。升级前须备份数据库和加密主密钥。
+
+文档补充了[客户端图文教程](docs/client-guide.md)、[内网部署说明](docs/deploy/INTRANET-UBUNTU24-WINDOWS.md)、[离线构建说明](packaging/offline/README.md)和[插件清单](docs/deploy/DEEPSEEK-HARNESS-PLUGIN-INVENTORY.md)。本次文档整理删除无关 AI 工具入口 / 提示词材料及协作开发指南，并清理引用与对应的构建校验依赖。
+
+验证方面新增或修订了网关适配、Key 池、思考参数、全文审计、流式心跳、管理后台、账号隔离、注册审批、导航面板与主题测试；客户端 E2E 和真实环境脚本同步当前 UI、模拟接口与定时任务流程。合并过程还修复了类型 / 构建缺口、跨平台断言、数据库迁移范围、路由契约和测试夹具漂移。
+
+公开基础镜像源与包源的域名守卫登记也作了必要调整。上述验证代码属于分支修改的一部分，具体运行结果以[测试与验证](#测试与验证)及 CI 记录为准，不能仅凭测试文件存在就认定全部功能已经验证。
+
+### 7. 追溯本分支修改
+
+使用固定基线可以检查全部修改文件与提交，不依赖上游分支后续是否继续更新：
+
+```sh
+git diff --stat 8757735dd..HEAD
+git diff --name-status 8757735dd..HEAD
+git log --reverse --oneline 8757735dd..HEAD
+```
+
+关键提交索引：
+
+| 范围 | 提交 |
+| --- | --- |
+| 初始服务端、客户端、网关与离线交付合入 | `2a3715269`、`c06341ca4`、`f97e7a638`、`c71f904a1` |
+| 编译与跨平台收口、审批面板、迁移约束与测试修正 | `9b333506e`、`8736b0b48`、`2c607e8f0`、`b17b84da4` |
+| 全文审计与供应商 / Token 计量 | `637aa1d4e`、`980b462eb` |
+| Key 轮询、成功率与模型隐藏 | `8a10934ad` |
+| 客户端导航与管理后台 Token 用量 | `cc990d662`、`7548d9634` |
+| 更新说明、部署与流式心跳 | `b7695ce75`、`257008c1c` |
+| 定时任务、UI 自动化和公开包源登记 | `1f665776f`、`c57f19a1b`、`116a101cc` |
+| 需求基线、开发仓说明、单位文案与使用教程 | `5435ebfe2`、`a3c015342`、`6a16796a9`、`cd589392a` |
+| 本地默认渠道、白天主题、注册审批与账号隔离 | `bd20b5eb6`、`a8eee098b`、`7df219b05`、`7583a21a4` |
+| README 扩充与现用 Logo 公开 | `5917c2695`、`7edb20cf3` |
 
 ## 仓库结构
 
@@ -325,11 +419,7 @@ corepack yarn workspace dsh-plugin-desktop e2e:terminal
 
 只改 Markdown 的提交可能由 CI 判为文档变更并跳过二进制构建，查看 GitHub 时应以实际工作流结果和产物为准。
 
-## 提交与贡献
-
-准备加入项目请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)：其中说明邀请协作者、Fork、创建功能分支、验证与提交 PR 的完整流程。
-
-功能改动使用小而清晰的提交，完成相关验证后推送到开发仓。Pull Request 应说明最终行为、验证结果和未验证范围。
+## 版本库与本地配置
 
 公开仓保存代码、通用文档与批准的公共素材。部署数据库、登录状态、密钥、本地渠道资料、临时测试数据及未采用的设计预览不属于源码提交。提交前确认 `git status` 和暂存区内容，避免误上传私有资料。
 

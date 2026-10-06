@@ -157,7 +157,7 @@ const MINIMUM_REQUIRED_GUARDS = [
  * 重新生成：`node scripts/check-guard-parser-integrity.mjs --print-digests`。
  */
 const REGISTERED_GUARD_ENTRIES = new Map([
-  ['check:layout', { script: 'node scripts/verify-layout.mjs', argvTail: [], digest: '7f5f2073b0eec7fd0ea9ff47d86ba0b1e85bdbc3673544ed5680a20da6dd5cdc' }],
+  ['check:layout', { script: 'node scripts/verify-layout.mjs', argvTail: [], digest: 'c75ccc65dc3e794bcded2757b5b11d223e902c32caceccded21bd6ff323874e4' }],
   ['check:workflows', { script: 'node scripts/check-workflows.mjs', argvTail: [], digest: 'ad8fb4bbfc6ec9d0865c28ba361f4bbe8c2e39c8a3e30b98e08f335ddb27c71b' }],
   ['check:ci-scripts', { script: 'node scripts/verify-ci-scripts.mjs', argvTail: [], digest: '2eec1717099b71d66d04b5424f6541c5e6c174dc5391bd4450847c0f2c9cbc1a' }],
   ['check:patch-resolutions', { script: 'node scripts/verify-patch-resolutions.mjs', argvTail: [], digest: '6dcde2281311235a57722608d91e6a1fa59734411ad65cda76ea2bdc43145c83' }],
@@ -168,9 +168,9 @@ const REGISTERED_GUARD_ENTRIES = new Map([
   ['check:glitchtip', { script: 'node scripts/verify-glitchtip-ops-check.mjs', argvTail: [], digest: 'f73f2ebcecbfeaaa57c069ca2e662dc1842b9d37d53eb413fc36bb85a987be3e' }],
   ['check:check-workspaces', { script: 'node scripts/verify-check-workspaces.mjs', argvTail: [], digest: '7db5a2078ca7bba40c5fb5cb9c3ccc7269342691b9fe0d08527a1a24591ceb9a' }],
   ['check:no-leftover-mutants', { script: 'node scripts/check-no-leftover-mutants.mjs', argvTail: [], digest: 'c1a84c22a47bea2c1368bfba32f33b20feca66deb30abcbbc0eb40318f807285' }],
-  ['check:migration-range', { script: 'node scripts/check-migration-range.mjs', argvTail: [], digest: '8fa99a48c3439006545303cd5965c32768b450871eaaec71c50ca2d85693475e' }],
+  ['check:migration-range', { script: 'node scripts/check-migration-range.mjs', argvTail: [], digest: '6e4e253203aa5d56a0a052b4a69aab6063b6950d778ab26f5a1c6ca44b1eac91' }],
   ['check:doc-claims', { script: 'node scripts/check-doc-claims.mjs', argvTail: [], digest: '7bf93bda612dc031504cbb3b62ad4e7fc61171978c130d5283f4b02f0ab27948' }],
-  ['check:no-real-domains', { script: 'node scripts/check-no-real-domains.mjs', argvTail: [], digest: 'debac95a09ba059181589cea63660dd1c2c1cf24337db5f6f1129402dfc6d6b2' }],
+  ['check:no-real-domains', { script: 'node scripts/check-no-real-domains.mjs', argvTail: [], digest: 'fe0e7797e9b72f165cd72170adfdc1535082a54e5b6d3ae50b6fa84820628651' }],
   // `--portable`：只跑便携子集（需要真 PG / 显示器的组归 server job 与 W6 三平台）。
   // FIX-48③ 起：本脚本 run-id 化（证据目录 `temp/wasm-client-only/runs/<run-id>/`），
   // 摘要在同一个 PR 里同步（可评审的 diff）。
