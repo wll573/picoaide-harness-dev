@@ -1,213 +1,69 @@
-<h1 align="center">PicoAide Harness</h1>
+# picoaide-harness-dev
 
-<p align="center">
-  <strong>Enterprise-grade DeepSeek Harness platform.</strong><br>
-  Desktop client + local agent engine + admin console, ready out of the box.<br>
-  Everything is a plugin, and the desktop shell itself is a plugin.
-</p>
+This is the personal development repository of `wll573` for a Harness-based desktop client, server, and verification environment.
 
-<p align="center">
-  <a href="https://github.com/picoaide/picoaide-harness/releases/latest"><img src="https://img.shields.io/github/v/release/picoaide/picoaide-harness?style=flat&amp;label=release&amp;color=4D6BFE" alt="Latest release"></a>
-  <a href="https://github.com/picoaide/picoaide-harness/releases"><img src="https://img.shields.io/github/downloads/picoaide/picoaide-harness/total?style=flat&amp;label=downloads&amp;color=4D6BFE" alt="Total downloads"></a>
-  <a href="https://github.com/picoaide/picoaide-harness"><img src="https://img.shields.io/github/stars/picoaide/picoaide-harness?style=flat&amp;label=stars&amp;color=08C" alt="GitHub stars"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-2EA44F?style=flat" alt="MIT License"></a>
-</p>
+This repository is not an official upstream release repository and does not represent the upstream project. Changes are developed, tested, and reviewed on personal branches before any decision to send them upstream.
 
-<p align="center">
-  <a href="assets/community-qr.png"><img src="assets/community-qr.png" alt="Scan the QR code to join the official PicoAide Harness community" width="220"></a><br>
-  <strong>Scan the QR code to join the official PicoAide Harness community</strong>
-</p>
+## Current branch
 
-PicoAide Harness packages DeepSeek Harness local agents, the Host service, its plugin system, and enterprise-grade administration into one platform:
+- Development branch: `integration/intranet-merge`
+- Upstream code: the `deepseek-harness/` submodule
+- Project remote: `https://github.com/wll573/picoaide-harness-dev`
 
-- **Desktop client**: native windows, system tray, automatic updates, no Node.js or command-line setup required;
-- **Local service**: automatically starts, stops, and restores the local Harness service while keeping data on your machine;
-- **Admin console**: a web-based console covering users, departments, gateway, usage, marketplace, and the Capability Hub (shared-content approvals), and audit;
-- **Plugin ecosystem**: the official DeepSeek Harness runs unchanged at a pinned version; the desktop shell and business plugins compose through the official mechanism.
+## Work in this branch
 
-<a id="screenshots"></a>
+- Workspace service injection for the desktop scheduled-task surface
+- Automated checks for the sidebar, capability center, workspace picker, and account usage
+- Real-environment checks for login, panels, and session flows
+- Provider, input-token, and output-token metadata in gateway audit records
+- Registration of the public base-image source in the domain guard
 
-## Screenshots
+## Layout
 
-### Desktop client
-
-| Main window | Capability Hub | Connector hub |
-| --- | --- | --- |
-| <img src="assets/screenshots/desktop-main.png" alt="Desktop main window" width="100%"> | <img src="assets/screenshots/desktop-capability-market.png" alt="Capability Hub" width="100%"> | <img src="assets/screenshots/desktop-connectors.png" alt="Connector hub" width="100%"> |
-
-| Scheduled tasks | Settings |
+| Directory | Contents |
 | --- | --- |
-| <img src="assets/screenshots/desktop-cron.png" alt="Scheduled tasks" width="100%"> | <img src="assets/screenshots/desktop-settings.png" alt="Settings" width="100%"> |
+| `packages/host/desktop` | Desktop client and desktop verification scripts |
+| `packages/host/cron` | Scheduled-task plugin and tests |
+| `server/internal/llmgateway` | Model gateway and streaming response handling |
+| `server/internal/serverstore` | Database access, usage, and audit records |
+| `deepseek-harness` | Pinned upstream submodule |
 
-### Admin console
+## Development setup
 
-| Users | Capability Hub | Gateway |
-| --- | --- | --- |
-| <img src="assets/screenshots/admin-users.png" alt="User management" width="100%"> | <img src="assets/screenshots/admin-capabilities.png" alt="Capability Hub" width="100%"> | <img src="assets/screenshots/admin-gateway.png" alt="Gateway configuration" width="100%"> |
+Use Node.js 22.19+ or 24+, Corepack, and Yarn 4.18.0. Initialize the submodule and install dependencies:
 
-| Usage | Audit | Server info |
-| --- | --- | --- |
-| <img src="assets/screenshots/admin-usage.png" alt="Usage statistics" width="100%"> | <img src="assets/screenshots/admin-audit.png" alt="Audit log" width="100%"> | <img src="assets/screenshots/admin-server-info.png" alt="Server info" width="100%"> |
-
-<a id="run"></a>
-
-## Download and install
-
-Client installers **ship inside the server image** (they are not posted to a separate download page) and cover Windows x64, macOS (Apple Silicon), and Linux x64 (AppImage). Ordinary users do not need to install Node.js, pnpm, or DSH separately.
-
-| Platform | Installer | Installation |
-| --- | --- | --- |
-| Windows x64 | `PicoAide-Harness-<version>-x64-Setup.exe` | Run the NSIS installer and follow its prompts |
-| macOS (Apple Silicon) | `PicoAide-Harness-<version>-mac.dmg` | Open the DMG and drag PicoAide Harness into Applications |
-| Linux x64 | `PicoAide-Harness-<version>-x86_64.AppImage` | Grant execute permission and run |
-
-There are only two ways to obtain them:
-
-1. **Your enterprise server** (recommended): once deployed, employees open `https://<your-domain>/` and the portal lists all three platforms for download;
-2. **The official image package** (trial / single machine): take the **server image package** from the update server or from the [GitHub Release](https://github.com/picoaide/picoaide-harness/releases), then unpack the installers from that image:
-
-```bash
-VER=<version, from server.version in latest.json>   # for a prerelease channel, use beta instead of official
-curl -fL -O "https://release.picoaide.com/official/releases/${VER}/picoaide-server-${VER}-amd64.zip"
-curl -fL -O "https://release.picoaide.com/official/releases/${VER}/SHA256SUMS"
-sha256sum -c SHA256SUMS                            # <- verify the downloaded image package with SHA256SUMS
-unzip -p "picoaide-server-${VER}-amd64.zip" image.tar | docker load
-mkdir -p ./picoaide-stack
-docker run --rm -v "$PWD/picoaide-stack:/out" -e PICOAI_UNPACK_STACK=/out \
-  "picoaide-harness-server:${VER}"
-ls -1 ./picoaide-stack/client                       # installers for all three platforms + CLIENT-RELEASE.json
-```
-
-> The GitHub Release attachments are the **server image package** (`picoaide-server-<version>-amd64.zip`) and the checksum file `SHA256SUMS` — the client installers live inside that image, not in the Release attachments, and the checksum file has no `.txt` suffix.
-
-Client upgrades and first-time installs can also fetch packages straight from **the server the client signs in to** (`GET /api/client/v2/updates/manifest`), so employee machines need no outbound internet at all in an enterprise deployment. The first launch creates the default `desktop` profile and starts the official DSH Web interface locally. Full steps (taking packages from the image, air-gapped deployment, channel delivery) are in [Getting started](https://www.picoaide.com/en/getting-started/) and [Client delivery and upgrades](https://www.picoaide.com/en/deployment/client-delivery/); plugin commands and troubleshooting are in the [Desktop Client](https://www.picoaide.com/en/docs/desktop/) and [FAQ](https://www.picoaide.com/en/docs/faq/) pages.
-
-> Note: the Windows installer and Linux packages published automatically by CI are not code-signed yet (the macOS release builds are signed/notarized). Windows SmartScreen may show an "unknown publisher" warning on first run — verify the image package with the `SHA256SUMS` sitting next to it (the installers are unpacked from that image) before running; the same applies to the Linux packages.
-
-## Core advantages
-
-### Enterprise-grade, all in one
-
-- **Desktop + service + console**: the client handles interaction, the local service runs agents, and the admin console manages accounts, quotas, and audit;
-- **Multi-user isolation**: connector credentials, browser sessions, and scheduled tasks are isolated per account; logout tears down every session;
-- **Usage and quotas**: per-user, per-model billing, limits, and exemptions with peak-hour tiered pricing.
-
-### Production-ready productivity tools
-
-- **Capability Hub**: Mine/Market tabs with skill & agent type filters, source (Market/Organization/Local) and quality (Official/Featured) badges, multi-version merge with history, and one-click install/update/uninstall;
-- **Connector hub**: built-in SalesEasy (NeoCRM) and other MCP connectors with OAuth + PKCE, locally encrypted credential storage, and dynamic MCP registration;
-- **Scheduled tasks**: cron-triggered runs with a chosen agent, prompt, workspace, and permissions; execution detail (session, result, error) is always inspectable, with session jump; driven by the Host scheduler;
-- **Embedded browser**: the agent can take over the browser to act, with multi-tab, address bar, permission approval, and download control;
-- **Voice input**: the composer microphone turns speech into draft text; recognition runs on the machine (audio never leaves it, works offline) with the model downloaded on demand;
-- **Five-track memory**: user profile, global facts, project key memory, project logs, and daily logs, isolated per directory and git branch, with confirmation-first writes.
-
-### Security and compliance
-
-- Credentials written atomically with 0600/0700 permissions, plus symlink, path-escape, and oversized-read defenses;
-- OAuth state validation and timeouts; login/logout reloads to sever old sessions;
-- Admin operations are auditable, covering users, departments, quotas, gateway, marketplace, and shared-content approvals;
-- Upstream keys stored with AES-GCM encryption; API tokens hashed-only (90-day expiry) and automatically revoked on password change/role downgrade/disable;
-- Upstream DeepSeek Harness runs at a pinned version; the shell and plugins stay one-way dependent without forking upstream code.
-
-### Plugin-first architecture
-
-- Everything is a plugin: the core agents, Web UI, desktop shell, connectors, scheduled tasks, browser, and memory all compose through the official Cordis plugin mechanism;
-- The desktop shell itself is a legitimate DSH plugin; third-party plugins and desktop abilities share the same composition path;
-- Upstream is pinned, and future sync follows versions only without breaking local extensions.
-
-## Documentation
-
-Ordinary users should start at the [official wiki](https://www.picoaide.com/en/docs/); developer docs are only needed for extension or maintenance.
-
-### User documentation (official wiki)
-
-| Goal | Entry |
-| --- | --- |
-| Installation and daily use | [Desktop Client](https://www.picoaide.com/en/docs/desktop/) · [Getting Started](https://www.picoaide.com/en/docs/getting-started/) |
-| Platform, environment, and usage boundaries | [FAQ](https://www.picoaide.com/en/docs/faq/) |
-| Why this project exists | [Product Philosophy](https://www.picoaide.com/en/docs/philosophy/) |
-| System architecture and API | [System Architecture](https://www.picoaide.com/en/docs/architecture/) · [API Reference](https://www.picoaide.com/en/docs/api-reference/) |
-
-### Developer and maintainer documentation (repo)
-
-| Goal | Entry |
-| --- | --- |
-| Write plain or Desktop plugins | [Plugin development (wiki)](https://www.picoaide.com/en/docs/plugin-development/) |
-| Unified plugin contract discussion | [DSH Community Fabric Draft](community/fabric/README.md) |
-| Desktop plugin capabilities | [Desktop plugin services contract](packages/host/desktop/docs/plugin-services.md) |
-| How the desktop application works | [Architecture](docs/architecture.en.md) (maintainer view) |
-| Package-level build and release details | [`dsh-plugin-desktop/README.md`](packages/host/desktop/README.md) |
-| Full documentation division of labor | [Docs index](docs/README.en.md) |
-
-## Plugin ecosystem
-
-Plugins are extension packages that add abilities to DSH — models, tools, interfaces, and workflows can all be plugins, composed like building blocks.
-
-PicoAide Harness does not fork upstream source or hard-code a fixed shell. The official DeepSeek Harness runs unchanged at a pinned version; the desktop shell — windows, tray, updates, workspaces — is itself a legitimate DSH plugin composed into the same runtime through the official plugin mechanism. From the core agent to the desktop shell, the whole product follows one rule: "everything is a plugin". Official ecosystem plugins work as-is, and desktop abilities are composed, replaced, and evolved the same way.
-
-## Relationship with the official project
-
-This project is built on deepseek-ai/deepseek-harness.
-
-The official project provides the core agent abilities, plugin system, and Web UI. This project is responsible for:
-
-- Desktop application packaging (windows, tray, updates, workspaces)
-- Local service start, stop, and recovery
-- Enterprise admin console (users, departments, gateway, usage, marketplace, audit)
-- macOS, Windows, and Linux installer builds and releases
-- Interface experience better suited to desktop and team use
-
-If you want to run Harness from the command line or work on core features, prefer the official repository.
-
-## Special thanks
-
-Special thanks to the DeepSeek Harness repository and the DeepSeek AI team. This project is built on a pinned upstream version, and the core agents, models, tools, sessions, Web UI, and plugin ecosystem all come from that project.
-
-Special thanks to the [anywhere-labs/dsh-desktop](https://github.com/anywhere-labs/dsh-desktop) project (formerly `anywhere-labs/deepseek-harness-desktop`) for the source code and inspiration — this project's desktop packaging, plugin-first composition, and product experience began there and have evolved continuously since.
-
-Thanks also to Cordis for the plugin foundation, and to the Koishi.js project and community for years of plugin practices, tooling, and experience.
-
-Thanks to the following community plugins for their contributions to the product experience:
-
-- dsh-memory-evolve (layered memory and self-evolution): global, user, project, branch, and daily memory, plus skill and todo management for DSH
-- Connector, task, scheduled-task, and browser capability providers across the DeepSeek Harness plugin ecosystem
-
-And to everyone who uses, supports, and helps build this.
-
-<a id="run-from-source"></a>
-
-## Development
-
-Desktop code lives in `packages/host/desktop/`; the outer repository uses Yarn, while the pinned `deepseek-harness/` submodule keeps its own pnpm workspace. From the repository root:
+The package manifests and `yarn.lock` are currently out of sync on this branch, so `--immutable` installation fails until the lockfile is updated.
 
 ```sh
 git submodule update --init --recursive
 corepack yarn install --immutable
-corepack yarn dev
 ```
 
-Headless checks use `corepack yarn check`; full build, test, and release boundaries are described in the [architecture docs](docs/architecture.md) and the package-level [`README`](packages/host/desktop/README.md). See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
+Common commands:
 
-## Community
+```sh
+corepack yarn dev
+corepack yarn check
+corepack yarn test
+```
 
-For issues or support, please [submit an issue](https://github.com/picoaide/picoaide-harness/issues).
+Run server tests from `server/`:
 
-## License
+```sh
+go test -p 1 ./internal/llmgateway ./internal/serverstore
+```
 
-This project is licensed under the [MIT License](LICENSE).
+Before committing, run:
 
-> This project is a community build based on DeepSeek Harness and is not an official DeepSeek product.
+```sh
+node scripts/check-no-real-domains.mjs
+git diff --check
+```
 
-> This project is completely open source and free. If anyone tries to sell this software to you in any form, please refuse the transaction.
+## Contribution workflow
 
-> DeepSeek is a trademark of DeepSeek AI. PicoAide Harness is an independent community project with no affiliation to or endorsement from DeepSeek.
+Use a separate branch and focused commits. Run the relevant tests before opening a Pull Request and include the verification result.
 
-## Star History
+## License and source
 
-<a href="https://www.star-history.com/?repos=picoaide%2Fpicoaide-harness&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=picoaide/picoaide-harness&type=date&theme=dark&legend=top-left&sealed_token=BRTkOyC4czCEkIyFb5-QxrsC-kaDotBJ8tsjxrWs-UGfmBqfRCXSwieZPlVTCYOjJVEZ29uLvmBjAPREB524J5dPN1jk-UA7ajFdLdrbjumJqoOBeGWmig" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=picoaide/picoaide-harness&type=date&legend=top-left&sealed_token=BRTkOyC4czCEkIyFb5-QxrsC-kaDotBJ8tsjxrWs-UGfmBqfRCXSwieZPlVTCYOjJVEZ29uLvmBjAPREB524J5dPN1jk-UA7ajFdLdrbjumJqoOBeGWmig" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=picoaide/picoaide-harness&type=date&legend=top-left&sealed_token=BRTkOyC4czCEkIyFb5-QxrsC-kaDotBJ8tsjxrWs-UGfmBqfRCXSwieZPlVTCYOjJVEZ29uLvmBjAPREB524J5dPN1jk-UA7ajFdLdrbjumJqoOBeGWmig" />
-  </picture>
-</a>
+See [LICENSE](LICENSE). This repository is developed from the upstream code in the `deepseek-harness/` submodule; the submodule pointer records the exact upstream revision.
