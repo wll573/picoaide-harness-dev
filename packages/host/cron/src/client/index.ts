@@ -68,7 +68,7 @@ import { en, setActiveLocale, t, zh } from './locales.ts'
 // this fiber pending forever with no error — taking the whole plugin (job
 // center + settings card + right-Sidebar tab) down with the entry. The entry is
 // registered from a child `ctx.inject` scope instead.
-export const inject = ['slots', 'configForms', 'locale', 'workspaces', 'connection', 'sessions']
+export const inject = ['slots', 'configForms', 'locale', 'workspaces', 'connection', 'sessions', 'uiWorkspace']
 
 /** Settings namespace this card edits (the Host half registers it). */
 /**
