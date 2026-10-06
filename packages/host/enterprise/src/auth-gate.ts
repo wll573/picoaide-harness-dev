@@ -1894,7 +1894,7 @@ export function apply(ctx: Context, config: Config): void {
             if (sessionIdentityChanged(existing, sess)) {
               ctx.logger?.warn?.('pico: session identity changed on this server; the loaded app page will reload (the previous account render state must not survive)')
             }
-            ctx.picoSession.setSession(sess)
+            await ctx.picoSession.setSession(sess)
             // 0057: 强制改密标记 → 登录页跳转强制改密页(而非直接进应用)。
             json(res, 200, { ok: true, must_change_password: sess.mustChangePassword === true })
           } catch (err) {

@@ -121,6 +121,20 @@ describe('loginServerSwitchConflict(纯函数)', () => {
 describe('POST /api/pico/auth/login:已登录时拒绝换服务端(FIX-18)', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
+  it('waits for account data activation before reporting successful login', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ token: 'fresh-token', user: { role: 'user' } }), { status: 200 })))
+    const h = loginHandler(null, acceptingFence())
+    let finish!: () => void
+    h.setSession.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
+    const output = fakeResponse()
+    const pending = h.handler(fakeRequest({ server: 'https://harness.example', username: 'alice', password: 'pw' }), output.res)
+    await vi.waitFor(() => expect(h.setSession).toHaveBeenCalled())
+    expect(output.read().code).toBe(0)
+    finish()
+    await pending
+    expect(output.read().code).toBe(200)
+  })
+
   it('已登录 + 换 server ⇒ 409 且绝不 setSession(改前:200 静默换会话)', async () => {
     // 改前该请求会真的去 login() 打网关并 setSession ⇒ 用 stub 让"静默换会话"
     // 可观测:若实现仍然走登录路径,setSession 就会被调用。

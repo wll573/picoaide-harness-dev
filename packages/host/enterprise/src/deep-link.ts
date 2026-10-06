@@ -225,7 +225,7 @@ export function routeDeepLink(raw: string, scheme: string = DEFAULT_DEEP_LINK_SC
  */
 export function installDeepLinkListener(
   ctx: Context,
-  applySession: (session: Session) => void,
+  applySession: (session: Session) => void | Promise<void>,
   getCurrent?: () => Session | null,
   scheme: string = DEFAULT_DEEP_LINK_SCHEME,
 ): () => void {
@@ -299,7 +299,11 @@ export function installDeepLinkListener(
       if (sessionIdentityChanged(getCurrent?.() ?? null, session)) {
         ctx.logger?.warn('pico-deep-link: session identity changed on this server; the loaded app page will reload (the previous account render state must not survive)')
       }
-      applySession(session)
+      try {
+        await applySession(session)
+      } catch (error) {
+        ctx.logger?.warn(`pico-deep-link: could not activate account data: ${error instanceof Error ? error.message : String(error)}`)
+      }
     })()
   })
 }

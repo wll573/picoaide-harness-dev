@@ -1,3 +1,4 @@
+export { ACCOUNT_DATA_SCOPE_SERVICE, accountDataIdentity, accountDataRoot, createAccountDataScope, type AccountDataIdentityInput, type AccountDataScope } from './account-data.ts';
 /** Environment variable that overrides the product home. */
 export declare const DSH_HOME_ENV = "DSH_HOME";
 /** Directory name of the product default Harness home under the OS home. */
@@ -117,4 +118,3 @@ export declare function dshHomePath(...segments: string[]): string;
 export declare function isSystemWorkingDirectory(cwd: string, env?: EnvLike): boolean;
 /** Resolve the product home from the live environment. */
 export declare function dshHome(): string;
-export {};

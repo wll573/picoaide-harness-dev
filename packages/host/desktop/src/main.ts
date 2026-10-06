@@ -47,7 +47,7 @@ import { provideAppAiRunner } from './app-ai-runner.ts'
 import { assertRequiredClientEntries, assertRequiredRowsActive } from './startup-rows.ts'
 import { reportFatalBootFailure, type FatalBootChoice } from './fatal-boot.ts'
 import { provideWasmAppsWindows } from './wasm-apps-windows.ts'
-import { applyInstallDshHome, isSystemWorkingDirectory } from './desktop-home.ts'
+import { ACCOUNT_DATA_SCOPE_SERVICE, createAccountDataScope, applyInstallDshHome, isSystemWorkingDirectory } from './desktop-home.ts'
 import { desktopUserDataDirectoryName } from './desktop-user-data.ts'
 import { desktopProductVersion, ElectronDesktopRuntime } from './electron-runtime.ts'
 import { desktopStartupCopy } from './tray-locale.ts'
@@ -495,6 +495,7 @@ async function start(): Promise<void> {
   // exits 1) instead of silently writing user data there. This is the same
   // `isSafeDshHome` check the enterprise installers enforce.
   const homeDir = applyInstallDshHome({ productDir: CHANNEL_PROFILE?.homeDir })
+  const accountData = createAccountDataScope(homeDir, () => runtime.requestRestart())
   // 孤儿写锁回收：上游的文档写锁只在 `finally` 里自删，任何一次"建锁后崩溃"都会留下
   // 永久孤儿锁，此后该文档的写入静默失败（现场事故：settings 写不进 protocol ⇒ 每个
   // 模型请求 401「缺少认证令牌」）。**必须在这里**——`prepareDesktopProfile`/`boot`
@@ -562,6 +563,7 @@ async function start(): Promise<void> {
       // 必须显式注入：插件在纯 Node 宿主里无从得知 userData，缺席时窗口管理器
       // **整个不构造**（`index.ts` 的 `userDataDir === undefined` 分支）。
       app.getPath('userData'),
+      accountData.root,
     )
     const releasePackageResolver = installProfilePackageResolver(prepared.bareModuleBaseUrl)
     // Electron does not patch `child_process.spawn`/`spawnSync` for asar paths
@@ -586,6 +588,7 @@ async function start(): Promise<void> {
         )
         hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, environment)
         hostCtx.provide('desktopRuntime', runtime)
+        hostCtx.provide(ACCOUNT_DATA_SCOPE_SERVICE, accountData)
         // profile 自述（issue #130，P0）：上游 base bundle 的 `plugin-manager` 行由
         // `disabled: !!js "!ctx.get('profileContext')"` 开关控制，不 provide 就会被
         // **静默** disable ⇒ `pluginManager` 服务不存在 ⇒ `cordis` preset 的行

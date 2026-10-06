@@ -29,7 +29,7 @@ import {
   type ProfileManifest,
   type RuntimeResolution,
 } from '@deepseek-ai/dsh-app-boot'
-import { resolveDshHome } from './desktop-home.ts'
+import { createAccountDataScope, resolveDshHome } from './desktop-home.ts'
 import { parseDocument } from 'yaml'
 import type { DesktopShellMode } from './runtime.ts'
 import { resolveBundledSpeechModel } from './speech-model-bundle.ts'
@@ -959,6 +959,7 @@ export async function prepareDesktopProfile(
   platform: NodeJS.Platform = process.platform,
   pluginStatePath?: string,
   userDataDir?: string,
+  accountDataRoot?: string,
 ): Promise<PreparedDesktopProfile> {
   const profileName = DESKTOP_PROFILE_NAME
   const profileDir = ensureDesktopProfile(home)
@@ -1036,6 +1037,14 @@ export async function prepareDesktopProfile(
   const rows = new Map<string, EntryOptions>()
   for (const row of composedRows) {
     if (typeof row.id === 'string') rows.set(row.id, row)
+  }
+  // Persistent records and derived indexes must use the same account scope.
+  // Pin above profile/home overrides, including future settings recomposition.
+  const dataRoot = accountDataRoot ?? createAccountDataScope(home, async () => {}).root
+  for (const [id, leaf] of [['session-persistence-jsonl', 'sessions'], ['storage-json', 'storages']] as const) {
+    const row = rows.get(id)
+    if (row === undefined) throw new Error(`${BIN_NAME}: missing account storage row ${id}`)
+    patches.push({ id, config: { ...rowConfig(row), root: join(dataRoot, leaf) } })
   }
   const settings = rows.get('settings')
   if (settings?.name !== SETTINGS_PACKAGE) {

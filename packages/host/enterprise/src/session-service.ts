@@ -6,7 +6,7 @@ import { subscribeSessionChanges } from '@picoaide/dsh-host-locale/session-event
 import { SESSION_CHANGED_EVENT } from '@picoaide/dsh-host-locale/session-events'
 import type { Session } from './server-connector/config.ts'
 import { loadElectronModule } from './server-connector/electron.ts'
-import { dshHomeSafe } from 'dsh-plugin-desktop/desktop-home'
+import { ACCOUNT_DATA_SCOPE_SERVICE, type AccountDataScope, dshHomeSafe } from 'dsh-plugin-desktop/desktop-home'
 import { installDeepLinkListener } from './deep-link.ts'
 
 /** Session token file permissions: owner read/write only. */
@@ -110,6 +110,7 @@ export default class SessionService extends Service {
   static Config = Config
 
   private session: Session | null = null
+  private pendingSession: Session | null = null
   private readonly tokenFile: string
   private readonly lastServerFile: string
   private restoreDone = false
@@ -129,9 +130,11 @@ export default class SessionService extends Service {
     // reloads into the app (login page poll sees loggedIn).
     // scheme 用桌面壳注入的本安装值（渠道构建是自己的），见 installDeepLinkListener。
     installDeepLinkListener(ctx, (session) => {
-      this.setSession(session)
+      return this.setSession(session)
     }, () => this.getSession(), config.deepLinkScheme)
-    void this.restore().finally(() => { this.restoreDone = true })
+    void this.restore().catch((cause: unknown) => {
+      this.ctx.logger?.warn(`[pico] account data could not be activated: ${String(cause)}`)
+    }).finally(() => { this.restoreDone = true })
   }
 
   isLoggedIn(): boolean {
@@ -152,7 +155,28 @@ export default class SessionService extends Service {
     return this.session
   }
 
-  setSession(session: Session): void {
+  async setSession(session: Session): Promise<void> {
+    if (this.pendingSession !== null) throw new Error('account data switch is already in progress')
+    const accountData = this.ctx.get?.(ACCOUNT_DATA_SCOPE_SERVICE) as AccountDataScope | undefined
+    if (accountData && !accountData.matches(session)) {
+      // Keep the new identity out of this process: its services still hold the
+      // previous account's records and indexes until orderly teardown completes.
+      this.session = null
+      this.pendingSession = session
+      const epoch = ++this.persistEpoch
+      this.ctx.emit(SESSION_CHANGED_EVENT, null)
+      this.saveLastServer(session.serverURL)
+      try {
+        await persist(this.tokenFile, session, () => epoch === this.persistEpoch)
+        if (epoch !== this.persistEpoch) return
+        await accountData.activate(session)
+      } catch (cause) {
+        if (epoch === this.persistEpoch) this.clear()
+        throw cause
+      }
+      return
+    }
+    this.pendingSession = null
     this.session = session
     const epoch = ++this.persistEpoch
     // P1-13: a failed token write ($DSH_HOME read-only / ENOSPC / ROFS / a
@@ -237,14 +261,16 @@ export default class SessionService extends Service {
    * 登出**的三类动作：用户主动登出、改密（服务端已吊销全部令牌）、切换账号/重置。
    */
   clear(): void {
-    const hadSession = this.session !== null
+    const hadSession = this.session !== null || this.pendingSession !== null
     // 保留服务端地址再清会话：登录页据此跳过"输入服务端地址"这一步，直接进
     // 账号密码页。内存里的那份足够这一次渲染，同时也落盘，下次启动仍记得。
     // 注意顺序：必须在 `this.session = null` **之前**读它。
-    if (this.session?.serverURL) {
-      this.saveLastServer(this.session.serverURL)
+    const lastSession = this.session ?? this.pendingSession
+    if (lastSession?.serverURL) {
+      this.saveLastServer(lastSession.serverURL)
     }
     this.session = null
+    this.pendingSession = null
     this.persistEpoch++ // F7: 使所有在途 persist 失效,不再复活旧 token
     if (hadSession) {
       try { unlinkSync(this.tokenFile) } catch { /* absent is fine */ }
@@ -282,7 +308,12 @@ export default class SessionService extends Service {
 
   private async restore(): Promise<void> {
     const restored = await loadPersisted(this.tokenFile)
-    if (this.session !== null) return
+    if (this.session !== null || this.pendingSession !== null) return
+    const accountData = this.ctx.get?.(ACCOUNT_DATA_SCOPE_SERVICE) as AccountDataScope | undefined
+    if (restored && accountData && !accountData.matches(restored)) {
+      await this.setSession(restored)
+      return
+    }
     this.session = restored
     this.ctx.emit(SESSION_CHANGED_EVENT, restored)
   }

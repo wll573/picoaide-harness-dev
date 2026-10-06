@@ -23,6 +23,7 @@
  * environment agrees on one location.
  */
 import { realpathSync } from 'node:fs'
+export { ACCOUNT_DATA_SCOPE_SERVICE, accountDataIdentity, accountDataRoot, createAccountDataScope, type AccountDataIdentityInput, type AccountDataScope } from './account-data.ts'
 import { homedir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve, win32 } from 'node:path'
 
