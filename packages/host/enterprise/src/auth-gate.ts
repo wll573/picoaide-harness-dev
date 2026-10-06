@@ -83,6 +83,7 @@ interface LoginCopy {
   register: string
   registering: string
   registerFailed: string
+  registrationPending: string
   browserSignIn: string
   waiting: string
   needServer: string
@@ -119,6 +120,7 @@ const LOGIN_COPY: Readonly<Record<HostLocale, LoginCopy>> = {
     register: '注册账号',
     registering: '注册中…',
     registerFailed: '注册失败，请稍后重试',
+    registrationPending: '注册申请已提交，请联系管理员审批。审批通过后即可登录。',
     browserSignIn: '使用浏览器登录',
     waiting: '请在弹出的浏览器窗口中完成授权，等待授权完成后此处会自动继续…',
     needServer: '请填写服务端地址',
@@ -151,6 +153,7 @@ const LOGIN_COPY: Readonly<Record<HostLocale, LoginCopy>> = {
     register: 'Create account',
     registering: 'Creating account…',
     registerFailed: 'Registration failed. Please try again later.',
+    registrationPending: 'Registration submitted. Please contact your administrator for approval. You can sign in once approved.',
     browserSignIn: 'Sign in with browser',
     waiting: 'Complete the authorization in the browser window that just opened; this page continues automatically.',
     needServer: 'Enter the server address',
@@ -210,6 +213,8 @@ export function renderLoginPage(locale: HostLocale): string {
     --input-bg: #ffffff;
     --border: #d0d5dd;
     --err: #dc2626;
+    --notice-bg: #eff6ff;
+    --notice-fg: #1e40af;
     --accent: #2563eb;
     /* 实心强调按钮上的文字色：暗色 --accent 是浅蓝 #3b82f6，白字只有 3.68:1，
        所以暗色改用深墨（6.23:1）。亮色保持白字（5.17:1）。 */
@@ -224,6 +229,8 @@ export function renderLoginPage(locale: HostLocale): string {
       --input-bg: #1a1d24;
       --border: #333333;
       --err: #f87171;
+      --notice-bg: #172554;
+      --notice-fg: #bfdbfe;
       --accent: #3b82f6;
       --accent-fg: #0b1220;
       --brand-tile-bg: #f9fafb;
@@ -240,6 +247,10 @@ export function renderLoginPage(locale: HostLocale): string {
   input { padding: 11px 13px; border-radius: 9px; border: 1px solid var(--border); background: var(--input-bg); color: var(--fg); font-size: 14px; box-sizing: border-box; width: 100%; }
   button { padding: 11px; border-radius: 9px; border: none; background: var(--accent); color: var(--accent-fg); font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
   button:disabled { opacity: 0.6; cursor: default; }
+  .register { margin-top: 12px; min-height: 42px; box-sizing: border-box; background: transparent; border: 1px solid var(--border); color: var(--fg); font-weight: 500; transition: border-color 0.15s, color 0.15s; }
+  .register:hover:enabled { border-color: var(--accent); color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .notice { margin-top: 14px; padding: 12px 14px; border-radius: 9px; background: var(--notice-bg); color: var(--notice-fg); font-size: 13px; line-height: 1.6; text-align: left; }
   .err { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 4px; text-align: left; }
   .hint { color: var(--fg); opacity: 0.7; font-size: 12px; margin-top: 8px; }
   .back { background: transparent; color: var(--accent); border: none; font-size: 12px; cursor: pointer; padding: 6px 12px; margin: 0 0 14px; width: auto; }
@@ -283,10 +294,11 @@ export function renderLoginPage(locale: HostLocale): string {
       <input id="password" type="password" placeholder="${c.passwordPlaceholder}" autocomplete="current-password" style="display:none">
       <button type="submit" id="btn" style="display:none">${c.signIn}</button>
     </form>
-    <button type="button" id="register-btn" class="method" style="display:none">${c.register}</button>
+    <button type="button" id="register-btn" class="register" style="display:none">${c.register}</button>
     <button type="button" id="browser-btn" style="display:none">${c.browserSignIn}</button>
     <div class="hint" id="waiting" style="display:none">${c.waiting}</div>
     <div class="err" id="err-step2"></div>
+    <div class="notice" id="registration-notice" role="status" aria-live="polite" style="display:none"></div>
   </div>
 </div>
 <script>
@@ -303,6 +315,7 @@ export function renderLoginPage(locale: HostLocale): string {
   var f2 = document.getElementById('f2')
   var err1 = document.getElementById('err-step1')
   var err2 = document.getElementById('err-step2')
+  var registrationNotice = document.getElementById('registration-notice')
   var btn = document.getElementById('btn')
   var registerBtn = document.getElementById('register-btn')
   var browserBtn = document.getElementById('browser-btn')
@@ -510,6 +523,7 @@ export function renderLoginPage(locale: HostLocale): string {
   }
 
   function updateFields() {
+    registrationNotice.style.display = 'none'
     var isPassword = currentMethod === 'local' || currentMethod === 'ldap'
     document.getElementById('username').style.display = isPassword ? '' : 'none'
     document.getElementById('password').style.display = isPassword ? '' : 'none'
@@ -617,6 +631,7 @@ export function renderLoginPage(locale: HostLocale): string {
   f2.addEventListener('submit', async function (e) {
     e.preventDefault()
     err2.textContent = ''
+    registrationNotice.style.display = 'none'
     var body = {
       server: document.getElementById('server').value.trim(),
       username: document.getElementById('username').value.trim(),
@@ -657,6 +672,7 @@ export function renderLoginPage(locale: HostLocale): string {
   })
   registerBtn.addEventListener('click', async function () {
     err2.textContent = ''
+    registrationNotice.style.display = 'none'
     var username = document.getElementById('username').value.trim()
     var password = document.getElementById('password').value
     if (!username || !password) { err2.textContent = T.registerFailed; return }
@@ -679,8 +695,9 @@ export function renderLoginPage(locale: HostLocale): string {
         err2.textContent = raw || T.registerFailed
         return
       }
-      // 注册成功后复用登录流程自动建立会话。
-      f2.requestSubmit()
+      // 新账号等待管理员审批，不能立即登录，否则会把成功注册误报为密码错误。
+      registrationNotice.textContent = T.registrationPending
+      registrationNotice.style.display = ''
     } catch (e6) {
       err2.textContent = T.networkError
     } finally {

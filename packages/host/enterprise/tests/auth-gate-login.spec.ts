@@ -78,8 +78,8 @@ describe('auth-gate LOGIN_HTML inline script', () => {
     expect(script).toContain("fetch('/api/pico/channel?server='")
     expect(script).not.toContain('/api/pico/brand')
     expect(script).toContain('renderChannel(currentChannel)')
-    // 渠道内容总是生效: 不再有 enabled 开关判定。
-    expect(script).not.toMatch(/\.enabled/u)
+    // 渠道内容总是生效；注册开关属于 auth/methods，不属于渠道内容。
+    expect(script).not.toMatch(/(?:currentChannel|ch|c)\.enabled/u)
   })
 
   it('escapes gateway-controlled method names and labels (P1-7)', () => {
