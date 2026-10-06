@@ -145,7 +145,7 @@ func TestRenderLeadOnlyWhenDownloadable(t *testing.T) {
 		{Name: "Windows", Meta: "该平台暂无可用安装包"},
 		{Name: "macOS", Meta: "该平台暂无可用安装包"},
 	}})
-	if strings.Contains(allOff, "用企业账号登录") {
+	if strings.Contains(allOff, "用单位账号登录") {
 		t.Fatal("无任何可用安装包时不应显示下载引导")
 	}
 	if !strings.Contains(allOff, `class="empty`) {
@@ -158,7 +158,7 @@ func TestRenderLeadOnlyWhenDownloadable(t *testing.T) {
 		{Name: "Windows", Meta: "x64 · .exe", URL: "/updates/client/a.exe"},
 		{Name: "macOS", Meta: "该平台暂无可用安装包"},
 	}})
-	if !strings.Contains(oneOn, "用企业账号登录") {
+	if !strings.Contains(oneOn, "用单位账号登录") {
 		t.Fatal("有可用安装包时应显示下载引导")
 	}
 	// 部分可用时,不可用平台仍按卡片呈现(让访客知道该平台确实没有,而不是漏了)

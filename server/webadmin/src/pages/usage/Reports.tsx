@@ -156,7 +156,7 @@ export default function UsageReports() {
     <div className="space-y-6">
       <PageHeader
         title="报表订阅"
-        desc="每月自动生成上月用量汇总(总费用/请求数/模型TOP/用户TOP/部门汇总)并推送到企业 webhook(钉钉/企微/飞书机器人等);补跑规则:推送失败不记为已推送,自动重试欠投的期号(首次 1 小时后、之后每天一轮);失败跨月期间到期的每一期都会被逐期补齐(每个调度轮次补一期,不跳期、不重投);改了推送地址即视为配置变更,退避窗口会立刻清零(最长 1 小时内补投)"
+        desc="每月自动生成上月用量汇总(总费用/请求数/模型TOP/用户TOP/部门汇总)并推送到单位 webhook(钉钉/企微/飞书机器人等);补跑规则:推送失败不记为已推送,自动重试欠投的期号(首次 1 小时后、之后每天一轮);失败跨月期间到期的每一期都会被逐期补齐(每个调度轮次补一期,不跳期、不重投);改了推送地址即视为配置变更,退避窗口会立刻清零(最长 1 小时内补投)"
       />
       {error && <div className="text-sm text-destructive">{error}</div>}
       {resultMsg && <div className="text-sm text-emerald-600">{resultMsg}</div>}
@@ -235,7 +235,7 @@ export default function UsageReports() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>{editing ? '编辑订阅' : '新建订阅'}</DialogTitle>
-            <DialogDescription>推送目标:企业机器人 webhook(钉钉/企业微信/飞书自定义机器人地址)</DialogDescription>
+            <DialogDescription>推送目标:单位机器人 webhook(钉钉/企业微信/飞书自定义机器人地址)</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1">

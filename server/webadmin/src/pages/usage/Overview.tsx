@@ -115,7 +115,7 @@ export default function UsageOverview() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="用量总览" desc="企业整体 Token 用量：本月、今日、区间用量 / 消耗趋势 / 模型排行" />
+      <PageHeader title="用量总览" desc="单位整体 Token 用量：本月、今日、区间用量 / 消耗趋势 / 模型排行" />
 
       <RangeFilter from={from} to={to} setFrom={setFrom} setTo={setTo} onQuery={(f, t) => void load(f, t)} />
 

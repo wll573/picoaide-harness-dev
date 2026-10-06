@@ -408,7 +408,7 @@ export default function Users() {
     <div className="space-y-5">
       <PageHeader
         title="用户管理"
-        desc="企业成员账号、Token 用量、部门归属与登录令牌"
+        desc="单位成员账号、Token 用量、部门归属与登录令牌"
         actions={
           <>
             <div className="relative">
@@ -493,7 +493,7 @@ export default function Users() {
                       size="sm"
                       variant="outline"
                       disabled={u.source === 'external'}
-                      title={u.source === 'external' ? '外部认证(LDAP/OIDC)用户的密码由企业 IdP 管理' : '重置后将吊销其全部会话,对方下次登录须改密'}
+                      title={u.source === 'external' ? '外部认证(LDAP/OIDC)用户的密码由单位 IdP 管理' : '重置后将吊销其全部会话,对方下次登录须改密'}
                       onClick={() => openResetPw(u)}
                     >重置密码</Button>
                   )}
@@ -707,7 +707,7 @@ export default function Users() {
             </div>
             {deptNote && <p className="text-xs text-destructive">{deptNote}</p>}
             <p className="text-xs text-muted-foreground">
-              保存将替换该用户全部部门归属(LDAP/OIDC 用户下次登录/同步可能被企业目录覆盖);
+              保存将替换该用户全部部门归属(LDAP/OIDC 用户下次登录/同步可能被单位目录覆盖);
               授权 = 全部所属部门+祖先链同时生效
             </p>
             {deptErr && <div className="text-sm text-destructive">{deptErr}</div>}
