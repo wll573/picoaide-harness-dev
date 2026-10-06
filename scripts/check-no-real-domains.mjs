@@ -98,6 +98,10 @@ const ALLOWED_DOMAINS = {
     'ghcr.io', 'docker.io', 'docker.com', 'gitlab.com', 'shields.io',
     'star-history.com', 'opencollective.com', 'tidelift.com', 'patreon.com', 'polar.sh',
   ],
+  // 基础镜像与操作系统公开源（容器构建时的发行版包仓库）。
+  '基础镜像与操作系统公开源': [
+    'alpinelinux.org',
+  ],
   // 语言/规范/文档（第三方规范与库文档）。
   '语言规范与第三方文档': [
     'w3.org', 'ecma-international.org', 'tc39.es', 'yaml.org', 'gnu.org', 'opensource.org',
