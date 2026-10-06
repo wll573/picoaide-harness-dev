@@ -139,6 +139,7 @@ func (a *API) handleCompletions(c *gin.Context) {
 		if err == nil {
 			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {
 					log.Printf("gateway: bind usage %d to provider %d failed: %v", usageID, ups[i].ID, serr)

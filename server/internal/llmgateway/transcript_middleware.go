@@ -104,6 +104,9 @@ type TranscriptOutcome struct {
 	ErrorMessage string
 	// Provider 是本次实际命中的上游供应商名（需求 §8.1「模型和供应商」）。
 	Provider string
+	// InputTokens / OutputTokens are the final metered values, including fallback estimates.
+	InputTokens  int64
+	OutputTokens int64
 }
 
 // setTranscriptOutcome 由 handler 调用，把收尾结论交给中间件。
@@ -134,6 +137,12 @@ func mergeTranscriptOutcome(c *gin.Context, patch TranscriptOutcome) {
 	}
 	if patch.Provider != "" {
 		current.Provider = patch.Provider
+	}
+	if patch.InputTokens > 0 {
+		current.InputTokens = patch.InputTokens
+	}
+	if patch.OutputTokens > 0 {
+		current.OutputTokens = patch.OutputTokens
 	}
 	c.Set(transcriptOutcomeCtxKey, current)
 }
@@ -222,6 +231,9 @@ func TranscriptMiddleware(db *sql.DB) gin.HandlerFunc {
 			ResponseSHA:   serverstore.TranscriptHashHex(writer.hash.Sum(nil)),
 			AuditStatus:   "complete",
 			DurationMS:    durationMS,
+			InputTokens:   outcome.InputTokens,
+			OutputTokens:  outcome.OutputTokens,
+			Provider:      outcome.Provider,
 			ErrorType:     outcome.ErrorType,
 			ErrorMessage:  outcome.ErrorMessage,
 		}

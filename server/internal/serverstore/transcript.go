@@ -113,6 +113,7 @@ type TranscriptFinish struct {
 	InputTokens   int64
 	OutputTokens  int64
 	TotalTokens   int64
+	Provider      string
 	ErrorType     string
 	ErrorMessage  string
 }
@@ -187,9 +188,9 @@ func FinishLLMTranscriptDetailed(db *sql.DB, transcriptID int64, in TranscriptFi
 	err := withUsageSearchPath(db, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`UPDATE llm_transcripts SET status_code=?, response_bytes=?,
 			response_sha256=?, audit_status=?, duration_ms=?, input_tokens=?, output_tokens=?,
-			total_tokens=?, error_type=?, error_message=?, completed_at=now() WHERE id=?`,
+			total_tokens=?, provider=?, error_type=?, error_message=?, completed_at=now() WHERE id=?`,
 			in.StatusCode, in.ResponseBytes, in.ResponseSHA, auditStatus, in.DurationMS,
-			in.InputTokens, in.OutputTokens, total, in.ErrorType, in.ErrorMessage, transcriptID)
+			in.InputTokens, in.OutputTokens, total, in.Provider, in.ErrorType, in.ErrorMessage, transcriptID)
 		return err
 	})
 	return err

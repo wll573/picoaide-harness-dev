@@ -814,6 +814,7 @@ func (a *API) serveJSON(c *gin.Context, resp *http.Response, userID, providerID 
 		var completionEstimated bool
 		ct, completionEstimated = estimateCompletionFallback(pt, ct, int64(len(body)))
 		estimated = estimated || completionEstimated
+		mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
 		usageID, err := serverstore.RecordUsageKindCachedEstimatedForProvider(a.DB, userID, providerID, model, pt, ct, cch, kind, estimated)
 		if err != nil {
 			// FIX-05 + G5b(审计 r3):**任何**结算失败都不得交付 —— 事务已回滚,
@@ -1244,6 +1245,19 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 			}
 		}
 	}
+	// Persist the same final token values used for settlement in the transcript
+	// metadata so audit rows can be reconciled with usage rows.
+	auditPT, auditCT := reportedPT, reportedCT
+	if auditPT <= 0 || auditCT <= 0 {
+		billable := deliveredContentChunks > 0 || deliveredContentBytes > 0 || reportedCT > 0 || reportedCache > 0
+		if billable {
+			auditPT, _ = estimatePromptFallback(auditPT, ptSeen, requestBody, promptTokenCap)
+			auditCT, _ = estimateCompletionFallback(auditPT, auditCT, deliveredContentBytes)
+		} else {
+			auditPT, auditCT = 0, 0
+		}
+	}
+	mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: auditPT, OutputTokens: auditCT})
 }
 func readLineBounded(br *bufio.Reader, max int) (string, error) {
 	var buf []byte
