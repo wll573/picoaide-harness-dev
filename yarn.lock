@@ -8866,6 +8866,7 @@ __metadata:
     "@deepseek-ai/dsh-client-locale": "npm:0.1.7-rc.2"
     "@deepseek-ai/dsh-client-modules": "npm:0.1.7-rc.2"
     "@deepseek-ai/dsh-client-store": "npm:0.1.7-rc.2"
+    "@deepseek-ai/dsh-client-ui-approval": "npm:0.1.7-rc.2"
     "@deepseek-ai/dsh-client-ui-attachment": "npm:0.1.7-rc.2"
     "@deepseek-ai/dsh-client-ui-commands": "npm:0.1.7-rc.2"
     "@deepseek-ai/dsh-client-ui-conversation": "npm:0.1.7-rc.2"
