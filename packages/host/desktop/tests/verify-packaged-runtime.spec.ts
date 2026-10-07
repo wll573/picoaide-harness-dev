@@ -1256,7 +1256,9 @@ describe('packaged desktop runtime verification', () => {
       // darwin 分支会走包内一致性判据（图标键/asar 布局/ElectronAsarIntegrity），
       // 真实目录形态的夹具必须给出一份自洽的 .app，否则那一条会先打红。
       if (electronPlatformName === 'darwin') {
-        writeValidMacBundle(join(appOutDir, 'PicoAide Harness.app'), 'PicoAide Harness')
+        writeValidMacBundle(join(appOutDir, 'PicoAide Harness.app'), 'PicoAide Harness', {
+          identifier: packagedAppId(),
+        })
       }
       // 至少一条必需原生条目存在,否则会先被"no native unpacked entries"拦下。
       // G-1（2026-09-23）：还要**除被测家族外全都齐** —— 家族适用性断言上线后，
@@ -1354,10 +1356,11 @@ describe('packaged desktop runtime verification', () => {
     /** 以条目集合为真源的 FileProbe（root = 该平台的 app.asar.unpacked）：文件存在、其所有祖先目录也存在。 */
     function treeProbe(root: string, tree: ReadonlySet<string>): FileProbe {
       const files = [...tree]
+      const normalizedRoot = root.replaceAll('\\', '/')
       return (filename: string): boolean => {
         const normalized = filename.replaceAll('\\', '/')
-        if (normalized === root) return true
-        const prefix = `${root}/`
+        if (normalized === normalizedRoot) return true
+        const prefix = `${normalizedRoot}/`
         if (!normalized.startsWith(prefix)) return false
         const rel = normalized.slice(prefix.length)
         return tree.has(rel) || files.some(entry => entry.startsWith(`${rel}/`))

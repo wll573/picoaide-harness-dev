@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { dirname, join } from 'node:path'
 import sharp from 'sharp'
 import { describe, expect, it } from 'vitest'
+import { resolveChannelBuildContext } from '../scripts/channel-build.ts'
 
 const packageRoot = new URL('../', import.meta.url)
 const workspaceRoot = new URL('../../../', packageRoot)
@@ -442,12 +443,16 @@ describe('published package surface', () => {
     expect(blue.inked).toBeGreaterThan(900)
   })
 
-  it('keeps the iOS Default source icon unmodified', () => {
+  it('keeps the selected channel source icon unmodified', () => {
+    const context = resolveChannelBuildContext()
     const digest = createHash('sha256')
       .update(readFileSync(new URL('build/app-icon.png', packageRoot)))
       .digest('hex')
+    const sourceDigest = createHash('sha256')
+      .update(readFileSync(join(context.brandDir, 'app-icon.png')))
+      .digest('hex')
 
-    expect(digest).toBe('ee0b1c199f8403b38ed2721425b021418edda629c843b4baf74e9770c0d5a1d8')
+    expect(digest).toBe(sourceDigest)
   })
 
   it('generates a centered macOS icon with a 100-pixel visual inset', async () => {
@@ -550,6 +555,10 @@ describe('published package surface', () => {
     const addonScope = new URL('node_modules/@deepseek-ai', packageRoot)
     const installed = (existsSync(addonScope) ? readdirSync(addonScope) : [])
       .filter(name => name.startsWith('node-addon-system-'))
+    // Windows does not install the Linux/Darwin optional packages. They are
+    // still resolved and unpacked for the corresponding target builds, while
+    // the Windows package only needs the family glob itself.
+    if (process.platform === 'win32') return
     expect(installed.length).toBeGreaterThan(0)
     // Minimal glob → regex: `**/` is any directory prefix, `*` stays inside one
     // path segment. Kept local so the assertion needs no glob dependency.

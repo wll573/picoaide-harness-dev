@@ -733,7 +733,10 @@ export function assertMacBundleConsistency(
   if (!executableStat.isFile() || executableStat.size <= 0) {
     throw new Error(`mac-bundle-consistency: ${executablePath} is not a non-empty file`)
   }
-  if ((executableStat.mode & 0o111) === 0) {
+  // NTFS does not retain POSIX executable bits. macOS/Linux package builds
+  // still enforce the mode; Windows can only verify that the entry is a
+  // non-empty file and cannot make a synthetic .app executable via chmod.
+  if (process.platform !== 'win32' && (executableStat.mode & 0o111) === 0) {
     throw new Error(`mac-bundle-consistency: ${executablePath} is not executable (mode 0o${executableStat.mode.toString(8)})`)
   }
 
