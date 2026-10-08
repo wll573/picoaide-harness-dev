@@ -260,8 +260,14 @@ export async function fetchJSON(
       method: opts.method ?? 'GET',
       headers: {
         'Content-Type': 'application/json',
+        // Bootstrap/model configuration is mutable on the intranet server. Do
+        // not let an HTTP proxy or Chromium cache hand the 5-minute sync loop
+        // an older response; a client restart must not be required to observe
+        // a server-side gateway change.
+        'Cache-Control': 'no-cache',
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
       },
+      ...(opts.method === undefined || opts.method === 'GET' ? { cache: 'no-store' as RequestCache } : {}),
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
       signal: controller.signal,
     })

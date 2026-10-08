@@ -5,8 +5,11 @@ import (
 	"strings"
 )
 
-// readableRequest 从请求体里取"用户发了什么"：所有 role=user 的消息文本（按顺序拼接）。
-// 取不出来（形状不认识 / 非 JSON）时原样返回，保证导出永远不丢内容。
+// readableRequest 从请求体里取"用户本轮发了什么"：只取最后一条 role=user 的消息。
+// 客户端为保持多轮上下文会把历史消息一并发送；如果把所有 user 消息都拼进审计，
+// 同一会话的每条记录都会重复包含前面的内容，表现为审计日志不断叠加。模型请求仍
+// 使用原始完整请求体，这里只改变审计展示文本。取不出来（形状不认识 / 非 JSON）
+// 时原样返回，保证导出永远不丢内容。
 func readableRequest(raw string) string {
 	var req struct {
 		Messages []struct {
@@ -18,22 +21,22 @@ func readableRequest(raw string) string {
 	if json.Unmarshal([]byte(raw), &req) != nil {
 		return raw
 	}
-	var parts []string
+	var last string
+	seenUser := false
 	for _, m := range req.Messages {
 		if m.Role != "user" {
 			continue
 		}
-		if t := contentText(m.Content); t != "" {
-			parts = append(parts, t)
-		}
+		seenUser = true
+		last = contentText(m.Content)
 	}
-	if len(parts) == 0 {
+	if last == "" && !seenUser {
 		if t := contentText(req.Input); t != "" {
 			return t
 		}
 		return raw
 	}
-	return strings.Join(parts, "\n---\n")
+	return last
 }
 
 // readableResponse 从回复里取"模型回了什么"。支持 OpenAI chat 的非流式与 SSE 流式、

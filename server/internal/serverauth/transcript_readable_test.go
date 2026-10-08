@@ -4,8 +4,13 @@ import "testing"
 
 func TestReadableRequest(t *testing.T) {
 	got := readableRequest(`{"model":"m","messages":[{"role":"system","content":"s"},{"role":"user","content":"你好"},{"role":"user","content":[{"type":"text","text":"再问"}]}]}`)
-	if got != "你好\n---\n再问" {
+	if got != "再问" {
 		t.Fatalf("got %q", got)
+	}
+	// 多轮请求会携带完整历史，但审计展示只保留本轮最后一条用户消息，
+	// 否则同一会话的每一条记录都会把前文再次拼进去。
+	if got := readableRequest(`{"model":"m","messages":[{"role":"user","content":"第一轮"},{"role":"assistant","content":"回答"},{"role":"user","content":"第二轮"}]}`); got != "第二轮" {
+		t.Fatalf("历史消息不应在审计中重复叠加，got %q", got)
 	}
 	if got := readableRequest("not json"); got != "not json" {
 		t.Fatalf("非 JSON 必须原样返回, got %q", got)

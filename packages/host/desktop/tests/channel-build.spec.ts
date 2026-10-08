@@ -195,6 +195,10 @@ describe('channel build context', () => {
     expect(config.appId).toBe('com.acme.ai')
     expect(config.nsis.shortcutName).toBe('Acme AI 助手')
     expect(config.nsis.artifactName).toBe('Acme-AI-${version}-${arch}-Setup.${ext}')
+    expect(config.win.executableName).toBe('Acme-AI')
+    expect(config.nsis.include).toBeTruthy()
+    expect(readFileSync(config.nsis.include, 'utf8')).toContain('!define PRODUCT_NAME "Acme AI 助手"')
+    expect(readFileSync(config.nsis.include, 'utf8')).toContain('!define SHORTCUT_NAME "Acme AI 助手"')
     expect(config.linux.maintainer).toBe('acme')
     // OS 级协议注册必须跟着渠道:浏览器回调靠它跳回客户端,
     // 确认框里的 scheme 就是渠道客户会看到的东西。

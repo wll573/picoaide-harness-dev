@@ -18,6 +18,10 @@ const GATEWAY_LLM_NS = GATEWAY_LLM_ROW_ID as SettingsNamespace
 const AGENT_DEFAULT_MODEL_NS = 'agent-default-model' as SettingsNamespace
 const WEB_SEARCH_DEEPSEEK_NS = 'web-search-deepseek' as SettingsNamespace
 
+// 服务端网关/模型配置保存后，客户端不需要重启即可看到变化。轮询使用 no-store
+// 请求，避免内网代理缓存旧 bootstrap；30 秒是配置生效延迟上限与请求开销的折中。
+const BOOTSTRAP_SYNC_INTERVAL_MS = 30 * 1000
+
 /** The provider route the `llm-deepseek` adapter registers (gateway repoints its base URL). */
 const DEEPSEEK_PROVIDER = 'deepseek-official'
 
@@ -401,8 +405,8 @@ export function apply(ctx: Context): void {
   // 裸订阅会整个漏掉它（2026-09-05 现场：旧会话下视觉模型缺 inputModalities、
   // 上传图片被拒，重新登录即恢复，根因就是这次同步没跑）。
   //
-  // 托管策略需要周期性复核(管理员改了策略/技能授权后,客户端不必重启或重新登录):
-  // 每 5 分钟重跑一次 sync;登出时清掉定时器。
+  // 托管策略和网关模型目录需要周期性复核(管理员改了策略/技能授权/网关默认模型后,
+  // 客户端不必重启或重新登录):每 30 秒重跑一次 sync;登出时清掉定时器。
   let managedTimer: ReturnType<typeof setInterval> | undefined
   subscribeSession(ctx, (session) => {
     if (managedTimer !== undefined) clearInterval(managedTimer)
@@ -411,7 +415,7 @@ export function apply(ctx: Context): void {
     if (session !== null) {
       managedTimer = setInterval(() => {
         void sync(session).catch((cause) => ctx.logger.error(cause))
-      }, 5 * 60 * 1000)
+      }, BOOTSTRAP_SYNC_INTERVAL_MS)
     }
   })
 }

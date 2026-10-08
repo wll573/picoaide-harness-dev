@@ -7,14 +7,11 @@
  *    下（只认 `Authorization: Bearer`）⇒ 每个模型请求 401「缺少认证令牌」（2026-09-22 现场
  *    事故）。当时的修法是在组装期钉死 `protocol: chat-completions`。
  *  · **0.1.7-rc.2**：`protocol` **被删除**（`llm-deepseek/src/config.ts:207`，配了直接抛错），
- *    适配器只剩 Messages 一条路径（端点固定 `<baseURL>/messages` → 网关 `/v1/messages`）。
- *    鉴权搬到**注册 provider 的一方**：`registerDeepSeekProvider(ctx, provider, { resolveAuth })`
- *    返回的 `headers` 会被原样加到 Messages 请求上（`adapter.ts:82` 每次请求调一次，
- *    契约见 `DeepSeekRequestAuth`）。
+ *    上游适配器只剩 Messages 一条路径。因此这里使用本插件自己的 Chat Completions
+ *    adapter，直接请求网关的 `/v1/chat/completions`。
  *
- * 所以本插件取代上游的 `@deepseek-ai/dsh-llm-deepseek-api-key`（它的 `resolveAuth` 硬编码
- * `x-api-key`，对只认 Bearer 的网关必然 401，且没有任何换头的接缝），用同一份 Config 形状
- * 注册同一个 provider 路由 `deepseek-official`，把**会话令牌作为 Bearer** 交给请求。
+ * 所以本插件不使用上游的 Messages provider（也不使用它的 x-api-key 鉴权），用同一份
+ * Config 形状注册同一个 provider 路由 `deepseek-official`，把**会话令牌作为 Bearer** 交给请求。
  * 组装期 `cordis.patch.yml` 把上游那一行 `disabled` 掉并插入本行（id `picoaide-gateway-llm`）。
  *
  * 令牌来源是 `credentials` 服务（`gateway-model.ts` 在会话变化时写入 `TOKEN_ENV`），
@@ -24,9 +21,18 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
+import {
+  assertUsableApiKey,
+  attributionHeaders,
+  LlmAdapter,
+  LlmError,
+  type GenerateOptions,
+  type LlmModelInfo,
+  type LlmResolvedModelInfo,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { catalogModelInfo, Config, plainOptions, registerDeepSeekProvider, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import { catalogModelInfo, Config, plainOptions, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { GATEWAY_LLM_ROW_ID, TOKEN_ENV } from './gateway-contract.ts'
 
 export { Config, GATEWAY_LLM_ROW_ID, TOKEN_ENV }
@@ -131,11 +137,10 @@ export function rowIdFailure(entryId: string | undefined): string | undefined {
 }
 
 /**
- * Register the gateway as the `deepseek-official` Messages provider.
+ * Register the gateway as the `deepseek-official` OpenAI Chat Completions provider.
  *
- * `baseURL`/`models`/`reasoningEffort` stay exactly where 0.1.6 put them — the
- * row's own settings section, written by `gateway-model.ts` (login) and
- * `bootstrap.ts` (catalog). Only the credential plane changed.
+ * `baseURL`/`models`/`reasoningEffort` stay in the row's settings section,
+ * written by `gateway-model.ts` (login) and `bootstrap.ts` (catalog).
  */
 export function apply(ctx: Context, config: Config): void {
   const rowFailure = rowIdFailure(ctx.fiber.entry?.options.id)
@@ -163,14 +168,202 @@ export function apply(ctx: Context, config: Config): void {
     const token = assertUsableApiKey(hit.value, 'gateway-llm', ref)
     return { headers: { Authorization: `Bearer ${token}` } }
   }
-  registerDeepSeekProvider(ctx, PROVIDER, {
+  const adapter = new GatewayChatCompletionsAdapter({
     options,
     providerName: 'DeepSeek',
     resolveAuth,
     discoverModels: provider => Promise.resolve(options().models.map(model => catalogModelInfo(provider, model))),
   })
+  ctx.llm.registerAdapter([PROVIDER], adapter)
   // 与上游 api-key 行同面：把 provider 关联到**本行**的设置表单（表单值就是行 config）。
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: ctx.fiber.entry?.options.id ?? GATEWAY_LLM_ROW_ID, settingsPath: [] },
   ])
+}
+
+type GatewayOptions = ReturnType<typeof resolveAdapterOptions>
+type ResolveAuth = (connection: { baseURL?: string }) => Promise<{ headers: Record<string, string> }>
+
+/**
+ * Small provider adapter for the server's `/v1/chat/completions` endpoint.
+ *
+ * DSH 0.1.7's bundled DeepSeek adapter is Messages-only. Keeping this adapter
+ * local lets the enterprise gateway use the server's OpenAI-compatible route
+ * without downgrading the whole DSH dependency graph or sending Anthropic
+ * headers/payloads.
+ */
+class GatewayChatCompletionsAdapter extends LlmAdapter {
+  private readonly options: () => GatewayOptions
+  private readonly providerName: string
+  private readonly resolveAuth: ResolveAuth
+  private readonly discoverModels: (provider: string) => Promise<readonly LlmModelInfo[]>
+
+  constructor(dependencies: {
+    options: () => GatewayOptions
+    providerName: string
+    resolveAuth: ResolveAuth
+    discoverModels: (provider: string) => Promise<readonly LlmModelInfo[]>
+  }) {
+    super()
+    this.options = dependencies.options
+    this.providerName = dependencies.providerName
+    this.resolveAuth = dependencies.resolveAuth
+    this.discoverModels = dependencies.discoverModels
+  }
+
+  providerInfo(provider: string) {
+    return { id: provider, name: this.providerName }
+  }
+
+  async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    return this.discoverModels(provider)
+  }
+
+  async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const match = this.options().models.find(item => item.id === model)
+    return {
+      provider,
+      id: model,
+      name: match?.name ?? model,
+      ...(match?.description === undefined ? {} : { description: match.description }),
+      ...(match?.inputModalities === undefined ? {} : { inputModalities: match.inputModalities }),
+      context: { contextWindow: match?.contextWindow ?? this.options().defaultContextWindow },
+      defaultMaxTokens: this.options().maxTokens,
+    }
+  }
+
+  async prepareCall(provider: string, model: string): Promise<{ model: LlmResolvedModelInfo, stream: (options: GenerateOptions) => AsyncIterable<StreamChunk> }> {
+    const resolved = await this.resolveModel(provider, model)
+    return { model: resolved, stream: options => this.stream(options) }
+  }
+
+  async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const config = this.options()
+    const baseURL = config.baseURL?.replace(/\/+$/u, '')
+    const auth = await this.resolveAuth({ baseURL })
+    const messages = options.messages.map(message => projectMessage(message))
+    if (options.system !== undefined && !messages.some(message => message.role === 'system')) {
+      messages.unshift({ role: 'system', content: options.system })
+    }
+    const body: Record<string, unknown> = {
+      model: options.model,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+    }
+    if (options.tools?.length) body.tools = options.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }))
+    if (options.temperature !== undefined) body.temperature = options.temperature
+    if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens
+    else if (config.maxTokens !== undefined) body.max_tokens = config.maxTokens
+    if (options.stop?.length) body.stop = options.stop
+    if (options.reasoningEffort !== undefined && options.reasoningEffort !== 'off') body.reasoning_effort = options.reasoningEffort
+
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      redirect: 'error',
+      body: JSON.stringify(body),
+      headers: {
+        ...attributionHeaders(),
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+        ...auth.headers,
+        ...(options.sessionId === undefined ? {} : { 'x-deepseek-harness-session-id': String(options.sessionId) }),
+        ...(options.purpose === 'compaction' ? { 'x-deepseek-harness-compact': '1' } : {}),
+      },
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      let detail = text
+      try { detail = JSON.stringify(JSON.parse(text)) } catch { /* keep text */ }
+      throw new LlmError(`Gateway Chat Completions request failed (${response.status}): ${detail}`, `HTTP_${response.status}`, { status: response.status })
+    }
+    if (response.body === null) throw new LlmError('Gateway Chat Completions returned no response body', 'EMPTY_RESPONSE')
+
+    let textStarted = false
+    let text = ''
+    let reasoningStarted = false
+    let reasoning = ''
+    const blockOrder: number[] = []
+    let finishReason: 'stop' | 'tool-calls' | 'max-tokens' = 'stop'
+    const toolState = new Map<number, { id: string, name: string, arguments: string }>()
+    for await (const data of readSseData(response.body)) {
+      if (data === '[DONE]') break
+      let chunk: any
+      try { chunk = JSON.parse(data) } catch { continue }
+      const usage = chunk.usage
+      if (usage && typeof usage === 'object') {
+        yield { type: 'usage', usage: { inputTokens: Number(usage.prompt_tokens ?? 0), outputTokens: Number(usage.completion_tokens ?? 0), totalTokens: Number(usage.total_tokens ?? 0) } }
+      }
+      const choice = chunk.choices?.[0]
+      const delta = choice?.delta
+      if (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+        if (!reasoningStarted) { reasoningStarted = true; blockOrder.push(1); yield { type: 'block-start', index: 1, blockType: 'reasoning' } }
+        reasoning += delta.reasoning_content
+        yield { type: 'reasoning-delta', index: 1, text: delta.reasoning_content }
+      }
+      if (typeof delta?.content === 'string' && delta.content.length > 0) {
+        if (!textStarted) { textStarted = true; blockOrder.push(0); yield { type: 'block-start', index: 0, blockType: 'text' } }
+        text += delta.content
+        yield { type: 'text-delta', index: 0, text: delta.content }
+      }
+      for (const [offset, call] of (delta?.tool_calls ?? []).entries()) {
+        const index = Number(call.index ?? offset) + 1
+        const current = toolState.get(index) ?? { id: String(call.id ?? ''), name: String(call.function?.name ?? ''), arguments: '' }
+        if (call.id) current.id = String(call.id)
+        if (call.function?.name) current.name += String(call.function.name)
+        const argumentsDelta = String(call.function?.arguments ?? '')
+        if (!toolState.has(index)) yield { type: 'block-start', index, blockType: 'tool-call' }
+        toolState.set(index, current)
+        if (argumentsDelta) { current.arguments += argumentsDelta; yield { type: 'tool-call-delta', index, id: current.id as never, name: current.name, argumentsDelta } }
+      }
+      const reason = choice?.finish_reason
+      if (reason === 'tool_calls') finishReason = 'tool-calls'
+      else if (reason === 'length') finishReason = 'max-tokens'
+    }
+    for (const index of blockOrder) {
+      if (index === 0) yield { type: 'block-end', index, block: { type: 'text', text } }
+      else yield { type: 'block-end', index, block: { type: 'reasoning', text: reasoning } }
+    }
+    for (const [index, call] of toolState) yield { type: 'block-end', index, block: { type: 'tool-call', id: call.id as never, name: call.name, arguments: call.arguments } }
+    yield { type: 'finish', reason: { kind: finishReason } } as StreamChunk
+  }
+}
+
+function projectMessage(message: GenerateOptions['messages'][number]): Record<string, unknown> {
+  const content = message.content.map(block => {
+    if (block.type === 'text' || block.type === 'reasoning') return block.text
+    if (block.type === 'tool-call') return ''
+    if (block.type === 'file') return `[file: ${block.attachment.name}]`
+    if (block.type === 'image') return block.offloaded ? '[image omitted]' : '[image]'
+    return ''
+  }).join('')
+  const role = message.role === 'developer' ? 'developer' : message.role
+  const result: Record<string, unknown> = { role, content }
+  if (message.role === 'assistant') {
+    const calls = message.content.filter(block => block.type === 'tool-call')
+    if (calls.length) result.tool_calls = calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } }))
+  }
+  if (message.role === 'tool') result.tool_call_id = message.toolCallId
+  return result
+}
+
+async function* readSseData(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const next = await reader.read()
+      if (next.done) break
+      buffer += decoder.decode(next.value, { stream: true })
+      const lines = buffer.split(/\r?\n/u)
+      buffer = lines.pop() ?? ''
+      for (const line of lines) if (line.startsWith('data:')) yield line.slice(5).trim()
+    }
+    buffer += decoder.decode()
+    if (buffer.startsWith('data:')) yield buffer.slice(5).trim()
+  } finally {
+    reader.releaseLock()
+  }
 }
