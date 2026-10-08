@@ -124,7 +124,7 @@ func (a *AdminAPI) getLLMTranscript(c *gin.Context) {
 		WriteError(c, http.StatusInternalServerError, "INTERNAL", "读取审计记录失败")
 		return
 	}
-	// 审计内容以明文留存，读不出来就是真错误，不再有"可解密"这一档。
+	// 审计正文在库中 AES-GCM 加密，详情接口解密后只返回已经过隐私过滤的副本。
 	response, err := serverstore.ReadLLMTranscriptResponse(a.DB, id)
 	if err != nil {
 		WriteError(c, http.StatusInternalServerError, "INTERNAL", "读取审计响应失败")
@@ -138,7 +138,7 @@ func (a *AdminAPI) getLLMTranscript(c *gin.Context) {
 		// 管理端直接展示的可读文本：用户发了什么 / 模型回了什么（认不出形状时即原文）。
 		"request_text":     readableRequest(transcript.RequestBody),
 		"response_text":    readableResponse(string(response)),
-		"decryptable":      true, // 兼容旧前端字段；明文留存恒为 true
+		"decryptable":      true, // 兼容旧前端字段；服务端已完成解密并通过隐私过滤
 		"decrypt_reason":   "",
 		"response_present": len(response) > 0,
 	})

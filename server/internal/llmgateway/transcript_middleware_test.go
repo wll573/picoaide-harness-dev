@@ -33,12 +33,42 @@ func TestTranscriptWriterPersistsCompleteResponse(t *testing.T) {
 	if n, err := writer.Write(body); err != nil || n != len(body) {
 		t.Fatalf("Write() = %d, %v", n, err)
 	}
+	writer.FlushAudit()
 	if err := serverstore.FinishLLMTranscript(db, id, http.StatusOK, writer.bytes, serverstore.TranscriptHashHex(writer.hash.Sum(nil)), "complete"); err != nil {
 		t.Fatal(err)
 	}
 	got, err := serverstore.ReadLLMTranscriptResponse(db, id)
 	if err != nil || !bytes.Equal(got, body) {
 		t.Fatalf("stored response = %q, err=%v", got, err)
+	}
+}
+
+func TestTranscriptWriterRedactsReasoningBeforePersistence(t *testing.T) {
+	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
+	db, cleanup := serverstore.NewTestDB(t)
+	t.Cleanup(cleanup)
+	userID, err := serverstore.CreateUser(db, &serverstore.User{Username: "writer-privacy-user", Source: "local", Status: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := serverstore.CreateLLMTranscript(db, userID, "/v1/chat/completions", "m", []byte(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	writer := &transcriptWriter{ResponseWriter: ctx.Writer, db: db, transcriptID: id, hash: sha256.New()}
+	body := []byte(`{"choices":[{"delta":{"reasoning_content":"secret","content":"visible"}}]}`)
+	if _, err := writer.Write(body); err != nil {
+		t.Fatal(err)
+	}
+	writer.FlushAudit()
+	got, err := serverstore.ReadLLMTranscriptResponse(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "reasoning_content") || strings.Contains(string(got), "secret") || !strings.Contains(string(got), "visible") {
+		t.Fatalf("stored response = %q", got)
 	}
 }
 
@@ -91,6 +121,7 @@ func TestTranscriptWriterKeepsForwardingWhenAuditStorageFails(t *testing.T) {
 			t.Fatalf("Write(%q) = %d, %v; want full response forwarded", chunk, n, err)
 		}
 	}
+	writer.FlushAudit()
 	if writer.err == nil {
 		t.Fatal("audit storage error was not recorded")
 	}

@@ -29,6 +29,8 @@ type transcriptWriter struct {
 	bytes        int64
 	hash         hash.Hash
 	err          error
+	auditStream  bool
+	auditPending []byte
 }
 
 func (w *transcriptWriter) Write(p []byte) (int, error) {
@@ -49,14 +51,63 @@ func (w *transcriptWriter) Write(p []byte) (int, error) {
 		w.err = err
 		return n, err
 	}
-	if err := serverstore.AppendLLMTranscriptChunk(w.db, w.transcriptID, w.seq, p[:n]); err != nil {
-		w.err = err
-		return n, nil
-	}
-	w.seq++
 	w.bytes += int64(n)
 	_, _ = w.hash.Write(p[:n])
+	w.auditPending = append(w.auditPending, p[:n]...)
+	if w.auditStream {
+		w.flushCompleteSSE(false)
+	}
 	return n, nil
+}
+
+// FlushAudit completes the bounded audit-side buffer after the handler has
+// finished writing. It lets non-streaming JSON be parsed as a whole, so a
+// reasoning_content field split across network writes cannot escape redaction.
+func (w *transcriptWriter) FlushAudit() {
+	if w.err != nil || len(w.auditPending) == 0 {
+		return
+	}
+	if w.auditStream {
+		w.flushCompleteSSE(true)
+		return
+	}
+	w.appendAudit(serverstore.SanitizeLLMTranscriptResponse(w.auditPending))
+	w.auditPending = nil
+}
+
+func (w *transcriptWriter) flushCompleteSSE(final bool) {
+	for len(w.auditPending) > 0 {
+		idx := bytes.Index(w.auditPending, []byte("\n\n"))
+		delimLen := 2
+		if idx < 0 {
+			idx = bytes.Index(w.auditPending, []byte("\r\n\r\n"))
+			delimLen = 4
+		}
+		if idx < 0 {
+			break
+		}
+		end := idx + delimLen
+		w.appendAudit(serverstore.SanitizeLLMTranscriptResponse(w.auditPending[:end]))
+		w.auditPending = w.auditPending[end:]
+		if w.err != nil {
+			return
+		}
+	}
+	if final && len(w.auditPending) > 0 && w.err == nil {
+		w.appendAudit(serverstore.SanitizeLLMTranscriptResponse(w.auditPending))
+		w.auditPending = nil
+	}
+}
+
+func (w *transcriptWriter) appendAudit(payload []byte) {
+	if w.err != nil || len(payload) == 0 {
+		return
+	}
+	if err := serverstore.AppendLLMTranscriptChunk(w.db, w.transcriptID, w.seq, payload); err != nil {
+		w.err = err
+		return
+	}
+	w.seq++
 }
 
 func (w *transcriptWriter) WriteString(value string) (int, error) {
@@ -173,9 +224,10 @@ func sessionIDFromRequest(c *gin.Context) string {
 	return strings.TrimSpace(c.GetHeader(appSessionIDHeaderName()))
 }
 
-// TranscriptMiddleware stores the authenticated client's request and the
-// exact response body visible at the gateway boundary. Responses are written
-// as encrypted chunks, so SSE streams are not accumulated in process memory.
+// TranscriptMiddleware stores the authenticated client's request and a
+// privacy-filtered response at the gateway boundary. System/developer prompt
+// content, tool schemas, and model reasoning are removed before persistence;
+// the response sent to the client is unchanged.
 func TranscriptMiddleware(db *sql.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if db == nil || !shouldTranscript(c.Request.URL.Path, c.Request.Method) {
@@ -214,10 +266,11 @@ func TranscriptMiddleware(db *sql.DB) gin.HandlerFunc {
 			return
 		}
 		c.Header("X-Request-ID", requestID)
-		writer := &transcriptWriter{ResponseWriter: c.Writer, db: db, transcriptID: transcriptID, hash: sha256.New()}
+		writer := &transcriptWriter{ResponseWriter: c.Writer, db: db, transcriptID: transcriptID, hash: sha256.New(), auditStream: stream}
 		c.Writer = writer
 		started := time.Now()
 		c.Next()
+		writer.FlushAudit()
 		// 需求 §8.1「请求时间和耗时」。
 		durationMS := time.Since(started).Milliseconds()
 		status := writer.Status()

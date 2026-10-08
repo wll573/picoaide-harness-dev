@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/picoaide/picoaide/internal/util"
 )
 
 func TestLLMTranscriptRoundTripAndPagination(t *testing.T) {
@@ -41,7 +43,7 @@ func TestLLMTranscriptRoundTripAndPagination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.RequestBody != string(request) || row.ResponseBytes != int64(len(response)) || row.ResponseSHA != hex.EncodeToString(sum[:]) {
+	if row.RequestBody != string(SanitizeLLMTranscriptRequest(request)) || row.ResponseBytes != int64(len(response)) || row.ResponseSHA != hex.EncodeToString(sum[:]) {
 		t.Fatalf("transcript metadata = %+v", row)
 	}
 	gotResponse, err := ReadLLMTranscriptResponse(db, id)
@@ -56,15 +58,15 @@ func TestLLMTranscriptRoundTripAndPagination(t *testing.T) {
 	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&encryptedRequest); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(encryptedRequest, "hello") {
-		t.Fatal("产品要求明文留存：请求正文应原样可读")
+	if !strings.HasPrefix(encryptedRequest, util.EncPrefix) || strings.Contains(encryptedRequest, "hello") {
+		t.Fatal("请求正文未按 AES-GCM 加密落库")
 	}
 	var encryptedChunk string
 	if err := db.QueryRow(`SELECT payload_enc FROM llm_transcript_chunks WHERE transcript_id=? AND seq=0`, id).Scan(&encryptedChunk); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(encryptedChunk, "first") {
-		t.Fatal("产品要求明文留存：响应分块应原样可读")
+	if !strings.HasPrefix(encryptedChunk, util.EncPrefix) || strings.Contains(encryptedChunk, "first") {
+		t.Fatal("响应分块未按 AES-GCM 加密落库")
 	}
 
 	page, err := ListLLMTranscriptsFiltered(db, LLMTranscriptFilter{UserID: userID, Model: "qwen3", Endpoint: "/v1/chat/completions"}, 0, 10)

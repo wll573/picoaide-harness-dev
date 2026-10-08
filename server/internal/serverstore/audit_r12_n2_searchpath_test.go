@@ -354,6 +354,7 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"ListGatewayProviderAPIKeys":  r13gePinned, // provider_keys.go —— withUsageSearchPathRead
 	"GetGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPathRead
 	"CreateLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
+	"MigrateLLMTranscriptPrivacy": r13gePinned, // transcript_migration.go —— withUsageSearchPath
 	"AppendLLMTranscriptChunk":    r13gePinned, // transcript.go —— withUsageSearchPath
 	"FinishLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
 	"GetLLMTranscript":            r13gePinned, // transcript.go —— withUsageSearchPathRead

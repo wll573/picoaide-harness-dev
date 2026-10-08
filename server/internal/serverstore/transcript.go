@@ -135,6 +135,14 @@ func CreateLLMTranscriptDetailed(db *sql.DB, in TranscriptCreate) (int64, string
 	if len(in.Body) > maxTranscriptRequestBytes {
 		return 0, "", fmt.Errorf("transcript request exceeds %d bytes", maxTranscriptRequestBytes)
 	}
+	safeBody := SanitizeLLMTranscriptRequest(in.Body)
+	if len(safeBody) > maxTranscriptRequestBytes {
+		return 0, "", fmt.Errorf("transcript request exceeds %d bytes", maxTranscriptRequestBytes)
+	}
+	requestBodyEnc, err := encryptTranscriptPayload(safeBody)
+	if err != nil {
+		return 0, "", fmt.Errorf("encrypt transcript request: %w", err)
+	}
 	requestID, err := NewTranscriptRequestID()
 	if err != nil {
 		return 0, "", err
@@ -145,7 +153,7 @@ func CreateLLMTranscriptDetailed(db *sql.DB, in TranscriptCreate) (int64, string
 		id, err = InsertIDTx(tx, `INSERT INTO llm_transcripts
 			(request_id, user_id, endpoint, model, request_body_enc, stream, session_id, workspace)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-			requestID, in.UserID, in.Endpoint, in.Model, string(in.Body), in.Stream, in.SessionID, in.Workspace)
+			requestID, in.UserID, in.Endpoint, in.Model, requestBodyEnc, in.Stream, in.SessionID, in.Workspace)
 		return err
 	})
 	return id, requestID, err
@@ -155,10 +163,15 @@ func AppendLLMTranscriptChunk(db *sql.DB, transcriptID, seq int64, payload []byt
 	if len(payload) == 0 {
 		return nil
 	}
+	safePayload := SanitizeLLMTranscriptResponse(payload)
+	payloadEnc, err := encryptTranscriptPayload(safePayload)
+	if err != nil {
+		return fmt.Errorf("encrypt transcript response: %w", err)
+	}
 	return withUsageSearchPath(db, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO llm_transcript_chunks
 			(transcript_id, seq, payload_enc, byte_length)
-			VALUES (?, ?, ?, ?)`, transcriptID, seq, string(payload), len(payload))
+			VALUES (?, ?, ?, ?)`, transcriptID, seq, payloadEnc, len(safePayload))
 		return err
 	})
 }
@@ -217,8 +230,11 @@ func GetLLMTranscript(db *sql.DB, id int64) (LLMTranscript, error) {
 		if completed.Valid {
 			row.CompletedAt = &completed.Time
 		}
-		// 审计内容按产品要求以明文留存（列名 *_enc 是 0083 的历史命名，不再加密）。
-		row.RequestBody = requestBodyEnc
+		requestBody, decryptErr := decryptTranscriptPayload(requestBodyEnc)
+		if decryptErr != nil {
+			return decryptErr
+		}
+		row.RequestBody = string(requestBody)
 		return nil
 	})
 	if err != nil {
@@ -227,7 +243,7 @@ func GetLLMTranscript(db *sql.DB, id int64) (LLMTranscript, error) {
 	return row, nil
 }
 
-// ReadLLMTranscriptResponse 按 seq 顺序拼出完整响应（明文分块）。
+// ReadLLMTranscriptResponse 按 seq 顺序拼出完整响应（解密后的审计分块）。
 func ReadLLMTranscriptResponse(db *sql.DB, transcriptID int64) ([]byte, error) {
 	var response []byte
 	err := withUsageSearchPathRead(db, func(tx *sql.Tx) error {
@@ -239,9 +255,13 @@ func ReadLLMTranscriptResponse(db *sql.DB, transcriptID int64) ([]byte, error) {
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var payload string
-			if err := rows.Scan(&payload); err != nil {
+			var payloadEnc string
+			if err := rows.Scan(&payloadEnc); err != nil {
 				return err
+			}
+			payload, decryptErr := decryptTranscriptPayload(payloadEnc)
+			if decryptErr != nil {
+				return decryptErr
 			}
 			response = append(response, payload...)
 		}

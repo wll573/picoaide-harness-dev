@@ -38,7 +38,7 @@ func TestTranscriptMiddlewareAuditsNonStreamingRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.RequestBody != requestBody || row.AuditStatus != "complete" {
+	if row.RequestBody != string(serverstore.SanitizeLLMTranscriptRequest([]byte(requestBody))) || row.AuditStatus != "complete" {
 		t.Fatalf("transcript metadata = %+v", row)
 	}
 	if row.Provider != "r3p" || row.InputTokens != 1000000 || row.OutputTokens <= 0 || row.TotalTokens != row.InputTokens+row.OutputTokens {

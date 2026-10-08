@@ -187,6 +187,14 @@ func main() {
 	if _, err := util.EnsureMasterKey(*dataDir); err != nil {
 		log.Fatalf("master key: %v", err)
 	}
+	// 旧版本把 llm_transcripts 的 *_enc 列按明文写入，并把完整系统提示词、
+	// 工具 schema 与 reasoning_content 一并保留。启动时在 master key 已就绪后
+	// 一次性升级历史行；新请求则在网关写入前直接走隐私过滤路径。
+	if migrated, merr := serverstore.MigrateLLMTranscriptPrivacy(db); merr != nil {
+		log.Fatalf("llm transcript privacy migration: %v", merr)
+	} else if migrated > 0 {
+		log.Printf("llm transcript privacy migration: upgraded %d legacy rows", migrated)
+	}
 	// P3-5(审计 2026-09-13):客户端下载/门户 URL 的来源判定以管理员配置的
 	// "对外地址"(settings server.base_url)为权威;未配置才回落到请求头。
 	clientrelease.PublicBaseResolver = func() string {
