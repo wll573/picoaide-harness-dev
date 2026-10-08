@@ -26,6 +26,7 @@ import {
   attributionHeaders,
   LlmAdapter,
   LlmError,
+  ReasoningEffortId,
   type GenerateOptions,
   type LlmModelInfo,
   type LlmResolvedModelInfo,
@@ -184,6 +185,47 @@ export function apply(ctx: Context, config: Config): void {
 type GatewayOptions = ReturnType<typeof resolveAdapterOptions>
 type ResolveAuth = (connection: { baseURL?: string }) => Promise<{ headers: Record<string, string> }>
 
+const OFF_REASONING_EFFORT = ReasoningEffortId('off')
+const LOW_REASONING_EFFORT = ReasoningEffortId('low')
+const HIGH_REASONING_EFFORT = ReasoningEffortId('high')
+const MAX_REASONING_EFFORT = ReasoningEffortId('max')
+
+const ALL_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+  { id: LOW_REASONING_EFFORT, name: 'Low', description: 'Prefer for routine or latency-sensitive tasks.' },
+  { id: HIGH_REASONING_EFFORT, name: 'High', description: 'The default balance for most tasks.' },
+  { id: MAX_REASONING_EFFORT, name: 'Max', description: 'Reserve for the hardest quality-first tasks.' },
+] as const
+
+const OFF_ONLY_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+] as const
+
+/**
+ * Build reasoning capability info from connection defaults.
+ *
+ * When thinking is disabled, only "off" is offered. When enabled, all four
+ * levels are exposed and the configured default (or high as fallback) becomes
+ * the default effort. The per-model bootstrap patch overrides this further for
+ * models that have an explicit `_thinking_adapter`.
+ */
+function resolveReasoningInfo(
+  thinking: 'enabled' | 'disabled' | undefined,
+  defaultEffort: 'off' | 'low' | 'high' | 'max' | undefined,
+) {
+  if (thinking === 'disabled') {
+    return { efforts: OFF_ONLY_REASONING_EFFORTS, defaultEffort: OFF_REASONING_EFFORT }
+  }
+  const resolvedDefault = defaultEffort === 'off'
+    ? OFF_REASONING_EFFORT
+    : defaultEffort === 'low'
+      ? LOW_REASONING_EFFORT
+      : defaultEffort === 'max'
+        ? MAX_REASONING_EFFORT
+        : HIGH_REASONING_EFFORT
+  return { efforts: ALL_REASONING_EFFORTS, defaultEffort: resolvedDefault }
+}
+
 /**
  * Small provider adapter for the server's `/v1/chat/completions` endpoint.
  *
@@ -220,15 +262,17 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
   }
 
   async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const match = this.options().models.find(item => item.id === model)
+    const opts = this.options()
+    const match = opts.models.find(item => item.id === model)
     return {
       provider,
       id: model,
       name: match?.name ?? model,
       ...(match?.description === undefined ? {} : { description: match.description }),
       ...(match?.inputModalities === undefined ? {} : { inputModalities: match.inputModalities }),
-      context: { contextWindow: match?.contextWindow ?? this.options().defaultContextWindow },
-      defaultMaxTokens: this.options().maxTokens,
+      context: { contextWindow: match?.contextWindow ?? opts.defaultContextWindow },
+      defaultMaxTokens: opts.maxTokens,
+      reasoning: resolveReasoningInfo(opts.defaults.thinking, opts.defaults.reasoningEffort),
     }
   }
 
@@ -280,13 +324,20 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
     }
     if (response.body === null) throw new LlmError('Gateway Chat Completions returned no response body', 'EMPTY_RESPONSE')
 
-    let textStarted = false
     let text = ''
-    let reasoningStarted = false
     let reasoning = ''
-    const blockOrder: number[] = []
     let finishReason: 'stop' | 'tool-calls' | 'max-tokens' = 'stop'
+    // 块索引必须单调分配且互不相同。曾经的硬编码（reasoning=1 / text=0 / tool_call=call.index+1）
+    // 会让第一个工具调用与 reasoning 撞成同一个 index，而 BlockAssembler 的 block-start
+    // 是「首次占位即拥有」（assembler.ts:51-60），撞号时工具调用块被静默丢弃 ⇒ 思考已产出、
+    // 工具调用却从未执行、turn 直接结束（用户侧表现为「Let me do ... first」之后卡死）。
+    let nextIndex = 0
+    const blockKinds = new Map<number, 'text' | 'reasoning'>()
+    let textIndex: number | undefined
+    let reasoningIndex: number | undefined
     const toolState = new Map<number, { id: string, name: string, arguments: string }>()
+    /** 上游 tool_call.index → 本地块索引；同一路工具调用的多个 delta 必须复用同一个块。 */
+    const toolIndexByWire = new Map<number, number>()
     for await (const data of readSseData(response.body)) {
       if (data === '[DONE]') break
       let chunk: any
@@ -298,22 +349,37 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
       const choice = chunk.choices?.[0]
       const delta = choice?.delta
       if (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
-        if (!reasoningStarted) { reasoningStarted = true; blockOrder.push(1); yield { type: 'block-start', index: 1, blockType: 'reasoning' } }
+        if (reasoningIndex === undefined) {
+          reasoningIndex = nextIndex++
+          blockKinds.set(reasoningIndex, 'reasoning')
+          yield { type: 'block-start', index: reasoningIndex, blockType: 'reasoning' }
+        }
         reasoning += delta.reasoning_content
-        yield { type: 'reasoning-delta', index: 1, text: delta.reasoning_content }
+        yield { type: 'reasoning-delta', index: reasoningIndex, text: delta.reasoning_content }
       }
       if (typeof delta?.content === 'string' && delta.content.length > 0) {
-        if (!textStarted) { textStarted = true; blockOrder.push(0); yield { type: 'block-start', index: 0, blockType: 'text' } }
+        if (textIndex === undefined) {
+          textIndex = nextIndex++
+          blockKinds.set(textIndex, 'text')
+          yield { type: 'block-start', index: textIndex, blockType: 'text' }
+        }
         text += delta.content
-        yield { type: 'text-delta', index: 0, text: delta.content }
+        yield { type: 'text-delta', index: textIndex, text: delta.content }
       }
       for (const [offset, call] of (delta?.tool_calls ?? []).entries()) {
-        const index = Number(call.index ?? offset) + 1
-        const current = toolState.get(index) ?? { id: String(call.id ?? ''), name: String(call.function?.name ?? ''), arguments: '' }
+        const wireIndex = Number(call.index ?? offset)
+        let index = toolIndexByWire.get(wireIndex)
+        if (index === undefined) {
+          index = nextIndex++
+          toolIndexByWire.set(wireIndex, index)
+          yield { type: 'block-start', index, blockType: 'tool-call' }
+        }
+        const current = toolState.get(index) ?? { id: String(call.id ?? ''), name: '', arguments: '' }
         if (call.id) current.id = String(call.id)
-        if (call.function?.name) current.name += String(call.function.name)
+        // 覆盖而非累加：OpenAI 兼容协议允许每个 delta 重复下发同一个完整工具名，
+        // 累加会把 `dtodo` 拼成 `dtododtodo`，执行时直接 unknown tool。
+        if (call.function?.name) current.name = String(call.function.name)
         const argumentsDelta = String(call.function?.arguments ?? '')
-        if (!toolState.has(index)) yield { type: 'block-start', index, blockType: 'tool-call' }
         toolState.set(index, current)
         if (argumentsDelta) { current.arguments += argumentsDelta; yield { type: 'tool-call-delta', index, id: current.id as never, name: current.name, argumentsDelta } }
       }
@@ -321,8 +387,8 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
       if (reason === 'tool_calls') finishReason = 'tool-calls'
       else if (reason === 'length') finishReason = 'max-tokens'
     }
-    for (const index of blockOrder) {
-      if (index === 0) yield { type: 'block-end', index, block: { type: 'text', text } }
+    for (const [index, kind] of blockKinds) {
+      if (kind === 'text') yield { type: 'block-end', index, block: { type: 'text', text } }
       else yield { type: 'block-end', index, block: { type: 'reasoning', text: reasoning } }
     }
     for (const [index, call] of toolState) yield { type: 'block-end', index, block: { type: 'tool-call', id: call.id as never, name: call.name, arguments: call.arguments } }
@@ -331,6 +397,27 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
 }
 
 function projectMessage(message: GenerateOptions['messages'][number]): Record<string, unknown> {
+  const role = message.role === 'developer' ? 'developer' : message.role
+  const result: Record<string, unknown> = { role }
+  if (message.role === 'assistant') {
+    // thinking 模式下 DeepSeek 要求逐轮回传 reasoning_content，缺失即 400
+    // （"The `reasoning_content` in the thinking mode must be passed back to the API."）。
+    // 思考文本必须走独立字段：拼进 content 会被当作模型可见输出，既丢语义又触发上面那条 400。
+    const reasoning = message.content
+      .filter(block => block.type === 'reasoning')
+      .map(block => block.text)
+      .join('')
+    const content = message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+    result.content = content
+    // 空字符串也要带上：DeepSeek 校验的是字段存在性，不是非空。
+    result.reasoning_content = reasoning
+    const calls = message.content.filter(block => block.type === 'tool-call')
+    if (calls.length) result.tool_calls = calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } }))
+    return result
+  }
   const content = message.content.map(block => {
     if (block.type === 'text' || block.type === 'reasoning') return block.text
     if (block.type === 'tool-call') return ''
@@ -338,12 +425,7 @@ function projectMessage(message: GenerateOptions['messages'][number]): Record<st
     if (block.type === 'image') return block.offloaded ? '[image omitted]' : '[image]'
     return ''
   }).join('')
-  const role = message.role === 'developer' ? 'developer' : message.role
-  const result: Record<string, unknown> = { role, content }
-  if (message.role === 'assistant') {
-    const calls = message.content.filter(block => block.type === 'tool-call')
-    if (calls.length) result.tool_calls = calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } }))
-  }
+  result.content = content
   if (message.role === 'tool') result.tool_call_id = message.toolCallId
   return result
 }
