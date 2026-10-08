@@ -650,19 +650,15 @@ func portalDownloads(c *gin.Context, settings map[string]string) ([]portal.Platf
 		return portal.Platform{Name: name, Meta: meta, URL: url}
 	}
 
+	// 门户目前只向员工提供 Windows x64 安装程序。服务端镜像仍可携带
+	// 其他平台资产供内部构建或历史升级使用，但不在网页上展示下载入口。
 	platforms := []portal.Platform{
 		item("Windows", "x64 · .exe 安装程序", settings["portal.client_download_win"], "win-x64"),
-		// macOS 只出 Apple 芯片(arm64)包(见 desktop package.json 的 build.mac.arch):
-		// 文案必须写明,否则 Intel Mac 用户会下到一个装不上的包。
-		item("macOS", "Apple 芯片 (M 系列) · .dmg 磁盘映像", settings["portal.client_download_mac"], "mac-universal"),
-		item("Linux", "x64 · .AppImage / .deb", settings["portal.client_download_linux"], "linux-x64"),
 	}
 
 	// 有平台因来源不可访问而失去内置入口(且管理员没配自有地址)→ 说明原因。
 	note := ""
-	if !origin.OK() && (pick(settings["portal.client_download_win"]) == "" ||
-		pick(settings["portal.client_download_mac"]) == "" ||
-		pick(settings["portal.client_download_linux"]) == "") {
+	if !origin.OK() && pick(settings["portal.client_download_win"]) == "" {
 		note = "本服务端当前无法提供可访问的安装包地址:" + origin.Reason + "。"
 	}
 	return platforms, note

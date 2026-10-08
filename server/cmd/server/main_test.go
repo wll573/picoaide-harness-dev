@@ -692,7 +692,7 @@ func TestResolveStartupChannelDeepLinkScheme(t *testing.T) {
 // 原因写进下载区(运维据此配置 PICOAI_PUBLIC_BASE_URL)。管理员配置的
 // portal.client_download_* 覆盖地址不受影响。
 
-// withPortalReleaseDir 造一个带三平台资产的客户端资产目录。
+// withPortalReleaseDir 造一个带多平台资产的客户端资产目录；门户只应展示 Windows。
 func withPortalReleaseDir(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -729,15 +729,19 @@ func TestPortalDownloadsFollowAvailableOrigin(t *testing.T) {
 		if note != "" {
 			t.Fatalf("安全来源不该有说明: %q", note)
 		}
-		for i, want := range []string{"/updates/client/Setup.exe", "/updates/client/App.dmg", "/updates/client/App.AppImage"} {
-			if items[i].URL != want {
-				t.Errorf("%s url = %q, want %q", items[i].Name, items[i].URL, want)
-			}
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
+		}
+		if items[0].Name != "Windows" || items[0].URL != "/updates/client/Setup.exe" {
+			t.Errorf("Windows url = %q, want %q", items[0].URL, "/updates/client/Setup.exe")
 		}
 	})
 
 	t.Run("没有可判定来源不显示入口并说明原因", func(t *testing.T) {
 		items, note := serve("", "", nil)
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
+		}
 		for _, p := range items {
 			if p.URL != "" {
 				t.Errorf("%s 不该有下载地址: %q", p.Name, p.URL)
@@ -758,8 +762,8 @@ func TestPortalDownloadsFollowAvailableOrigin(t *testing.T) {
 		if items[0].URL != "https://cdn.example.com/win.exe" {
 			t.Errorf("管理员配置应优先: %q", items[0].URL)
 		}
-		if items[1].URL != "" {
-			t.Errorf("未配置的平台不该有地址: %q", items[1].URL)
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
 		}
 	})
 }
