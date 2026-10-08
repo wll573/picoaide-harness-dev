@@ -26,6 +26,7 @@ import {
   attributionHeaders,
   LlmAdapter,
   LlmError,
+  ReasoningEffortId,
   type GenerateOptions,
   type LlmModelInfo,
   type LlmResolvedModelInfo,
@@ -184,6 +185,47 @@ export function apply(ctx: Context, config: Config): void {
 type GatewayOptions = ReturnType<typeof resolveAdapterOptions>
 type ResolveAuth = (connection: { baseURL?: string }) => Promise<{ headers: Record<string, string> }>
 
+const OFF_REASONING_EFFORT = ReasoningEffortId('off')
+const LOW_REASONING_EFFORT = ReasoningEffortId('low')
+const HIGH_REASONING_EFFORT = ReasoningEffortId('high')
+const MAX_REASONING_EFFORT = ReasoningEffortId('max')
+
+const ALL_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+  { id: LOW_REASONING_EFFORT, name: 'Low', description: 'Prefer for routine or latency-sensitive tasks.' },
+  { id: HIGH_REASONING_EFFORT, name: 'High', description: 'The default balance for most tasks.' },
+  { id: MAX_REASONING_EFFORT, name: 'Max', description: 'Reserve for the hardest quality-first tasks.' },
+] as const
+
+const OFF_ONLY_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+] as const
+
+/**
+ * Build reasoning capability info from connection defaults.
+ *
+ * When thinking is disabled, only "off" is offered. When enabled, all four
+ * levels are exposed and the configured default (or high as fallback) becomes
+ * the default effort. The per-model bootstrap patch overrides this further for
+ * models that have an explicit `_thinking_adapter`.
+ */
+function resolveReasoningInfo(
+  thinking: 'enabled' | 'disabled' | undefined,
+  defaultEffort: 'off' | 'low' | 'high' | 'max' | undefined,
+) {
+  if (thinking === 'disabled') {
+    return { efforts: OFF_ONLY_REASONING_EFFORTS, defaultEffort: OFF_REASONING_EFFORT }
+  }
+  const resolvedDefault = defaultEffort === 'off'
+    ? OFF_REASONING_EFFORT
+    : defaultEffort === 'low'
+      ? LOW_REASONING_EFFORT
+      : defaultEffort === 'max'
+        ? MAX_REASONING_EFFORT
+        : HIGH_REASONING_EFFORT
+  return { efforts: ALL_REASONING_EFFORTS, defaultEffort: resolvedDefault }
+}
+
 /**
  * Small provider adapter for the server's `/v1/chat/completions` endpoint.
  *
@@ -220,15 +262,17 @@ class GatewayChatCompletionsAdapter extends LlmAdapter {
   }
 
   async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const match = this.options().models.find(item => item.id === model)
+    const opts = this.options()
+    const match = opts.models.find(item => item.id === model)
     return {
       provider,
       id: model,
       name: match?.name ?? model,
       ...(match?.description === undefined ? {} : { description: match.description }),
       ...(match?.inputModalities === undefined ? {} : { inputModalities: match.inputModalities }),
-      context: { contextWindow: match?.contextWindow ?? this.options().defaultContextWindow },
-      defaultMaxTokens: this.options().maxTokens,
+      context: { contextWindow: match?.contextWindow ?? opts.defaultContextWindow },
+      defaultMaxTokens: opts.maxTokens,
+      reasoning: resolveReasoningInfo(opts.defaults.thinking, opts.defaults.reasoningEffort),
     }
   }
 
