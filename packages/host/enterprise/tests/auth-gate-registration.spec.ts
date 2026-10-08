@@ -28,6 +28,14 @@ function bootRegistration(locale: 'zh' | 'en', response: { ok: boolean, status: 
 }
 
 describe('account registration awaiting approval', () => {
+  it('keeps the registration entry for older auth/methods responses without metadata', async () => {
+    const page = bootRegistration('zh', {
+      ok: true, status: 200, body: { methods: [{ name: 'local', configured: true }] },
+    })
+    await page.element('f1').listeners.submit({ preventDefault() {} })
+    expect(page.element('register-btn').style.display).toBe('')
+  })
+
   it.each([
     ['zh', 201, '请联系管理员审批'],
     ['en', 202, 'contact your administrator for approval'],
