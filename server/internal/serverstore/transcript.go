@@ -297,6 +297,12 @@ func ListLLMTranscriptsFiltered(db *sql.DB, filter LLMTranscriptFilter, offset, 
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
+	where, args := transcriptFilterWhere(filter)
+	return listLLMTranscriptRows(db, where, args, offset, limit)
+}
+
+// transcriptFilterWhere is shared by request lists, session summaries and exports.
+func transcriptFilterWhere(filter LLMTranscriptFilter) (string, []any) {
 	where := ""
 	args := []any{}
 	add := func(clause string, value any) {
@@ -346,6 +352,10 @@ func ListLLMTranscriptsFiltered(db *sql.DB, filter LLMTranscriptFilter, offset, 
 			args = append(args, pattern)
 		}
 	}
+	return where, args
+}
+
+func listLLMTranscriptRows(db *sql.DB, where string, args []any, offset, limit int64) (LLMTranscriptPage, error) {
 	var page LLMTranscriptPage
 	err := withUsageSearchPathRead(db, func(tx *sql.Tx) error {
 		page = LLMTranscriptPage{}

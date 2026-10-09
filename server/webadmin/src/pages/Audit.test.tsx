@@ -115,6 +115,34 @@ beforeEach(() => {
   }
 })
 
+describe('Prompt/Response 审计按会话展示', () => {
+  it('汇总同一 session，并可回到该 session 的请求明细', async () => {
+    setCurrentAdmin(SUPER)
+    const session = {
+      user_id: 7, username: 'alice', user_deleted: false, session_id: 'chat-7',
+      transcript_id: 101, request_count: 2, failure_count: 1, pending_count: 0,
+      total_tokens: 42, models: 'deepseek-chat', created_at: '2026-10-09T10:00:00Z', last_at: '2026-10-09T10:01:00Z',
+    }
+    mockRequest.mockImplementation(async (path: string) => {
+      const p = String(path)
+      if (p.startsWith('/api/server/admin/audit?')) return { logs: LOGS, total: LOGS.length }
+      if (p.startsWith(AUDIT_SETTINGS_PATH)) return { retention_days: 180 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('group_by=session')) return { sessions: [session], total: 1 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('session_id=chat-7')) {
+        return { transcripts: [{ id: 101, request_id: 'req-101', user_id: 7, username: 'alice', session_id: 'chat-7', model: 'deepseek-chat', audit_status: 'complete', created_at: session.created_at }], total: 1 }
+      }
+      return {}
+    })
+    render(<Audit />)
+    await waitFor(() => expect(screen.getByText('chat-7')).toBeInTheDocument())
+    expect(screen.getByText('2 次请求 · 42 Tokens')).toBeInTheDocument()
+    expect(screen.getByText('1 次失败')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '查看会话' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '查看对话' })).toBeInTheDocument())
+    expect(mockRequest.mock.calls.some(([path]) => String(path).includes('session_id=chat-7') && !String(path).includes('group_by=session'))).toBe(true)
+  })
+})
+
 async function exportCsv(): Promise<string> {
   render(<Audit />)
   // 必须等数据行出现再点导出:导出读的是组件 state,提前点只会拿到表头。

@@ -212,8 +212,11 @@ curl -kfsS https://harness.example.com/healthz
 - 每次网关请求响应都会返回 `X-Request-ID`，可与管理端审计记录的请求 ID 对照。
 - 审计记录创建失败时 fail-closed，请求不转发到上游。
 - 管理员从「审计日志 → LLM Prompt / Response 审计」查看元数据、全文和 JSON 导出。
+- 审计页默认按用户会话聚合；同一用户的同一 `session_id` 显示为一行，点「查看会话」再展开请求明细。没有 `session_id` 的历史请求按独立请求显示，不会互相合并。
 - `audit.retention_days` 管理传统操作日志；`llm.transcript_retention_days` 管理 Prompt/Response，默认 180 天，调度器周期清理，外键级联删除分片。
 - 使用 `/data/master.key` 与现有 AES-GCM 机制；备份数据库时必须同步备份该文件。
+
+内网原生交付包还必须包含 `channel/`、`demo-apps/` 和 `skills/` 三棵服务端资源树。安装或升级脚本会先校验渠道清单及三个内置应用的 wasm，再原子替换资源；缺少任一资源时会在替换二进制前终止，避免出现“应用中心为空”或应用页面加载失败。
 
 ## 6. Qwen 思考模式
 

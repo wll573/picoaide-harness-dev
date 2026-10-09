@@ -90,6 +90,7 @@
 | PUT | `/api/server/admin/connectors/:id/enabled` | 连接器上架/下架 |
 | DELETE | `/api/server/admin/connectors/:id` | 删除连接器 |
 | GET | `/api/server/admin/audit` | 审计日志分页 `?page=&size=&action=&username=`(默认保留 180 天,settings `audit.retention_days` 可配;0048 起哈希链) |
+| GET | `/api/server/admin/audit/transcripts` | Prompt/Response 审计分页；默认返回 `transcripts` 请求明细，传 `group_by=session` 返回按 `(user_id, session_id)` 聚合的 `sessions`（空 session 每条独立），`?user_id=&session_id=&model=&since=&until=&keyword=&offset=&limit=` 筛选；会话行含请求数、失败数、进行中数、Token 合计与模型集合 |
 | GET/PUT | `/api/server/admin/auth`、`POST /auth/test` | 认证配置(脱敏读/写/连接测试;LDAP 测试连接返回目录统计 `{ok, message, users, groups, sample[5]}`;密码传 `***`/空 = 用已保存值测试) |
 
 > **LDAP 目录自动同步(2026-09;启用方向 2026-09-23 收紧)**:LDAP 配置保存后立即触发一轮全量同步,此后服务端每 1 小时自动一轮。同步语义:目录存在的用户自动创建/更新(显示名/邮箱/组,组全量替换);目录已消失的外部用户自动停用 + 吊销全部 token;同名本地账号绝不被外部身份接管;空目录(0 用户)拒绝执行(防误停用全部外部用户)。

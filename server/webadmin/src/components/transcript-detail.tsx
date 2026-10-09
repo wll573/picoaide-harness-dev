@@ -49,6 +49,21 @@ export interface TranscriptDetailDto {
   response_text?: string
 }
 
+export interface TranscriptSessionDto {
+  user_id: number
+  username?: string
+  user_deleted?: boolean
+  session_id: string
+  transcript_id: number
+  request_count: number
+  failure_count: number
+  pending_count: number
+  total_tokens: number
+  models: string
+  created_at: string
+  last_at: string
+}
+
 /**
  * 列表/导出的筛选条件（**输入态与已应用态共用同一形态**）。
  *

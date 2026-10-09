@@ -82,6 +82,7 @@ make -C server webadmin
 mkdir -p server/bin
 go build -C server -o bin/picoaide-server ./cmd/server
 go build -C server -o bin/picoaide-app-compile ./cmd/picoaide-app-compile
+bash server/scripts/build-demo-apps.sh --out-dir server/bin/demo-apps
 
 if command -v docker >/dev/null && [[ "${BUILD_IMAGE:-0}" == 1 ]]; then
   WINDOWS_INSTALLER=${WINDOWS_INSTALLER:-}
