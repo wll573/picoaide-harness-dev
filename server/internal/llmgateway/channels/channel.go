@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -37,10 +38,19 @@ type Channel interface {
 var registry = map[string]Channel{}
 
 // Register 由各渠道包 init() 调用。
-func Register(c Channel) { registry[c.Name()] = c }
+func Register(c Channel) {
+	name := strings.ToLower(strings.TrimSpace(c.Name()))
+	if name == "" {
+		return
+	}
+	registry[name] = c
+}
 
 // Get 按名取渠道。
-func Get(name string) (Channel, bool) { c, ok := registry[name]; return c, ok }
+func Get(name string) (Channel, bool) {
+	c, ok := registry[strings.ToLower(strings.TrimSpace(name))]
+	return c, ok
+}
 
 // All 返回已注册渠道名(排序)。
 func All() []string {

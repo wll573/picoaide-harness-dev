@@ -27,3 +27,21 @@ func TestQwenChannelRequestOverrideEmitsRawHTTPShape(t *testing.T) {
 		t.Fatalf("DeepSeek thinking field leaked: %#v", body)
 	}
 }
+
+func TestQwenProductionChannelOverrideEmitsCompatibilityShape(t *testing.T) {
+	input := []byte(`{"model":"qwen-plus","thinking":{"type":"enabled"},"reasoning_effort":"high","thinking_budget":2048}`)
+	output, err := (&API{}).applyChannelOverrides(input, nil, nil, channels.Qwen{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["enable_thinking"] != true || body["thinking_budget"] != float64(2048) {
+		t.Fatalf("production outbound body = %#v", body)
+	}
+	if _, ok := body["reasoning_effort"]; ok {
+		t.Fatalf("reasoning_effort leaked: %#v", body)
+	}
+}

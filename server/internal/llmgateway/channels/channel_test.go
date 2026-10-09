@@ -23,6 +23,9 @@ func TestRegistryLookup(t *testing.T) {
 	if _, ok := Get("stub"); !ok {
 		t.Fatal("Get(stub) not found")
 	}
+	if _, ok := Get("  STUB "); !ok {
+		t.Fatal("channel lookup should ignore import whitespace and case")
+	}
 	if _, ok := Get("nope"); ok {
 		t.Fatal("Get(nope) should be missing")
 	}

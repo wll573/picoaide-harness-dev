@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -184,7 +185,12 @@ func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 		rows.Close()
 
 		for _, r := range list {
-			u := Upstream{ID: r.id, Name: r.name, BaseURL: r.baseURL, Channel: r.channel, Protocol: r.protocol,
+			channel := strings.ToLower(strings.TrimSpace(r.channel))
+			protocol := strings.ToLower(strings.TrimSpace(r.protocol))
+			if protocol == "" {
+				protocol = "openai"
+			}
+			u := Upstream{ID: r.id, Name: r.name, BaseURL: r.baseURL, Channel: channel, Protocol: protocol,
 				ResponsesEnabled: r.responsesEnabled, ChatEnabled: r.chatEnabled,
 				TimeoutSeconds: r.timeoutSeconds, MaxKeyAttempts: r.maxKeyAttempts}
 			key, err := DecryptSecret(r.key)
