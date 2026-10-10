@@ -35,17 +35,23 @@ func ListModels(db *sql.DB) ([]Model, error) {
 		rows, err := tx.Query(`SELECT m.name, COALESCE(m.display_name, m.name), COALESCE(m.default_params, ''),
 		COALESCE(m.input_modalities, '["text"]')
 		FROM models m JOIN gateway_providers p ON p.id = m.provider_id
-		WHERE p.enabled = 1 AND m.catalog_missing = FALSE ORDER BY m.id`)
+		WHERE p.enabled = 1 AND m.catalog_missing = FALSE AND m.hidden = FALSE ORDER BY m.id`)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
+		ms = []Model{}
+		seen := make(map[string]struct{})
 		for rows.Next() {
 			var m Model
 			var modalities string
 			if err := rows.Scan(&m.ID, &m.DisplayName, &m.DefaultParams, &modalities); err != nil {
 				return err
 			}
+			if _, ok := seen[m.ID]; ok {
+				continue
+			}
+			seen[m.ID] = struct{}{}
 			m.InputModalities = serverstore.ParseInputModalities(modalities)
 			ms = append(ms, m)
 		}

@@ -152,6 +152,13 @@ var productionOnlyAdminRoutes = map[string]string{
 	"PUT " + NamespaceServer + "/admin/report-subscriptions/:id":       "报表订阅（同上）",
 	"DELETE " + NamespaceServer + "/admin/report-subscriptions/:id":    "报表订阅（同上）",
 	"POST " + NamespaceServer + "/admin/report-subscriptions/:id/test": "报表订阅（同上）",
+	"GET " + NamespaceServer + "/admin/providers/:id/keys":                "上游多 Key 池列表：llmgateway 镜像只覆盖 CRUD 组的一部分",
+	"POST " + NamespaceServer + "/admin/providers/:id/keys":               "上游多 Key 池新增（同上）",
+	"PUT " + NamespaceServer + "/admin/providers/:id/keys/:key_id":        "上游多 Key 池修改（同上）",
+	"DELETE " + NamespaceServer + "/admin/providers/:id/keys/:key_id":     "上游多 Key 池删除（同上）",
+	"POST " + NamespaceServer + "/admin/providers/:id/keys/:key_id/reset": "上游多 Key 池重置冷却（同上）",
+	"GET " + NamespaceServer + "/admin/users/:id/managed-config":          "托管客户端配置读：managedconfig 只有 Handlers",
+	"PUT " + NamespaceServer + "/admin/users/:id/managed-config":          "托管客户端配置写（同上）",
 }
 
 // productionOnlyReasonFor 返回该生产独有路由的登记理由；未登记返回 ok=false（判红）。

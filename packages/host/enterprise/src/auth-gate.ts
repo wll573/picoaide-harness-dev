@@ -258,7 +258,7 @@ export function renderLoginPage(locale: HostLocale): string {
     <h1>${c.connectTitle}</h1>
     <div class="tagline">${c.connectTagline}</div>
     <form id="f1">
-      <input id="server" type="url" placeholder="https://ai.example.com" value="__DEFAULT_SERVER__" __DEFAULT_SERVER_MARK__ autocomplete="off" spellcheck="false" required>
+      <input id="server" type="url" placeholder="http://ai.example.com" value="__DEFAULT_SERVER__" __DEFAULT_SERVER_MARK__ autocomplete="off" spellcheck="false" required>
       <button type="submit" id="next-btn">${c.next}</button>
       <div class="err" id="err-step1"></div>
     </form>
@@ -956,7 +956,7 @@ export const inject = ['webServer', 'picoSession', 'tools']
  * 把渠道包预置的域名安全地放进 `value="…"` 属性。
  *
  * 只转义 HTML 元字符(属性值语义),不做 URL 编解码 —— 地址本身由
- * auth-gate 的 assertServerURLAllowed 在使用时再校验一次(https/回环)。
+ * auth-gate 的 assertServerURLAllowed 在使用时再校验一次(http/https)。
  * @param value - 渠道包或 profile 提供的域名。
  * @returns 可安全内联进 HTML 属性的字符串。
  */
@@ -1943,7 +1943,7 @@ export function apply(ctx: Context, config: Config): void {
       // 执行(contextIsolation/nodeIntegration 全关,见 desktop/src/window-options.ts),
       // 够不到宿主模块作用域的 `noteBrowserLoginStarted`;`window.open` 打开的又是
       // **远端** SSO 地址,不经过本地路由。没有这条面,`pendingBrowserLogin` 的
-      // 判定分支永远不可达 —— 未登录时只剩 `assertServerURLAllowed`(https 域名
+      // 判定分支永远不可达 —— 未登录时只剩 `assertServerURLAllowed`(http/https 域名
       // 一律放行),伪造深链就能把会话指向攻击者服务端且零告警。
       //
       // 口径与 login 相同(`required` 持有性证明):登记决定了后续深链允许采纳

@@ -134,6 +134,11 @@ var searchPathRelations = map[string]searchPathRelation{
 	"wasm_call_events":              {searchPathRelNonFamily, "应用调用事件：独立计数面"},
 	"brand_snapshots":               {searchPathRelNonFamily, "品牌快照表（0047 建、品牌模块已下线）：全仓无 Go 读面"},
 
+	// 托管策略（0089）：面板读数，遮蔽读后果可见，不参与金额/审计链。
+	"managed_user_configs":   {searchPathRelNonFamily, "托管用户配置：遮蔽读 ⇒ 策略页可见地空/失败，不静默"},
+	"managed_skill_policies": {searchPathRelNonFamily, "托管技能策略：同上"},
+	"managed_client_devices": {searchPathRelNonFamily, "托管设备清单：遮蔽读 ⇒ 设备列表可见地空/失败"},
+
 	// —— 迁移期临时表 / 已被后续迁移 DROP ——
 	"agent_presets_new": {searchPathRelNonFamily, "0035 建后立即 RENAME 成 agent_presets（迁移期临时名）"},
 	"app_sessions":      {searchPathRelNonFamily, "0073 已 DROP（WASM 客户端专属改造的删除波次）"},
@@ -211,6 +216,7 @@ var searchPathGuardPackages = map[string]searchPathPkgClass{
 	"internal/clientrelease":       searchPathPkgNoFamilySQL,
 	"internal/connectors":          searchPathPkgNoFamilySQL,
 	"internal/llmgateway/channels": searchPathPkgNoFamilySQL,
+	"internal/managedconfig": searchPathPkgNoFamilySQL,
 	"internal/marketplace":         searchPathPkgNoFamilySQL,
 	"internal/portal":              searchPathPkgNoFamilySQL,
 	"internal/reports":             searchPathPkgNoFamilySQL,

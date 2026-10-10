@@ -122,12 +122,15 @@ func (a *API) handleCompletions(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forwardEndpoint(c, &ups[i], body, req.Stream, "/completions")
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/completions")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {

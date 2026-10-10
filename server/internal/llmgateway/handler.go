@@ -70,11 +70,12 @@ var errStreamLineTooLong = errors.New("upstream stream line too long")
 
 // API holds gateway dependencies.
 type API struct {
-	DB     *sql.DB
-	client *http.Client // non-stream requests (bounded timeout)
-	sse    *http.Client // streaming requests (lifecycle = request context)
-	rl     *rateLimiter
-	conc   *concurrencyMeter // 按模型 in-flight 计数(2026-08-31)
+	DB      *sql.DB
+	client  *http.Client // non-stream requests (bounded timeout)
+	sse     *http.Client // streaming requests (lifecycle = request context)
+	rl      *rateLimiter
+	conc    *concurrencyMeter // 按模型 in-flight 计数(2026-08-31)
+	keyPool *providerKeyPool
 }
 
 // handleChatCompletions proxies /v1/chat/completions to the matching upstream.
@@ -116,7 +117,7 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIChat)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -181,12 +182,18 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forward(c, &ups[i], body, req.Stream)
+		// 需求 §7.3：同 provider 内换 Key 重试（最多 maxKeyAttemptsPerProvider 次）。
+		var attempt Upstream
+		var lease *keyLease
+		attempt, lease, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forward(c, up, body, req.Stream)
+		})
+		_ = lease
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
 			// P1-6:pending 行在调用上游前插入(失败即拒绝),provider 此刻才
 			// 确定 —— 补一次绑定,让回填结算按实际 provider 取价。
@@ -465,6 +472,8 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 	if stream {
 		client = a.sse
 	}
+	// 0088：该上游显式配了超时时改用专属客户端（首字节超时）。
+	client = clientForTimeout(client, up.TimeoutSeconds)
 	// F4: 流式请求的 context 与客户端断开解耦 —— 客户端断线后 serveStream
 	// 仍会 drain 上游直到拿到 usage chunk,否则按已转发内容估算计费;若沿用
 	// 客户端 context,取消会让上游停止、用量永远拿不到(免费漏洞)。
@@ -493,6 +502,25 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 // nonStreamBodyTimeout bounds reading a non-stream upstream body once headers
 // arrived (审计2026-M11:全量 client.Timeout 会截断长报告生成;这里只限 body 读)
 var nonStreamBodyTimeout = 10 * time.Minute
+
+
+// upstreamHeaderTimeoutCache 缓存"按超时值定制的客户端"，键是超时秒数。
+var upstreamHeaderTimeoutCache sync.Map // int → *http.Client
+
+// clientForTimeout 返回带指定首字节超时的客户端；seconds <= 0 表示用内置默认。
+func clientForTimeout(base *http.Client, seconds int) *http.Client {
+	if seconds <= 0 {
+		return base
+	}
+	if v, ok := upstreamHeaderTimeoutCache.Load(seconds); ok {
+		return v.(*http.Client)
+	}
+	t := newUpstreamTransport()
+	t.ResponseHeaderTimeout = time.Duration(seconds) * time.Second
+	c := &http.Client{Transport: t}
+	actual, _ := upstreamHeaderTimeoutCache.LoadOrStore(seconds, c)
+	return actual.(*http.Client)
+}
 
 // passHeaders 是透传给客户端的上游响应头白名单:其余头(Set-Cookie/Server/
 // hop-by-hop 等)一律丢弃(审计2026-L10)

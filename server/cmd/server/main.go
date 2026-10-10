@@ -28,6 +28,7 @@ import (
 	"github.com/picoaide/picoaide/internal/clientrelease"
 	"github.com/picoaide/picoaide/internal/connectors"
 	"github.com/picoaide/picoaide/internal/llmgateway"
+	"github.com/picoaide/picoaide/internal/managedconfig"
 	"github.com/picoaide/picoaide/internal/marketplace"
 	"github.com/picoaide/picoaide/internal/portal"
 	"github.com/picoaide/picoaide/internal/reports"
@@ -771,6 +772,7 @@ func registerProductionRoutes(r *gin.Engine, d productionDeps) {
 		Connector:   connectors.NewHandlers(d.DB),
 		Telemetry:   telemetry.NewHandlers(d.DB),
 		Gateway:     llmgateway.NewHandlers(d.DB),
+		Managed:     managedconfig.NewHandlers(d.DB),
 		Reports:     reports.NewHandlers(d.DB),
 		// WASM 应用平台操作面（§8）。
 		Wasm: d.Wasm,

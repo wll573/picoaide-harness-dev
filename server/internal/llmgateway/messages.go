@@ -420,12 +420,15 @@ func (a *API) handleMessages(c *gin.Context) {
 	var respSecrets []string   // 成功 provider 的官方 key(响应脱敏用)
 	var chosenProviderID int64 // 实际命中的 provider(计费取价用,P1-6)
 	for i := range ups {
-		resp, err = a.forwardAnthropic(c, &ups[i], outbound, req.Stream)
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardAnthropic(c, up, outbound, req.Stream)
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {

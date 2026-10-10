@@ -113,17 +113,20 @@ func (e *Embedder) EmbedWithProvider(ctx context.Context, model string, texts []
 	var lastErr error
 	for i := range ups {
 		lastErr = nil // a fresh provider must not inherit a previous failure
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURLFor(ups[i].BaseURL, "/embeddings"), bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+ups[i].APIKey)
-		resp, err := e.client.Do(req)
-		if err != nil {
-			lastErr = err
-			log.Printf("gateway: embed model %s provider %q failed: %v", safeModelForLog(model), ups[i].Name, err)
+		// 需求 §7.3：同 provider 内换 Key 重试。
+		api := &API{DB: e.db, keyPool: newProviderKeyPool(e.db)}
+		var resp *http.Response
+		_, _, resp, lastErr = api.forwardWithKeyRetry(nil, ups[i], func(up *Upstream) (*http.Response, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURLFor(up.BaseURL, "/embeddings"), bytes.NewReader(body))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+up.APIKey)
+			return e.client.Do(req)
+		})
+		if lastErr != nil {
+			log.Printf("gateway: embed model %s provider %q failed: %v", safeModelForLog(model), ups[i].Name, lastErr)
 			continue
 		}
 		raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxUpstreamBody)))

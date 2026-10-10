@@ -460,6 +460,36 @@
       "file": "0084_sales_easy_endpoint_discovery.sql",
       "bytes": 3081,
       "sha256": "245eb7e944b583cb5aad8148bd78f04617db17e2b7a1432ec6ee85e7996ef147"
+    },
+    {
+      "version": "0085",
+      "file": "0085_gateway_provider_api_keys.sql",
+      "bytes": 1110,
+      "sha256": "ce80d1e30d571b0a9098705afe5d5cd8660b0614962d58643c51258417c40f67"
+    },
+    {
+      "version": "0086",
+      "file": "0086_provider_key_stats.sql",
+      "bytes": 2157,
+      "sha256": "986667975621d27938a927a36a3fc1a7b01965af5d0532b839e5b6e7f049099e"
+    },
+    {
+      "version": "0087",
+      "file": "0087_models_hidden.sql",
+      "bytes": 2956,
+      "sha256": "4c1cbb34068628d362c14d5cf69a46e3f6dfc57031417456d83c4b9963887bc0"
+    },
+    {
+      "version": "0088",
+      "file": "0088_provider_policy.sql",
+      "bytes": 3509,
+      "sha256": "274596351bb31f08edbf209dd6707efa55e2eeba571c42b5dbfef8a7403ba729"
+    },
+    {
+      "version": "0089",
+      "file": "0089_managed_client_policy.sql",
+      "bytes": 1531,
+      "sha256": "1f85bf96ca843a6596fb51bb251ed7e803c1fd087dffec033711e2ae60e9e348"
     }
   ]
 }

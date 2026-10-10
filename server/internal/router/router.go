@@ -24,6 +24,7 @@ import (
 	"github.com/picoaide/picoaide/internal/clientrelease"
 	"github.com/picoaide/picoaide/internal/connectors"
 	"github.com/picoaide/picoaide/internal/llmgateway"
+	"github.com/picoaide/picoaide/internal/managedconfig"
 	"github.com/picoaide/picoaide/internal/marketplace"
 	"github.com/picoaide/picoaide/internal/portal"
 	"github.com/picoaide/picoaide/internal/reports"
@@ -64,6 +65,7 @@ type Deps struct {
 	Telemetry   *telemetry.Handlers
 	Gateway     *llmgateway.Handlers
 	Reports     *reports.Handlers
+	Managed     *managedconfig.Handlers
 
 	// Wasm 是 WASM 应用平台的操作面（设计基线
 	// docs/planning/2026-09-17-wasm-app-platform.md §8）。
@@ -84,6 +86,9 @@ type Deps struct {
 
 // Register 集中装配两个命名空间分组下的全部路由。
 func Register(r *gin.Engine, deps Deps) {
+	if deps.Managed == nil {
+		deps.Managed = managedconfig.NewHandlers(deps.DB)
+	}
 	// P2-17: 两个业务命名空间统一挂 1MB 请求体上限(未认证的 /auth/login、
 	// /admin/login 同样覆盖)。此前只有测试镜像(serverauth.RegisterAdminRoutes)
 	// 挂了这层,生产路由树没有,客户端可推超大 JSON 致 OOM。
@@ -374,6 +379,9 @@ func registerClientV2(cli *gin.RouterGroup, d Deps) {
 
 	// 启动配置
 	cli.GET("/config/bootstrap", serverauth.BearerAuth(d.DB), d.Bootstrap.Bootstrap)
+	managed := cli.Group("/management", serverauth.BearerAuth(d.DB))
+	managed.GET("/policy", d.Managed.ClientGet)
+	managed.POST("/state", d.Managed.ClientState)
 
 	// 渠道内容(公开:客户端登录页在未登录时就要拿名称/标语/logo)
 	cli.GET("/channel", d.Channel.PublicChannel)
@@ -510,6 +518,8 @@ func registerServer(srv *gin.RouterGroup, d Deps) {
 	serverauth.AdminRoute(authed, "GET", "/users", serverauth.PermUserRead, d.Admin.ListUsers)
 	serverauth.AdminRoute(authed, "POST", "/users", serverauth.PermUserWrite, d.Admin.CreateUser)
 	serverauth.AdminRoute(authed, "PUT", "/users/:id", serverauth.PermUserWrite, d.Admin.UpdateUser)
+	serverauth.AdminRoute(authed, "GET", "/users/:id/managed-config", serverauth.PermManagedRead, d.Managed.AdminGet)
+	serverauth.AdminRoute(authed, "PUT", "/users/:id/managed-config", serverauth.PermManagedWrite, d.Managed.AdminPut)
 	serverauth.AdminRoute(authed, "DELETE", "/users/:id", serverauth.PermUserWrite, d.Admin.DeleteUser)
 	// 0057: 管理员重置他人 MFA(不能对自己; 关闭后吊销其全部会话)。
 	serverauth.AdminRoute(authed, "PUT", "/users/:id/mfa", serverauth.PermUserWrite, d.Admin.ResetUserMFA)
@@ -543,6 +553,11 @@ func registerServer(srv *gin.RouterGroup, d Deps) {
 	// 网关管理
 	serverauth.AdminRoute(authed, "GET", "/providers", serverauth.PermGatewayRead, d.Gateway.ListProviders)
 	serverauth.AdminRoute(authed, "GET", "/providers/:id/balance", serverauth.PermGatewayRead, d.Gateway.ProviderBalance)
+	serverauth.AdminRoute(authed, "GET", "/providers/:id/keys", serverauth.PermGatewayRead, d.Gateway.ListProviderKeys)
+	serverauth.AdminRoute(authed, "POST", "/providers/:id/keys", serverauth.PermGatewayWrite, d.Gateway.CreateProviderKey)
+	serverauth.AdminRoute(authed, "PUT", "/providers/:id/keys/:key_id", serverauth.PermGatewayWrite, d.Gateway.UpdateProviderKey)
+	serverauth.AdminRoute(authed, "DELETE", "/providers/:id/keys/:key_id", serverauth.PermGatewayWrite, d.Gateway.DeleteProviderKey)
+	serverauth.AdminRoute(authed, "POST", "/providers/:id/keys/:key_id/reset", serverauth.PermGatewayWrite, d.Gateway.ResetProviderKey)
 	serverauth.AdminRoute(authed, "POST", "/providers", serverauth.PermGatewayWrite, d.Gateway.CreateProvider)
 	serverauth.AdminRoute(authed, "PUT", "/providers/:id", serverauth.PermGatewayWrite, d.Gateway.UpdateProvider)
 	serverauth.AdminRoute(authed, "DELETE", "/providers/:id", serverauth.PermGatewayWrite, d.Gateway.DeleteProvider)

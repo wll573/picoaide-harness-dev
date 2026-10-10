@@ -64,7 +64,7 @@ func (a *API) handleResponses(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIResponses)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -117,12 +117,15 @@ func (a *API) handleResponses(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forwardEndpoint(c, &ups[i], body, req.Stream, "/responses")
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/responses")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {

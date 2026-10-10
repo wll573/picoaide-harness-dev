@@ -872,12 +872,37 @@ type modelReq struct {
 	// CacheInputPricePer1M 缓存命中输入价(0029):nil/未传 = 不覆盖;0 = 清空(未配置)。
 	CacheInputPricePer1M optionalFloat `json:"cache_input_price_per_1m"`
 	OffpeakDiscount      optionalFloat `json:"offpeak_discount"` // 0023:0<d<=1 低谷折扣;nil/1 = 无峰谷
+	// Hidden 管理员隐藏开关(0087)：未传=不覆盖；显式 true/false=设为该值。
+	Hidden optionalBool `json:"hidden"`
 }
 
 // optionalFloat 记录 JSON 字段是否出现(Set)与解析出的值(Value,nil = null)。
 type optionalFloat struct {
 	Set   bool
 	Value *float64
+}
+
+// optionalBool：未传(Set=false)=不覆盖；显式 true/false=设为该值。
+type optionalBool struct {
+	Set   bool
+	Value bool
+}
+
+func (o *optionalBool) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	var v bool
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	o.Value = v
+	return nil
+}
+
+func boolCn(v bool) string {
+	if v {
+		return "是"
+	}
+	return "否"
 }
 
 func (o *optionalFloat) UnmarshalJSON(b []byte) error {
@@ -1165,6 +1190,9 @@ func updateModel(c *gin.Context, db *sql.DB) {
 	if req.OffpeakDiscount.Set {
 		m.OffpeakDiscount = req.OffpeakDiscount.Value
 	}
+	if req.Hidden.Set {
+		m.Hidden = req.Hidden.Value
+	}
 	if err := serverstore.UpdateModelTx(tx, m); err != nil {
 		if errors.Is(err, serverstore.ErrDuplicate) {
 			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "模型名已存在")
@@ -1201,6 +1229,9 @@ func updateModel(c *gin.Context, db *sql.DB) {
 	}
 	if !optF64Eq(m.OffpeakDiscount, orig.OffpeakDiscount) {
 		ch = append(ch, "offpeak:"+priceStr(orig.OffpeakDiscount)+"→"+priceStr(m.OffpeakDiscount))
+	}
+	if m.Hidden != orig.Hidden {
+		ch = append(ch, "hidden:"+boolCn(orig.Hidden)+"→"+boolCn(m.Hidden))
 	}
 	// 审计与业务写**同事务**(R16C-01):价格/参数变更明细的口径即计费,
 	// 审计写不进去就整体回滚,不留"改了价没留痕"的组合。
@@ -2158,4 +2189,185 @@ func purgeGatewayFilesAdmin(c *gin.Context, api *API, db *sql.DB) {
 	_ = serverstore.AuditLog(db, auditActor(c), "gateway_file_purge",
 		fmt.Sprintf("%s 删除 %d 跳过 %d 失败 %d 命中 %d", target, deleted, skipped, failed, len(cands)))
 	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": deleted, "skipped": skipped, "failed": failed, "matched": len(cands)})
+}
+
+func providerKeyJSON(key serverstore.GatewayProviderAPIKey) gin.H {
+	// 需求 §7.3：管理端要显示「Key 状态、最近错误、冷却时间和成功率，不显示完整 Key」。
+	//   - api_key 恒为掩码（MaskSecret），真实 Key 从不下发 —— 这条是硬边界；
+	//   - success_rate 为 nil 时表示**尚无样本**（total_count=0），前端显示"暂无数据"
+	//     而不是 0%（"还没用过"与"一直失败"在运维上是完全不同的结论）。
+	var successRate *float64
+	if key.TotalCount > 0 {
+		rate := float64(key.SuccessCount) / float64(key.TotalCount)
+		successRate = &rate
+	}
+	return gin.H{
+		"id": key.ID, "provider_id": key.ProviderID, "label": key.Label,
+		"api_key": serverauth.MaskSecret, "enabled": key.Enabled, "priority": key.Priority,
+		"cooldown_until": key.CooldownUntil, "failure_count": key.FailureCount,
+		"last_used_at": key.LastUsedAt, "last_error_at": key.LastErrorAt,
+		"success_count": key.SuccessCount, "total_count": key.TotalCount,
+		"success_rate":      successRate,
+		"last_error_status": key.LastErrorStatus, "last_error_message": key.LastErrorMessage,
+	}
+}
+
+func listProviderKeys(c *gin.Context, db *sql.DB) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "provider id 无效")
+		return
+	}
+	keys, err := serverstore.ListGatewayProviderAPIKeys(db, id)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "查询失败")
+		return
+	}
+	out := make([]gin.H, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, providerKeyJSON(key))
+	}
+	c.JSON(http.StatusOK, gin.H{"keys": out})
+}
+
+type providerKeyReq struct {
+	Label    string `json:"label"`
+	APIKey   string `json:"api_key"`
+	Enabled  *bool  `json:"enabled"`
+	Priority *int   `json:"priority"`
+}
+
+func createProviderKey(c *gin.Context, db *sql.DB) {
+	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "provider id 无效")
+		return
+	}
+	if _, err := serverstore.GetGatewayProvider(db, providerID); errors.Is(err, serverstore.ErrNotFound) {
+		serverauth.WriteError(c, http.StatusNotFound, "NOT_FOUND", "上游不存在")
+		return
+	} else if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "查询失败")
+		return
+	}
+	var req providerKeyReq
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.APIKey) == "" || req.APIKey == serverauth.MaskSecret {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "api_key 必填且不能是掩码值")
+		return
+	}
+	enc, err := encryptSecret(req.APIKey)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "密钥加密失败")
+		return
+	}
+	enabled := true
+	if req.Enabled != nil {
+		enabled = *req.Enabled
+	}
+	priority := 0
+	if req.Priority != nil {
+		priority = *req.Priority
+	}
+	key := &serverstore.GatewayProviderAPIKey{ProviderID: providerID, APIKeyEnc: enc, Label: req.Label, Enabled: enabled, Priority: priority}
+	if _, err := serverstore.AddGatewayProviderAPIKey(db, key); err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "保存失败")
+		return
+	}
+	c.JSON(http.StatusCreated, providerKeyJSON(*key))
+}
+
+func updateProviderKey(c *gin.Context, db *sql.DB) {
+	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "provider id 无效")
+		return
+	}
+	keyID, err := strconv.ParseInt(c.Param("key_id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "key id 无效")
+		return
+	}
+	key, err := serverstore.GetGatewayProviderAPIKey(db, providerID, keyID)
+	if errors.Is(err, serverstore.ErrNotFound) {
+		serverauth.WriteError(c, http.StatusNotFound, "NOT_FOUND", "密钥不存在")
+		return
+	} else if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "查询失败")
+		return
+	}
+	var req providerKeyReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "请求体错误")
+		return
+	}
+	if req.Label != "" {
+		key.Label = req.Label
+	}
+	if req.Enabled != nil {
+		key.Enabled = *req.Enabled
+	}
+	if req.Priority != nil {
+		key.Priority = *req.Priority
+	}
+	if req.APIKey != "" {
+		if req.APIKey == serverauth.MaskSecret {
+			serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "api_key 不能是掩码值")
+			return
+		}
+		key.APIKeyEnc, err = encryptSecret(req.APIKey)
+		if err != nil {
+			serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "密钥加密失败")
+			return
+		}
+	}
+	if err := serverstore.UpdateGatewayProviderAPIKey(db, key); errors.Is(err, serverstore.ErrNotFound) {
+		serverauth.WriteError(c, http.StatusNotFound, "NOT_FOUND", "密钥不存在")
+		return
+	} else if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "保存失败")
+		return
+	}
+	c.JSON(http.StatusOK, providerKeyJSON(*key))
+}
+
+func deleteProviderKey(c *gin.Context, db *sql.DB) {
+	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "provider id 无效")
+		return
+	}
+	keyID, err := strconv.ParseInt(c.Param("key_id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "key id 无效")
+		return
+	}
+	if err := serverstore.DeleteGatewayProviderAPIKey(db, providerID, keyID); errors.Is(err, serverstore.ErrNotFound) {
+		serverauth.WriteError(c, http.StatusNotFound, "NOT_FOUND", "密钥不存在")
+		return
+	} else if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "删除失败")
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func resetProviderKey(c *gin.Context, db *sql.DB) {
+	providerID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "provider id 无效")
+		return
+	}
+	keyID, err := strconv.ParseInt(c.Param("key_id"), 10, 64)
+	if err != nil {
+		serverauth.WriteError(c, http.StatusBadRequest, "VALIDATION", "key id 无效")
+		return
+	}
+	if err := serverstore.ResetGatewayProviderAPIKey(db, providerID, keyID); errors.Is(err, serverstore.ErrNotFound) {
+		serverauth.WriteError(c, http.StatusNotFound, "NOT_FOUND", "密钥不存在")
+		return
+	} else if err != nil {
+		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "重置失败")
+		return
+	}
+	c.Status(http.StatusNoContent)
 }

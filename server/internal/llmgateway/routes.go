@@ -36,8 +36,9 @@ func RegisterRoutes(r *gin.Engine, db *sql.DB) {
 		// streaming client: headers (first byte) must arrive within the same
 		// window as the non-stream client, but the body streams unbounded.
 		sse:  mirrorSSE,
-		rl:   newRateLimiter(),
-		conc: newConcurrencyMeter(),
+		rl:      newRateLimiter(),
+		conc:    newConcurrencyMeter(),
+		keyPool: newProviderKeyPool(db),
 	}
 	// OpenAI/Anthropic 兼容形态(/v1/*)。
 	v1 := r.Group("/v1", serverauth.BearerAuth(db), InFlightGuard())

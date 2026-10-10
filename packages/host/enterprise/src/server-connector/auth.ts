@@ -129,9 +129,11 @@ export async function gatewayFetch(input: string | URL | Request, init?: Request
 }
 
 /**
- * Re-check that a server URL is allowed on every use (not only at login):
- * https, or http restricted to loopback hosts. Prevents a persisted session
- * from steering credentials or tokens at an arbitrary http:// target later.
+ * Re-check that a server URL is allowed on every use (not only at login).
+ * Both HTTP and HTTPS are valid transport schemes because the product supports
+ * fully isolated HTTP deployments where the network is trusted by policy.
+ * Other schemes are rejected so a persisted session cannot redirect requests
+ * to a local file, custom protocol, or another non-HTTP transport.
  */
 export function assertServerURLAllowed(serverURL: string): void {
   let parsed: URL
@@ -140,9 +142,8 @@ export function assertServerURLAllowed(serverURL: string): void {
   } catch {
     throw new AuthError('server_error', 'invalid server url')
   }
-  const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '[::1]'
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && loopback)) {
-    throw new AuthError('server_error', 'server must use https (http only for localhost)')
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new AuthError('server_error', 'server must use http or https')
   }
 }
 
@@ -259,8 +260,14 @@ export async function fetchJSON(
       method: opts.method ?? 'GET',
       headers: {
         'Content-Type': 'application/json',
+        // Bootstrap/model configuration is mutable on the intranet server. Do
+        // not let an HTTP proxy or Chromium cache hand the 5-minute sync loop
+        // an older response; a client restart must not be required to observe
+        // a server-side gateway change.
+        'Cache-Control': 'no-cache',
         ...(opts.token ? { Authorization: `Bearer ${opts.token}` } : {}),
       },
+      ...(opts.method === undefined || opts.method === 'GET' ? { cache: 'no-store' as RequestCache } : {}),
       ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
       signal: controller.signal,
     })

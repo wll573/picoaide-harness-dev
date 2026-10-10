@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,9 +94,50 @@ type Upstream struct {
 	Name     string
 	BaseURL  string
 	APIKey   string
+	Keys     []UpstreamKey
 	Models   []string
 	Channel  string
 	Protocol string
+	// 0088（需求 §7）：该上游承接哪些协议端点。路由按端点过滤（见 MatchesEndpoint），
+	// 关掉的那种端点不再派给它 —— 内网自建推理服务常常只实现一种，另一种会返回
+	// 难以理解的 404/400，而界面上看不出去哪关。
+	ResponsesEnabled bool
+	ChatEnabled      bool
+	// TimeoutSeconds：该上游的首字节超时秒数（0089）。0 = 内置默认（120s）。
+	TimeoutSeconds int
+	// MaxKeyAttempts：该上游内最多换几次 Key（含首次，0089）。0 = 内置默认（3）。
+	MaxKeyAttempts int
+}
+
+// EndpointOpenAICompletions / EndpointAnthropicMessages 是**端点语义**，
+// 区别于 Protocol（上游的 API 方言）。
+//
+// 为什么要分开：一个 protocol=both 的上游同时能接 chat 与 responses，管理员可以
+// 只关掉 responses；而 protocol=anthropic 的上游本来就只接 /v1/messages，
+// chat_enabled 对它没有意义。路由因此必须按"这次请求打到哪个端点"过滤，
+// 而不是只看 protocol。
+type Endpoint int
+
+const (
+	// EndpointOpenAIChat 覆盖 /v1/chat/completions 与它的官方别名 /chat/completions。
+	EndpointOpenAIChat Endpoint = iota
+	// EndpointOpenAIResponses 覆盖 /v1/responses 与别名 /responses。
+	EndpointOpenAIResponses
+	// EndpointNonChat：embedding / files / anthropic messages 等**不受**
+	// 这两个开关管制的端点。它们没有对应的开关项，一律放行（与今天一致）。
+	EndpointNonChat
+)
+
+// MatchesEndpoint 判断该上游是否承接某个端点。这是这两个开关的**唯一**生效点。
+func (u Upstream) MatchesEndpoint(e Endpoint) bool {
+	switch e {
+	case EndpointOpenAIChat:
+		return u.ChatEnabled
+	case EndpointOpenAIResponses:
+		return u.ResponsesEnabled
+	default:
+		return true
+	}
 }
 
 // loadUpstreamsDB 读**上游路由与密钥**(`gateway_providers`)与每 provider 的已同步
@@ -110,7 +152,8 @@ type Upstream struct {
 func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 	var ups []Upstream
 	err := serverstore.WithUsageSearchPathRead(db, func(tx *sql.Tx) error {
-		rows, err := tx.Query(`SELECT id, name, base_url, api_key_enc, models, channel, protocol FROM gateway_providers WHERE enabled = 1 ORDER BY id`)
+		rows, err := tx.Query(`SELECT id, name, base_url, api_key_enc, models, channel, protocol,
+			responses_enabled, chat_enabled, timeout_seconds, max_key_attempts FROM gateway_providers WHERE enabled = 1 ORDER BY id`)
 		if err != nil {
 			return err
 		}
@@ -122,11 +165,14 @@ func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 			id                             int64
 			name, baseURL, key, modelsJSON string
 			channel, protocol              string
+			responsesEnabled, chatEnabled  bool
+			timeoutSeconds, maxKeyAttempts int
 		}
 		var list []providerRow
 		for rows.Next() {
 			var r providerRow
-			if err := rows.Scan(&r.id, &r.name, &r.baseURL, &r.key, &r.modelsJSON, &r.channel, &r.protocol); err != nil {
+			if err := rows.Scan(&r.id, &r.name, &r.baseURL, &r.key, &r.modelsJSON, &r.channel, &r.protocol,
+				&r.responsesEnabled, &r.chatEnabled, &r.timeoutSeconds, &r.maxKeyAttempts); err != nil {
 				rows.Close()
 				return err
 			}
@@ -139,13 +185,40 @@ func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 		rows.Close()
 
 		for _, r := range list {
-			u := Upstream{ID: r.id, Name: r.name, BaseURL: r.baseURL, Channel: r.channel, Protocol: r.protocol}
+			channel := strings.ToLower(strings.TrimSpace(r.channel))
+			protocol := strings.ToLower(strings.TrimSpace(r.protocol))
+			if protocol == "" {
+				protocol = "openai"
+			}
+			u := Upstream{ID: r.id, Name: r.name, BaseURL: r.baseURL, Channel: channel, Protocol: protocol,
+				ResponsesEnabled: r.responsesEnabled, ChatEnabled: r.chatEnabled,
+				TimeoutSeconds: r.timeoutSeconds, MaxKeyAttempts: r.maxKeyAttempts}
 			key, err := DecryptSecret(r.key)
 			if err != nil {
 				log.Printf("gateway: skip provider %s: decrypt api key: %v", u.Name, err)
 				continue
 			}
 			u.APIKey = key
+			// The legacy provider key remains the fallback. A key pool is selected
+			// per request so cooldown state can change without rebuilding the route cache.
+			if keyRows, keyErr := tx.Query(`SELECT id, api_key_enc FROM gateway_provider_api_keys WHERE provider_id = ? AND enabled = TRUE ORDER BY priority, id`, r.id); keyErr == nil {
+				for keyRows.Next() {
+					var kid int64
+					var kenc string
+					if scanErr := keyRows.Scan(&kid, &kenc); scanErr != nil {
+						continue
+					}
+					plain, decryptErr := DecryptSecret(kenc)
+					if decryptErr != nil {
+						log.Printf("gateway: skip key %d for provider %s: decrypt api key: %v", kid, u.Name, decryptErr)
+						continue
+					}
+					u.Keys = append(u.Keys, UpstreamKey{ID: kid, Key: plain})
+				}
+				keyRows.Close()
+			} else {
+				log.Printf("gateway: load key pool for provider %s: %v", u.Name, keyErr)
+			}
 			if u.Protocol != "anthropic" && u.Protocol != "openai" && u.Protocol != "both" {
 				// 未知协议(防御):不参与任何路由,与损坏 key 同档处理
 				log.Printf("gateway: skip provider %s: unknown protocol %q", u.Name, u.Protocol)
@@ -177,10 +250,14 @@ func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 // 目录里(渠道同步发现目录缺失时停用而非删除,以保住定价),路由池必须按可用性
 // 过滤掉,否则会把请求发往一个上游目录中已不存在的模型。
 //
+// 0087(需求 §7.1):同样排除 hidden = TRUE 的行。这一条是"隐藏"成立的关键 ——
+// 只从客户端目录里摘掉的话,知道模型名的调用方直接 POST `{"model":"..."}` 照样能用,
+// 隐藏就成了只对界面生效的假隐藏。管理员的意图是"不想让员工用",路由必须同口径。
+//
 // R13-GH3:形参是**已钉 search_path 的事务**(由 loadUpstreamsDB 提供)——函数自己
 // 开不出事务,只能作为已钉事务的语句入口(机械守卫按 via-caller 登记)。
 func syncedModelNames(tx *sql.Tx, providerID int64) ([]string, error) {
-	rows, err := tx.Query(`SELECT name FROM models WHERE provider_id = ? AND catalog_missing = FALSE`, providerID)
+	rows, err := tx.Query(`SELECT name FROM models WHERE provider_id = ? AND catalog_missing = FALSE AND hidden = FALSE`, providerID)
 	if err != nil {
 		return nil, err
 	}
@@ -218,12 +295,30 @@ func mergeModelNames(a, b []string) []string {
 // finds Anthropic-compatible providers only, while chat keeps OpenAI ones.
 // `both`(0044)同时匹配 openai 与 anthropic 两种路由——同一 key 双端点。
 func MatchModelsByProtocol(db *sql.DB, modelName, protocol string) ([]Upstream, error) {
+	return MatchModelsByProtocolFor(db, modelName, protocol, EndpointNonChat)
+}
+
+// MatchModelsByProtocolFor 是 MatchModelsByProtocol 的**带端点**版本（0089）。
+//
+// MatchModelsByProtocol 保留原签名并默认 EndpointNonChat（不过滤两个开关），
+// 这样存量调用点（embedding / files / balance_gate 的候选集合）语义一字不变；
+// 只有 chat 与 responses 两条路径显式传入自己的端点，让 admin 的开关生效。
+// 这是刻意的：把开关扩到 embedding 会改变"候选集合"的定义，而候选集合同时是
+// 准入计价（balance_gate）的输入 —— 改它等于改计费口径，不该由这次改动顺带做。
+func MatchModelsByProtocolFor(db *sql.DB, modelName, protocol string, endpoint Endpoint) ([]Upstream, error) {
 	ups, err := LoadUpstreams(db)
 	if err != nil {
 		return nil, err
 	}
 	var out []Upstream
-	for i := range ups {
+	// 0088（需求 §7.3「全局轮询池」）：按全局游标旋转候选顺序，让流量在**所有**
+	// 命中的上游之间分摊，而不是永远压在最小编号那个上。见 keypool.go 的 globalPollCursor。
+	// 旋转只影响**顺序**，不影响集合 —— 准入计价（balance_gate）读的是同一个集合。
+	for i := range rotateCandidates(ups) {
+		// 0089：先按端点开关过滤（管理员意图），再按协议匹配（能力）。
+		if !ups[i].MatchesEndpoint(endpoint) {
+			continue
+		}
 		if protocol != "" {
 			switch ups[i].Protocol {
 			case "both":

@@ -23,6 +23,11 @@ type GatewayProvider struct {
 	// 或 anthropic(/v1/messages 兼容端点)。模型路由按协议过滤,
 	// 同一模型名可同时挂两种协议的 provider。
 	Protocol string
+	// 0088：逐上游超时/换 Key 次数/端点开关。0/true = 用内置默认。
+	TimeoutSeconds   int
+	MaxKeyAttempts   int
+	ResponsesEnabled bool
+	ChatEnabled      bool
 }
 
 type Model struct {
@@ -55,6 +60,8 @@ type Model struct {
 	// SyncProviderModel 清标记并把名字加回 provider JSON。管理端仍能看到该行
 	// (带价格),便于判断"上游真的下架了"还是"目录抖动了一轮"。
 	CatalogMissing bool `json:"catalog_missing"`
+	// Hidden：管理员主动隐藏（0087）。与 CatalogMissing 互不覆盖。
+	Hidden bool `json:"hidden"`
 }
 
 // scanProvider 扫描 gateway_providers 一行。
@@ -227,7 +234,8 @@ func removeExcludedName(names []string, name string) ([]string, bool) {
 func scanProvider(scan interface{ Scan(...any) error }) (*GatewayProvider, error) {
 	var p GatewayProvider
 	var models string
-	if err := scan.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKeyEnc, &models, &p.Enabled, &p.Channel, &p.Protocol); err != nil {
+	if err := scan.Scan(&p.ID, &p.Name, &p.BaseURL, &p.APIKeyEnc, &models, &p.Enabled, &p.Channel, &p.Protocol,
+		&p.TimeoutSeconds, &p.MaxKeyAttempts, &p.ResponsesEnabled, &p.ChatEnabled); err != nil {
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(models), &p.Models)
@@ -237,7 +245,8 @@ func scanProvider(scan interface{ Scan(...any) error }) (*GatewayProvider, error
 // gatewayProviderColumns 是 gateway_providers 的读列清单(唯一一份实现):
 // ListGatewayProviders / GetGatewayProvider / GetGatewayProviderTx 共用,
 // 避免"某个入口漏读一列 ⇒ scanProvider 静默拿到零值"。
-const gatewayProviderColumns = `id, name, base_url, api_key_enc, models, enabled, channel, protocol`
+const gatewayProviderColumns = `id, name, base_url, api_key_enc, models, enabled, channel, protocol,
+	timeout_seconds, max_key_attempts, responses_enabled, chat_enabled`
 
 // ListGatewayProviders returns all providers.
 func ListGatewayProviders(db *sql.DB) ([]GatewayProvider, error) {
@@ -336,8 +345,13 @@ func insertProvider(insert insertFunc, p *GatewayProvider) (int64, error) {
 		p.Protocol = "openai" // 存量/未指定:默认 OpenAI 兼容(0043 迁移默认一致)
 	}
 	modelsJSON, _ := json.Marshal(p.Models)
-	id, err := insert(`INSERT INTO gateway_providers (name, base_url, api_key_enc, models, enabled, channel, protocol)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`, p.Name, p.BaseURL, p.APIKeyEnc, string(modelsJSON), p.Enabled, p.Channel, p.Protocol)
+	if !p.ResponsesEnabled && !p.ChatEnabled {
+		p.ResponsesEnabled, p.ChatEnabled = true, true
+	}
+	id, err := insert(`INSERT INTO gateway_providers (name, base_url, api_key_enc, models, enabled, channel, protocol,
+		timeout_seconds, max_key_attempts, responses_enabled, chat_enabled)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, p.Name, p.BaseURL, p.APIKeyEnc, string(modelsJSON), p.Enabled, p.Channel, p.Protocol,
+		p.TimeoutSeconds, p.MaxKeyAttempts, p.ResponsesEnabled, p.ChatEnabled)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrDuplicate
@@ -379,8 +393,13 @@ func UpdateGatewayProviderTx(tx *sql.Tx, p *GatewayProvider) error {
 		p.Protocol = "openai" // 空串不允许(列 CHECK),归一为默认
 	}
 	modelsJSON, _ := json.Marshal(p.Models)
-	res, err := tx.Exec(`UPDATE gateway_providers SET name=?, base_url=?, api_key_enc=?, models=?, enabled=?, channel=?, protocol=?
-		WHERE id=?`, p.Name, p.BaseURL, p.APIKeyEnc, string(modelsJSON), p.Enabled, p.Channel, p.Protocol, p.ID)
+	if !p.ResponsesEnabled && !p.ChatEnabled {
+		p.ResponsesEnabled, p.ChatEnabled = true, true
+	}
+	res, err := tx.Exec(`UPDATE gateway_providers SET name=?, base_url=?, api_key_enc=?, models=?, enabled=?, channel=?, protocol=?,
+		timeout_seconds=?, max_key_attempts=?, responses_enabled=?, chat_enabled=?
+		WHERE id=?`, p.Name, p.BaseURL, p.APIKeyEnc, string(modelsJSON), p.Enabled, p.Channel, p.Protocol,
+		p.TimeoutSeconds, p.MaxKeyAttempts, p.ResponsesEnabled, p.ChatEnabled, p.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrDuplicate
@@ -762,7 +781,7 @@ func scanModel(scan interface{ Scan(...any) error }) (*Model, error) {
 	var pEnabled int
 	var modalities string
 	if err := scan.Scan(&m.ID, &m.Name, &m.ProviderID, &m.DisplayName, &m.DefaultParams, &modalities,
-		&in, &out, &cache, &off, &m.CatalogMissing, &m.ProviderName, &m.ProviderChannel, &pEnabled); err != nil {
+		&in, &out, &cache, &off, &m.CatalogMissing, &m.Hidden, &m.ProviderName, &m.ProviderChannel, &pEnabled); err != nil {
 		return nil, err
 	}
 	m.InputModalities = ParseInputModalities(modalities)
@@ -787,7 +806,7 @@ func scanModel(scan interface{ Scan(...any) error }) (*Model, error) {
 const modelSelectColumns = `m.id, m.name, m.provider_id, COALESCE(m.display_name, m.name),
 		COALESCE(m.default_params, '{}'), COALESCE(m.input_modalities, '["text"]'),
 		m.input_price_per_1m, m.output_price_per_1m, m.cache_input_price_per_1m, m.offpeak_discount,
-		m.catalog_missing, p.name, p.channel, p.enabled`
+		m.catalog_missing, m.hidden, p.name, p.channel, p.enabled`
 
 // GetModel loads a model by id.
 func GetModel(db *sql.DB, id int64) (*Model, error) {
@@ -1217,9 +1236,9 @@ func UpdateModelTx(tx *sql.Tx, m *Model) error {
 	if err != nil {
 		return err
 	}
-	res, err := tx.Exec(`UPDATE models SET name=?, provider_id=?, display_name=?, default_params=?, input_modalities=?, input_price_per_1m=?, output_price_per_1m=?, cache_input_price_per_1m=?, offpeak_discount=?
+	res, err := tx.Exec(`UPDATE models SET name=?, provider_id=?, display_name=?, default_params=?, input_modalities=?, input_price_per_1m=?, output_price_per_1m=?, cache_input_price_per_1m=?, offpeak_discount=?, hidden=?
 		WHERE id=?`, m.Name, m.ProviderID, m.DisplayName, m.DefaultParams, string(modalitiesJSON),
-		nilIfNilFloat64(m.InputPricePer1M), nilIfNilFloat64(m.OutputPricePer1M), nilIfNilFloat64(m.CacheInputPricePer1M), nilIfNilFloat64(m.OffpeakDiscount), m.ID)
+		nilIfNilFloat64(m.InputPricePer1M), nilIfNilFloat64(m.OutputPricePer1M), nilIfNilFloat64(m.CacheInputPricePer1M), nilIfNilFloat64(m.OffpeakDiscount), m.Hidden, m.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrDuplicate
