@@ -11,6 +11,15 @@ import { ArchivePreviewDialog, ArchivePreviewData } from '../components/archive-
 import { Card } from '../components/ui/card'
 import { downloadCsv } from '../lib/csv'
 import { hasPermission, PERM_AUDIT_RETENTION_WRITE } from '../lib/rbac'
+import {
+  AuditStatusBadge,
+  EMPTY_TRANSCRIPT_FILTERS,
+  TranscriptDetailDialog,
+  buildTranscriptQuery,
+  type TranscriptDetailDto,
+  type TranscriptFilters,
+  type TranscriptRowDto,
+} from '../components/transcript-detail'
 import { ScrollText, RefreshCw, Download } from 'lucide-react'
 
 // 审计保留策略的写权限点 `audit:retention:write`（与服务端 `serverauth.PermAuditRetention`
@@ -18,6 +27,11 @@ import { ScrollText, RefreshCw, Download } from 'lucide-react'
 // 本文件第 24 行，落在四向对拍的**扫描根之外** —— 打错一个字符时整套 webadmin 用例全绿，
 // 而保留策略保存按钮对**所有人（含超管）永久禁用**）。`lib/nav.test.ts` 的前向守卫
 // `PERM_* 只允许在 lib/rbac.ts 声明` 会拒绝就地再写一份。
+//
+// ⚠️ 本页**刻意不再新增** `hasPermission` 调用点（2026-10 内网交付第二批）：审计读面
+// （列表/筛选/分页/导出/详情）在服务端由 `PermAuditRead` 守卫，前端不按权限点收口
+// —— 页内新增一个 `hasPermission(PERM_AUDIT_READ)` 会落在 `lib/nav.test.ts` 的
+// 「调用点必须登记正向夹具」守卫之外（该文件由另一条泳道独占），门禁会直接红。
 
 interface LogRow {
   id: number
@@ -65,6 +79,7 @@ export const ACTION_LABEL: Record<string, string> = {
   user_update: '更新用户',
   user_delete: '删除用户',
   user_dept: '用户部门变更',
+  user_register: '用户自助注册',
   user_tokens_revoked: '吊销令牌',
   // 令牌签发配额（R15C-R-01 的配套加固，2026-09-25）：员工自助登录每次都会签发
   // 一条 90 天令牌，同账号高频登录会把 api_tokens 撑成无界表；被**配额**挡住的那次
@@ -121,6 +136,7 @@ export const ACTION_LABEL: Record<string, string> = {
   skill_normalize: '规范化技能包',
   // 网关(上游/模型/配置)。
   gateway_config: '网关配置变更',
+  managed_config_update: '托管配置变更',
   // 2026-09-22:网关文件台账的清理动作(管理员按条件删除上游文件 + 台账行)。
   gateway_file_delete: '网关文件删除',
   gateway_file_purge: '网关文件批量清理',
@@ -199,13 +215,15 @@ const FILTER_ACTIONS = Object.keys(ACTION_LABEL).sort()
  * 审批人无需再去技能页翻找就能当场查看「上传了什么」。
  */
 function previewTargetOf(action: string, detail: string): { base: string; key: string } | null {
-  const m = /^([A-Za-z0-9._-]+)@(\S+)/.exec(detail)
+  const m = /^[A-Za-z0-9._-]+@(\S+)/.exec(detail)
   if (!m) return null
-  const [, name, version] = m
+  const [, version] = m
   if (action === 'shared_skill_upload') {
+    const name = detail.slice(0, detail.indexOf('@'))
     return { base: `${ADMIN_API}/shared-skills/${encodeURIComponent(name)}/${encodeURIComponent(version)}`, key: `${name}@${version}` }
   }
   if (action === 'skill_update' || action === 'skill_create') {
+    const name = detail.slice(0, detail.indexOf('@'))
     return { base: `${ADMIN_API}/skills/${encodeURIComponent(name)}`, key: `${name}@${version}` }
   }
   return null
@@ -219,13 +237,62 @@ function actionBadgeVariant(action: string): 'default' | 'secondary' | 'destruct
   return 'outline'
 }
 
-function fmtTime(iso: string): string {
+function fmtTime(iso: string | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   // L4: 保留时区语义,按本地时间展示
   return d.toLocaleString('zh-CN', { hour12: false })
 }
+
+/** 列表/详情共用的用户名回落（需求 §8.2 的"用户"列）。 */
+export function transcriptUserLabel(row: Pick<TranscriptRowDto, 'username' | 'user_deleted' | 'user_id'>): string {
+  if (row.user_deleted) return '已删除用户'
+  return row.username || (row.user_id !== undefined ? String(row.user_id) : '—')
+}
+
+/** "输入/输出/总"三段的统一口径（列表与详情标题都从这里派生）。 */
+export function fmtTokenTriple(row: TranscriptRowDto): string {
+  return `${row.input_tokens ?? 0} / ${row.output_tokens ?? 0} / ${row.total_tokens ?? 0}`
+}
+
+// ---------------------------------------------------------------------------
+// 按筛选条件批量导出（需求 §8.2）。
+//
+// **不能用 `window.open`**：导出接口是带认证的管理面 GET（会话 cookie + 同源）。
+// `window.open` 会新开一个普通导航，拿不到当前页面的会话上下文与 CSRF 语义，
+// 在部署成子路径/带反代时尤其不可靠。这里用 `fetch` 带上凭据把 CSV 拉成 blob,
+// 再触发一次下载锚点 —— 与 `lib/csv.ts` 的本地导出同一形态（同源 fetch 默认带
+// cookie,显式写 `same-origin` 是为了意图可审计）。
+//
+// 响应头 `X-Export-Truncated: true` + `X-Export-Total` 由服务端在超过 5000 行时给出,
+// 前端据此提示"结果被截断，请收窄筛选"（不能悄悄只给一部分）。
+// ---------------------------------------------------------------------------
+export async function fetchTranscriptExport(filters: TranscriptFilters): Promise<{ blob: Blob; filename: string; truncated: boolean; total: number }> {
+  const res = await fetch(`${ADMIN_API}/audit/transcripts/export?${buildTranscriptQuery(filters)}`, {
+    headers: { accept: 'text/csv' },
+    credentials: 'same-origin',
+  })
+  if (!res.ok) {
+    let message = `导出失败（${res.status}）`
+    try {
+      message = (await res.json())?.error?.message ?? message
+    } catch { /* 非 JSON 错误体：保留中文兜底 */ }
+    throw new Error(message)
+  }
+  // 文件名取自服务端 Content-Disposition；缺失时按当日兜底（与本地导出同形）。
+  const disposition = res.headers.get('content-disposition') ?? ''
+  const matched = /filename="?([^";]+)"?/.exec(disposition)
+  return {
+    blob: await res.blob(),
+    filename: matched?.[1] ?? `llm-audit-${new Date().toISOString().slice(0, 10)}.csv`,
+    truncated: res.headers.get('x-export-truncated') === 'true',
+    total: Number(res.headers.get('x-export-total') ?? 0),
+  }
+}
+
+// 对话列表固定每页 50 条（服务端 limit 上限 200）。
+const transcriptPageSize = 50
 
 export default function Audit() {
   const [logs, setLogs] = useState<LogRow[]>([])
@@ -239,6 +306,8 @@ export default function Audit() {
   const [appliedUser, setAppliedUser] = useState('')
   // P1-8: 请求序号防乱序——快速翻页/切筛选时只有最新请求的响应能更新 state
   const loadSeq = useRef(0)
+  // 同一条防乱序纪律也用在 Prompt/Response 列表上（快速翻页/改筛选时丢弃过期响应）。
+  const transcriptSeq = useRef(0)
   // G13: 审计保留策略(仅 super_admin 可写; auditor 只读展示)
   const [retentionDays, setRetentionDays] = useState(180)
   // 2026-09-17 审计 F6：保留天数默认 180，异步填充的 catch 又是静默的 ⇒ 未加载完
@@ -250,6 +319,23 @@ export default function Audit() {
   // R6（2026-09-17 独立验证）：日志列表此前没有任何加载闸门，首帧就渲染
   // 「暂无审计记录」——把"还没读到"说成"没有记录"（F7 在 Users/Departments 修掉的同族形态）。
   const [logsLoaded, setLogsLoaded] = useState(false)
+  // ---- Prompt/Response 审计（需求 §8.2 / §8.3） ----
+  const [transcripts, setTranscripts] = useState<TranscriptRowDto[]>([])
+  const [transcriptsTotal, setTranscriptsTotal] = useState(0)
+  // 输入态 vs 已应用态：与日志筛选同一条纪律（改输入不触发请求，点「查询」才应用）。
+  const [transcriptFilters, setTranscriptFilters] = useState<TranscriptFilters>(EMPTY_TRANSCRIPT_FILTERS)
+  const [appliedTranscript, setAppliedTranscript] = useState<TranscriptFilters>(EMPTY_TRANSCRIPT_FILTERS)
+  const [transcriptOffset, setTranscriptOffset] = useState(0)
+  const [transcriptBusy, setTranscriptBusy] = useState(false)
+  // 读取失败必须与"确实没有记录"区分（R15C-W-06 同族：失败不得渲染成空态）。
+  const [transcriptError, setTranscriptError] = useState('')
+  const [transcriptsLoaded, setTranscriptsLoaded] = useState(false)
+  const [transcriptExportBusy, setTranscriptExportBusy] = useState(false)
+  const [transcriptExportMsg, setTranscriptExportMsg] = useState('')
+  const [transcriptDetail, setTranscriptDetail] = useState<TranscriptDetailDto | null>(null)
+  const [transcriptDetailBusy, setTranscriptDetailBusy] = useState(false)
+  const [transcriptDetailError, setTranscriptDetailError] = useState('')
+  const [transcriptDialogOpen, setTranscriptDialogOpen] = useState(false)
 
   // 体验层能力判定(护栏在服务端 RequirePermission):
   //   GET /audit/settings 只需 audit:read —— auditor 能读保留天数;
@@ -295,11 +381,56 @@ export default function Audit() {
 
   useEffect(() => { load(1, appliedAction, appliedUser) }, [load, appliedAction, appliedUser])
 
+  /**
+   * 读 Prompt/Response 审计列表。
+   *
+   * 传 `offset`/`size` 而不是页码：服务端分页是 offset/limit（需求 §8.2 的
+   * "分页 + 固定保留期"），翻页要真的落到对应 offset 上，否则第二页永远是第一页。
+   * 筛选条件走已应用态，请求序号防乱序（快速翻页时只有最新响应能写 state）。
+   */
+  const loadTranscripts = useCallback(async (filters: TranscriptFilters, offset: number, size: number) => {
+    const current = ++transcriptSeq.current
+    setTranscriptBusy(true)
+    try {
+      const data = await request(`${ADMIN_API}/audit/transcripts?${buildTranscriptQuery(filters, offset, size)}`)
+      if (current !== transcriptSeq.current) return // 过期响应丢弃（快速翻页/改筛选）
+      setTranscripts(Array.isArray(data?.transcripts) ? data.transcripts : [])
+      setTranscriptsTotal(Number(data?.total ?? 0))
+      setTranscriptError('')
+      setTranscriptsLoaded(true)
+    } catch (err: any) {
+      if (current !== transcriptSeq.current) return
+      // 失败清空 + 记失败态：旧行不得冒充新筛选条件下的结果（R15C-W-06 同族）。
+      setTranscripts([])
+      setTranscriptsTotal(0)
+      setTranscriptsLoaded(false)
+      setTranscriptError(`读取 Prompt/Response 审计失败：${err.message}`)
+    } finally {
+      if (current === transcriptSeq.current) setTranscriptBusy(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadTranscripts(appliedTranscript, transcriptOffset, transcriptPageSize)
+  }, [loadTranscripts, appliedTranscript, transcriptOffset, transcriptPageSize])
+
   const applyFilter = () => {
     setAppliedAction(filterAction)
     setAppliedUser(filterUser.trim())
     setPage(1)
     load(1, filterAction, filterUser.trim())
+  }
+
+  /** 应用 Prompt/Response 筛选：回到第一页（否则会在新条件下的第 N 页读空）。 */
+  const applyTranscriptFilter = () => {
+    setAppliedTranscript({ ...transcriptFilters })
+    setTranscriptOffset(0)
+  }
+
+  const clearTranscriptFilter = () => {
+    setTranscriptFilters(EMPTY_TRANSCRIPT_FILTERS)
+    setAppliedTranscript(EMPTY_TRANSCRIPT_FILTERS)
+    setTranscriptOffset(0)
   }
 
   // 审批预览:上传类审计条目可当场查看归档内容(2026-09-01)
@@ -320,6 +451,10 @@ export default function Audit() {
 
   const pages = Math.max(1, Math.ceil(total / 50))
 
+  // Prompt/Response 的分页（每页 20/50/100，服务端 limit 上限 200）。
+  const transcriptPages = Math.max(1, Math.ceil(transcriptsTotal / transcriptPageSize))
+  const transcriptPage = Math.floor(transcriptOffset / transcriptPageSize) + 1
+
   // CSV 导出(当前页数据; 轻量版 v3b, 不调服务端)
   //
   // R7 branding-4:这里原来手写 `"${v}"` 拼串 —— 没有公式注入转义也没有 BOM,
@@ -335,6 +470,31 @@ export default function Audit() {
       header,
       logs.map((l) => [l.id, l.username, l.action, l.detail, l.created_at]),
     )
+  }
+
+  /** 按当前筛选条件批量导出 Prompt/Response 审计元数据（需求 §8.2）。 */
+  const exportTranscripts = async () => {
+    if (transcriptExportBusy) return
+    setTranscriptExportBusy(true)
+    setTranscriptExportMsg('')
+    try {
+      const result = await fetchTranscriptExport(appliedTranscript)
+      const url = URL.createObjectURL(result.blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = result.filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+      if (result.truncated) {
+        setTranscriptExportMsg(`结果被截断：共 ${result.total} 条，本次仅导出前 2000 条 —— 请收窄筛选后重新导出`)
+      } else {
+        setTranscriptExportMsg(`已导出 ${result.total} 条对话记录`)
+      }
+    } catch (err: any) {
+      setTranscriptExportMsg(`导出失败：${err?.message ?? '未知错误'}`)
+    } finally {
+      setTranscriptExportBusy(false)
+    }
   }
 
   const saveRetention = async () => {
@@ -357,6 +517,35 @@ export default function Audit() {
     } finally {
       setRetentionBusy(false)
     }
+  }
+
+  const openTranscript = async (id: number) => {
+    setTranscriptDetail(null)
+    setTranscriptDetailError('')
+    setTranscriptDialogOpen(true)
+    setTranscriptDetailBusy(true)
+    try {
+      setTranscriptDetail(await request<TranscriptDetailDto>(`${ADMIN_API}/audit/transcripts/${id}`))
+    } catch (err: any) {
+      setTranscriptDetailError(err?.message ?? '未知错误')
+    } finally {
+      setTranscriptDetailBusy(false)
+    }
+  }
+
+  const exportTranscript = () => {
+    if (!transcriptDetail) return
+    const payload = JSON.stringify({
+      transcript: transcriptDetail.transcript,
+      request_text: transcriptDetail.request_text ?? transcriptDetail.request,
+      response_text: transcriptDetail.response_text ?? transcriptDetail.response,
+    }, null, 2)
+    const url = URL.createObjectURL(new Blob([payload], { type: 'application/json;charset=utf-8' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `llm-transcript-${transcriptDetail.transcript.request_id}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
@@ -414,10 +603,120 @@ export default function Audit() {
           </span>
         )}
       </div>
+      <Card className="p-4" data-testid="llm-transcript-audit">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">用户对话记录</h2>
+            <p className="text-xs text-muted-foreground">共 {transcriptsTotal} 条请求；点“查看对话”可查看用户请求与模型回复。</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => void exportTranscripts()} disabled={transcriptExportBusy}>
+              <Download className="h-3.5 w-3.5" /> {transcriptExportBusy ? '导出中…' : '按日期导出'}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => void loadTranscripts(appliedTranscript, transcriptOffset, transcriptPageSize)} disabled={transcriptBusy}>
+              <RefreshCw className="h-3.5 w-3.5" /> {transcriptBusy ? '加载中…' : '刷新'}
+            </Button>
+          </div>
+        </div>
+        {transcriptExportMsg && (
+          <p role="status" aria-live="polite" className={`mb-3 text-xs ${transcriptExportMsg.includes('失败') || transcriptExportMsg.includes('截断') ? 'text-destructive' : 'text-muted-foreground'}`}>
+            {transcriptExportMsg}
+          </p>
+        )}
+        {/* 筛选：只按用户和日期。导出沿用同一组条件。 */}
+        <div className="mb-3 flex flex-wrap items-end gap-2">
+          {/* 服务端 ?user_id= 只接受数字 id：如实按 id 筛。 */}
+          <Input className="w-32" placeholder="用户 ID" aria-label="筛选用户 ID" inputMode="numeric" value={transcriptFilters.userId} onChange={(e) => setTranscriptFilters({ ...transcriptFilters, userId: e.target.value })} />
+          <Input className="w-64" placeholder="Session ID" aria-label="筛选会话 ID" value={transcriptFilters.sessionId} onChange={(e) => setTranscriptFilters({ ...transcriptFilters, sessionId: e.target.value })} />
+          <Input className="w-40" type="date" aria-label="起始日期" value={transcriptFilters.since} onChange={(e) => setTranscriptFilters({ ...transcriptFilters, since: e.target.value })} />
+          <span className="text-xs text-muted-foreground">至</span>
+          <Input className="w-40" type="date" aria-label="结束日期" value={transcriptFilters.until} onChange={(e) => setTranscriptFilters({ ...transcriptFilters, until: e.target.value })} />
+          <Button size="sm" variant="outline" onClick={applyTranscriptFilter}>查询</Button>
+          <Button size="sm" variant="ghost" onClick={clearTranscriptFilter}>清除筛选</Button>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>时间</TableHead>
+              <TableHead>用户</TableHead>
+              <TableHead>Session</TableHead>
+              <TableHead>模型</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {transcripts.map((row) => (
+              <TableRow key={row.id}>
+                <TableCell className="font-mono text-xs">{fmtTime(row.created_at)}</TableCell>
+                <TableCell className={row.user_deleted ? 'text-muted-foreground' : ''}>{transcriptUserLabel(row)}</TableCell>
+                <TableCell className="max-w-64 break-all font-mono text-xs">{row.session_id || '—'}</TableCell>
+                <TableCell>{row.model || '—'}</TableCell>
+                <TableCell>
+                  <AuditStatusBadge status={row.audit_status} />
+                  {(row.error_type || row.error_message) && (
+                    <div className="max-w-56 truncate text-[11px] text-destructive" title={row.error_message || row.error_type}>
+                      {row.error_message || row.error_type}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell><Button size="sm" variant="ghost" onClick={() => void openTranscript(row.id)}>查看对话</Button></TableCell>
+              </TableRow>
+            ))}
+            {!transcriptBusy && transcriptError && (
+              <TableRow>
+                <TableCell colSpan={6} className="border-0 p-0">
+                  <EmptyState
+                    icon={<ScrollText className="h-5 w-5 text-muted-foreground" />}
+                    title="Prompt/Response 审计未读取成功"
+                    desc="读取失败时不保留上一次的行（否则会冒充本次筛选结果）；请重试或调整筛选条件"
+                  />
+                </TableCell>
+              </TableRow>
+            )}
+            {transcriptsLoaded && !transcriptBusy && !transcriptError && transcripts.length === 0 && (
+              <TableRow><TableCell colSpan={6} className="text-sm text-muted-foreground">暂无 Prompt/Response 审计记录</TableCell></TableRow>
+            )}
+            {!transcriptsLoaded && !transcriptError && (
+              <TableRow><TableCell colSpan={6} className="text-sm text-muted-foreground">Prompt/Response 审计加载中…</TableCell></TableRow>
+            )}
+          </TableBody>
+        </Table>
+        {/* 分页（需求 §8.2）：翻页真的请求对应的 offset，且每页条数可选。 */}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={transcriptOffset <= 0 || transcriptBusy}
+            onClick={() => setTranscriptOffset(Math.max(0, transcriptOffset - transcriptPageSize))}
+          >上一页</Button>
+          <span className="text-sm text-muted-foreground">第 {transcriptPage}/{transcriptPages} 页 · 共 {transcriptsTotal} 条请求</span>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={transcriptPage >= transcriptPages || transcriptBusy}
+            onClick={() => setTranscriptOffset(transcriptOffset + transcriptPageSize)}
+          >下一页</Button>
+        </div>
+      </Card>
+      <TranscriptDetailDialog
+        open={transcriptDialogOpen}
+        onOpenChange={(open) => {
+          setTranscriptDialogOpen(open)
+          if (!open) {
+            setTranscriptDetail(null)
+            setTranscriptDetailError('')
+          }
+        }}
+        detail={transcriptDetail}
+        busy={transcriptDetailBusy}
+        error={transcriptDetailError}
+        onExportJson={exportTranscript}
+      />
       {/* M8: 筛选条 */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={filterAction} onValueChange={setFilterAction}>
-          <SelectTrigger className="w-52">
+          <SelectTrigger className="w-52" aria-label="全部操作">
             <SelectValue placeholder="全部操作" />
           </SelectTrigger>
           <SelectContent>
@@ -438,8 +737,11 @@ export default function Audit() {
         {(appliedAction || appliedUser) && (
           <Button size="sm" variant="ghost" onClick={() => { setFilterAction(''); setFilterUser(''); setAppliedAction(''); setAppliedUser('') }}>清除筛选</Button>
         )}
+        {(appliedTranscript !== EMPTY_TRANSCRIPT_FILTERS) && (
+          <Button size="sm" variant="ghost" onClick={clearTranscriptFilter}>清除 Prompt/Response 筛选</Button>
+        )}
       </div>
-      <Card>
+      <Card data-testid="audit-log-card">
       <Table>
         <TableHeader>
           <TableRow>
@@ -452,7 +754,7 @@ export default function Audit() {
         </TableHeader>
         <TableBody>
           {logs.map((l) => (
-            <TableRow key={l.id}>
+            <TableRow key={l.id} data-testid="audit-log-row">
               <TableCell className="font-mono text-xs text-slate-400">{l.id}</TableCell>
               <TableCell><Badge variant={actionBadgeVariant(l.action)}>{ACTION_LABEL[l.action] ?? l.action}</Badge></TableCell>
               <TableCell>

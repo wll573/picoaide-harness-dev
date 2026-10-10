@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { request } from '../api'
@@ -71,7 +71,7 @@ const AUDIT_SETTINGS_PATH = '/api/server/admin/audit/settings'
  */
 async function waitForAuditRows(rows: number): Promise<void> {
   if (rows < 2) throw new Error(`waitForAuditRows 只用于 rows>=2（空态占位行会与之同形），收到 ${rows}`)
-  await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
+  await waitFor(() => expect(within(screen.getByTestId('audit-log-card')).getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
 }
 
 /**
@@ -93,6 +93,17 @@ beforeEach(() => {
   mockRequest.mockReset()
   mockRequest.mockImplementation(async (path: string) => {
     if (String(path).startsWith('/api/server/admin/audit?')) return { logs: LOGS, total: LOGS.length }
+    if (String(path).startsWith('/api/server/admin/audit/transcripts?')) return {
+      transcripts: [{ id: 42, user_id: 7, username: 'alice', model: 'model', audit_status: 'complete', created_at: '2026-10-11T00:00:00Z' }],
+      total: 1,
+    }
+    if (String(path) === '/api/server/admin/audit/transcripts/42') return {
+      transcript: { id: 42, user_id: 7, username: 'alice', model: 'model', audit_status: 'complete' },
+      request: '{"messages":[{"role":"system","content":"secret system"}]}',
+      response: '{"reasoning_content":"secret reasoning","choices":[]}',
+      request_text: '你好',
+      response_text: '世界',
+    }
     if (String(path).startsWith('/api/server/admin/audit/settings')) return { retention_days: 180 }
     return {}
   })
@@ -113,6 +124,19 @@ beforeEach(() => {
   HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
     downloadAnchors.push({ href: this.href, download: this.download })
   }
+})
+
+describe('LLM 对话审计详情', () => {
+  it('分栏展示并且详情只渲染用户请求与模型回复可读文本', async () => {
+    render(<Audit />)
+    expect(screen.getByTestId('llm-transcript-audit')).toBeInTheDocument()
+    expect(screen.getByTestId('audit-log-card')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: '查看对话' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '查看对话' }))
+    await waitFor(() => expect(screen.getByText('你好')).toBeInTheDocument())
+    expect(screen.getByText('世界')).toBeInTheDocument()
+    expect(screen.queryByText(/secret system|secret reasoning/)).toBeNull()
+  })
 })
 
 async function exportCsv(): Promise<string> {

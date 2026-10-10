@@ -543,6 +543,9 @@ func registerServer(srv *gin.RouterGroup, d Deps) {
 	serverauth.AdminRoute(authed, "GET", "/usage/requests", serverauth.PermUsageRead, d.Admin.UsageRequests)
 	serverauth.AdminRoute(authed, "GET", "/server-info", serverauth.PermServerInfoRead, d.Admin.ServerInfo)
 	serverauth.AdminRoute(authed, "GET", "/audit", serverauth.PermAuditRead, d.Admin.ListAuditLogs)
+	serverauth.AdminRoute(authed, "GET", "/audit/transcripts", serverauth.PermAuditRead, d.Admin.ListTranscripts)
+	serverauth.AdminRoute(authed, "GET", "/audit/transcripts/export", serverauth.PermAuditRead, d.Admin.ExportTranscripts)
+	serverauth.AdminRoute(authed, "GET", "/audit/transcripts/:id", serverauth.PermAuditRead, d.Admin.GetTranscript)
 	// G13 审计保留策略(可配; 写仅 super_admin)。
 	serverauth.AdminRoute(authed, "GET", "/audit/settings", serverauth.PermAuditRead, d.Admin.GetAuditSettings)
 	serverauth.AdminRoute(authed, "PUT", "/audit/settings", serverauth.PermAuditRetention, d.Admin.PutAuditSettings)

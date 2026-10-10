@@ -270,6 +270,9 @@ func RegisterAdminRoutes(r *gin.Engine, db *sql.DB) {
 	AdminRoute(authed, "GET", "/server-info", PermServerInfoRead, a.handleServerInfo)
 	// 敏感操作审计日志(用户/部门/技能/令牌等)
 	AdminRoute(authed, "GET", "/audit", PermAuditRead, a.listAuditLogs)
+	AdminRoute(authed, "GET", "/audit/transcripts", PermAuditRead, a.listLLMTranscripts)
+	AdminRoute(authed, "GET", "/audit/transcripts/export", PermAuditRead, a.exportLLMTranscripts)
+	AdminRoute(authed, "GET", "/audit/transcripts/:id", PermAuditRead, a.getLLMTranscript)
 	// 审计保留策略(G13):读 auditor 可;写仅 super_admin(与 router 包镜像)。
 	AdminRoute(authed, "GET", "/audit/settings", PermAuditRead, a.getAuditSettings)
 	AdminRoute(authed, "PUT", "/audit/settings", PermAuditRetention, a.putAuditSettings)
