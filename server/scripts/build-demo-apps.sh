@@ -22,12 +22,22 @@ PACK="$SERVER/skills/app-builder/scripts/pack-assets.mjs"
 
 # 演示应用清单（与 Dockerfile 的 `for app in ...` 必须一致）。
 ALL_APPS=(showcase forum board)
+OUT_DIR=""
+if [ "${1:-}" = "--out-dir" ]; then
+  [ $# -ge 2 ] || { echo "--out-dir requires a directory" >&2; exit 1; }
+  mkdir -p "$2"
+  OUT_DIR="$(cd "$2" && pwd)"
+  shift 2
+fi
 APPS=("$@")
 if [ ${#APPS[@]} -eq 0 ]; then APPS=("${ALL_APPS[@]}"); fi
 
 # Go 的缓存目录：**必须在工作区内**（本机 $HOME 下的缓存在沙箱里可能只读）。
 export GOCACHE="${GOCACHE:-$ROOT/temp/demo-gocache}"
-export GOMODCACHE="${GOMODCACHE:-/root/go/pkg/mod}"
+# Do not assume the build user is root.  Offline builders commonly run as an
+# unprivileged account, and `/root/go/pkg/mod` makes the otherwise reproducible
+# build fail before the first demo is compiled.
+export GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
 export GOPROXY="${GOPROXY:-off}"
 mkdir -p "$GOCACHE"
 
@@ -45,7 +55,8 @@ for app in "${APPS[@]}"; do
   out_dir="$ROOT/temp/demo-build"
   mkdir -p "$out_dir"
   raw="$out_dir/$app.wasm"
-  packed="$out_dir/$app-packed.wasm"
+  packed="${OUT_DIR:-$out_dir}/$app-packed.wasm"
+  if [ -n "$OUT_DIR" ]; then packed="$OUT_DIR/$app.wasm"; fi
 
   echo "→ 编译 $app（wasm32-wasip1）"
   ( cd "$SERVER" && GOOS=wasip1 GOARCH=wasm go build -trimpath -ldflags "-s -w" -o "$raw" "./demoapps/$app" )
@@ -58,6 +69,11 @@ for app in "${APPS[@]}"; do
   mv "$packed.$$" "$packed"
   echo "✓ $packed"
 done
+
+if [ -n "$OUT_DIR" ]; then
+  cp "$SERVER/demoapps/demos.json" "$OUT_DIR/demos.json"
+  chmod -R a+rX "$OUT_DIR"
+fi
 
 echo
 echo "预览（假宿主，按平台路由规则直出 /static/*、入口 / 走 wasm）："
