@@ -490,6 +490,18 @@
       "file": "0089_managed_client_policy.sql",
       "bytes": 1531,
       "sha256": "1f85bf96ca843a6596fb51bb251ed7e803c1fd087dffec033711e2ae60e9e348"
+    },
+    {
+      "version": "0090",
+      "file": "0090_llm_transcripts.sql",
+      "bytes": 1286,
+      "sha256": "90eb2fcfd6c2efcf84fc58ba36390412511fbbf8868f38e409794aa787eae30d"
+    },
+    {
+      "version": "0091",
+      "file": "0091_llm_transcript_detail.sql",
+      "bytes": 3756,
+      "sha256": "0f37d1bff28212a8566a6492b23144d9f310dd19905ae407897ce61e45952c67"
     }
   ]
 }

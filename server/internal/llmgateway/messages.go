@@ -134,6 +134,7 @@ func (a *API) serveAnthropicJSON(c *gin.Context, resp *http.Response, userID, pr
 		var completionEstimated bool
 		ct, completionEstimated = estimateCompletionFallback(pt, ct, int64(len(body)))
 		estimated = estimated || completionEstimated
+		mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
 		usageID, err := serverstore.RecordUsageKindCachedEstimatedForProvider(a.DB, userID, providerID, model, pt, ct, cache, billingKindSearch, estimated)
 		if err != nil {
 			// FIX-05 + G5b:与 /v1/chat/completions 同源 —— **任何**结算失败都
@@ -344,6 +345,12 @@ func (a *API) serveAnthropicStream(c *gin.Context, resp *http.Response, usageID 
 			}
 		}
 	}
+	mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
+	if stopReason == "idle_timeout" {
+		mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "idle_timeout", ErrorMessage: "上游响应空闲超时"})
+	} else if stopReason == "upstream_truncated" {
+		mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "truncated", ErrorMessage: "上游流在完成标记之前中断"})
+	}
 }
 
 // handleMessages proxies /v1/messages (Anthropic-compatible) to the matching
@@ -430,6 +437,7 @@ func (a *API) handleMessages(c *gin.Context) {
 		if err == nil {
 			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {
 					log.Printf("gateway: bind usage %d to provider %d failed: %v", usageID, ups[i].ID, serr)

@@ -195,6 +195,7 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		if err == nil {
 			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			// P1-6:pending 行在调用上游前插入(失败即拒绝),provider 此刻才
 			// 确定 —— 补一次绑定,让回填结算按实际 provider 取价。
 			if usageID > 0 {
@@ -503,7 +504,6 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 // arrived (审计2026-M11:全量 client.Timeout 会截断长报告生成;这里只限 body 读)
 var nonStreamBodyTimeout = 10 * time.Minute
 
-
 // upstreamHeaderTimeoutCache 缓存"按超时值定制的客户端"，键是超时秒数。
 var upstreamHeaderTimeoutCache sync.Map // int → *http.Client
 
@@ -630,6 +630,7 @@ func (a *API) serveJSON(c *gin.Context, resp *http.Response, userID, providerID 
 		var completionEstimated bool
 		ct, completionEstimated = estimateCompletionFallback(pt, ct, int64(len(body)))
 		estimated = estimated || completionEstimated
+		mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
 		usageID, err := serverstore.RecordUsageKindCachedEstimatedForProvider(a.DB, userID, providerID, model, pt, ct, cch, kind, estimated)
 		if err != nil {
 			// FIX-05 + G5b(审计 r3):**任何**结算失败都不得交付 —— 事务已回滚,
@@ -929,6 +930,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 				if errors.Is(r.err, errStreamLineTooLong) {
 					// P2-8: 单行超过上限——不回传半行,直接中断该流。
 					lineTooLong = true
+					mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "line_too_long", ErrorMessage: "上游响应单行过大,流被中断"})
 					log.Printf("gateway: upstream stream line exceeds %d bytes, terminating", maxStreamLineBytes)
 					if !clientGone {
 						fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应单行过大"}}`)
@@ -957,6 +959,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 					// 自己造成的，写不回响应，记日志只会把每个正常的中断都变成噪音
 					// （drain 阶段上游跟着关闭是常态）。
 					if !sawTerminal && !clientGone {
+						mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "truncated", ErrorMessage: "上游流在完成标记之前中断"})
 						log.Printf("gateway: upstream stream closed before the completion marker "+
 							"(forwarded=%d bytes, delivered_content=%d bytes, chunks=%d): "+
 							"treating as truncated and closing with an error event",
@@ -991,6 +994,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 			}
 			if time.Since(lastLineAt) > streamIdleTimeout {
 				idleTimedOut = true
+				mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "idle_timeout", ErrorMessage: "上游响应空闲超时"})
 				log.Printf("gateway: stream idle timeout after %v, terminating", streamIdleTimeout)
 				if !clientGone {
 					fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应空闲超时"}}`)
@@ -1030,6 +1034,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 	//   - 完全没有任何**正文内容**(连接失败/空流/只回一条 error 事件) → 删除
 	//     pending(r7 r7f1-2:闸门是正文内容,不是"转发过任意一行")。
 	// 估算与回填走 settleStreamFallback(与 anthropic 流式**同一个实现**)。
+	mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: reportedPT, OutputTokens: reportedCT})
 	if usageID > 0 && (reportedPT <= 0 || reportedCT <= 0) {
 		settleIn := streamSettlement{
 			usageID:          usageID,
