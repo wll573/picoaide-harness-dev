@@ -259,22 +259,15 @@ func main() {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.WriteHeader(200)
 			flusher, _ := w.(http.Flusher)
-			fmt.Fprintf(w, `event: message_start
-data: {"type":"message_start","message":{"id":"msg_mock","model":%q,"usage":{"input_tokens":%d,"output_tokens":0},"stop_reason":null}}
-`, req.Model, usageIn)
-			fmt.Fprintf(w, `event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-`)
-			fmt.Fprintf(w, `event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":%q}}
-`, text)
-			fmt.Fprintf(w, `event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":%d}}
-`, usageOut)
-			fmt.Fprint(w, `event: message_stop
-data: {"type":"message_stop"}
-
-`)
+			// SSE events must be separated by a blank line or EventSource parsers
+			// coalesce the whole body into one frame (DeepSeek Messages then
+			// throws MALFORMED_RESPONSE on JSON.parse of concatenated data).
+			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"model\":%q,\"usage\":{\"input_tokens\":%d,\"output_tokens\":0},\"stop_reason\":null}}\n\n", req.Model, usageIn)
+			fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+			fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\n", text)
+			fmt.Fprint(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+			fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":%d}}\n\n", usageOut)
+			fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
 			if flusher != nil {
 				flusher.Flush()
 			}

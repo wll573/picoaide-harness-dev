@@ -2959,6 +2959,22 @@ export async function listInstalledSkills(skillsDir: string): Promise<string[]> 
 }
 
 /**
+ * Best-effort installed skill version for managed-policy sync.
+ *
+ * Reads the installer marker `.install-version` under `<skillsDir>/<name>`.
+ * Missing file / empty / unreadable → `undefined` (caller treats as unknown and
+ * may re-download required skills).
+ */
+export async function getInstalledSkillVersion(skillsDir: string, name: string): Promise<string | undefined> {
+  try {
+    const v = (await readFile(join(skillsDir, name, INSTALL_VERSION_FILE), 'utf8')).trim()
+    return v === '' ? undefined : v
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * 同名**影子**：`<skillsDir>` 下所有"运行时会当作 `name` 加载、但不是规范落点
  * `<skillsDir>/<name>` 那一份"的条目（旧备份、旧暂存、根上散落的 `<name>.md`、
  * 目录名非 kebab 但 frontmatter 名合法的自建目录…）。
