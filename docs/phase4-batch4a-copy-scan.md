@@ -5,9 +5,9 @@
 ## 改动路径
 
 - `channels/<channel-id>/channel.json`：私有渠道配置（显示名、登录/门户/客户端文案、ASCII 安装标识、素材文件名）。
-- `channels/<channel-id>/logo.svg`：浅色渠道素材，来自官方几何源的本地副本。
-- `channels/<channel-id>/logo-dark.svg`：深色渠道素材，来自官方双色几何源的本地副本。
-- `channels/<channel-id>/app-icon.png`：安装器与桌面图标素材，本地私有渠道资源。
+- `channels/<channel-id>/logo.svg`：浅色渠道素材，来自老板仓 brands/project 的本地副本。
+- `channels/<channel-id>/logo-dark.svg`：深色渠道素材，来自老板仓 brands/project 的本地副本。
+- `channels/<channel-id>/app-icon.png`：安装器与桌面图标素材，来自老板仓 brands/project 的本地副本。
 - `channels/<channel-id>/favicon.svg`：门户/登录页 favicon 素材，本地私有渠道资源。
 
 ## 用户可见面检查
