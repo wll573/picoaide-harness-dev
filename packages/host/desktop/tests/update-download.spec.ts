@@ -661,11 +661,11 @@ describe('desktop update installer download', () => {
     expect(requested).toBe(false)
   })
 
-  it('resumes an interrupted transfer with Range and completes it', async () => {
+  it('resumes an interrupted HTTP transfer with Range and completes it', async () => {
     const userDataPath = await temporaryUserData()
     const artifact = dmgArtifact()
     const digest = sha256(artifact)
-    const url = 'https://artifacts.test/mac.dmg'
+    const url = 'http://artifacts.test/mac.dmg'
     const half = Math.floor(artifact.byteLength / 2)
     const calls: Array<{ url: string, headers: Record<string, string> }> = []
     let served = 0

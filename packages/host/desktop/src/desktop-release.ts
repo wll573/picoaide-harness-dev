@@ -187,7 +187,7 @@ export function readClientUnavailableReason(input: unknown): string | undefined 
   return typeof reason === 'string' && reason.trim() !== '' ? reason.trim() : undefined
 }
 
-function isHTTPURL(value: string): boolean {
+export function isHTTPURL(value: string): boolean {
   try {
     const protocol = new URL(value).protocol
     return protocol === 'http:' || protocol === 'https:'

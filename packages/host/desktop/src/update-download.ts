@@ -15,6 +15,7 @@ import { chmod, lstat, mkdir, open, readFile, rename, unlink } from 'node:fs/pro
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import {
+  isHTTPURL,
   releaseAssetFor,
   type DesktopReleaseManifest,
   type DesktopReleasePlatform,
@@ -592,7 +593,7 @@ function parsePartialState(text: string): PartialTransferState {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('invalid partial state')
   const record = value as Record<string, unknown>
   if (record.version !== PARTIAL_STATE_VERSION) throw new Error('invalid partial state version')
-  if (typeof record.downloadURL !== 'string' || !record.downloadURL.startsWith('https://')) {
+  if (typeof record.downloadURL !== 'string' || !isHTTPURL(record.downloadURL)) {
     throw new Error('invalid partial state url')
   }
   if (typeof record.sha256 !== 'string' || !/^[0-9a-f]{64}$/u.test(record.sha256)) {
