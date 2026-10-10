@@ -86,10 +86,10 @@
 
 | 变量 | 含义 | 何时必须配 |
 |---|---|---|
-| `PICOAI_PUBLIC_BASE_URL` | 本服务端对外的**绝对 https 地址** | 宿主机已有别的反代（附录 A）、或反代不设 `X-Forwarded-Proto`、或服务端判断不出协议时 |
+| `PICOAI_PUBLIC_BASE_URL` | 本服务端对外的**绝对 http/https 地址** | 宿主机已有别的反代（附录 A）、或反代不设 `X-Forwarded-Proto`、或服务端判断不出协议时 |
 
-> 为什么重要：客户端更新清单里的下载地址必须是**绝对 https**（客户端会整份丢弃非
-> https 的清单）。服务端推不出安全地址时会**按设计拒发** `client` 段并给出
+> 为什么重要：客户端更新清单里的下载地址必须是**绝对 http/https**。服务端推不出可用
+> 地址时会**按设计拒发** `client` 段并给出
 > `client_unavailable` 原因 —— 用户看到的表现是"检查更新永远说已是最新"。
 > 2026-09-10 在测试环境实测踩到（容器前面是宿主机共享 Caddy），配了该变量即恢复。
 
@@ -314,7 +314,7 @@ PICOAI_ADMIN_PASSWORD=<刚生成的超管密码>
 PG_PASSWORD=<刚生成的数据库密码>
 TZ=Asia/Shanghai
 # 对外绝对地址(§2.2):反代场景必配,否则客户端更新清单拒发下载链接
-PICOAI_PUBLIC_BASE_URL=https://<确认过的域名>
+PICOAI_PUBLIC_BASE_URL=http://<确认过的内网地址>
 # 仅测试环境建议放开登录失败上限,免得反复登录锁死管理员账号
 # PICOAI_LOGIN_MAX_ATTEMPTS=100000
 EOF

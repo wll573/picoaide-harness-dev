@@ -23,6 +23,10 @@ function channelValue(overrides: Record<string, unknown> = {}): unknown {
 }
 
 describe('desktop channel profile', () => {
+  it('accepts an internal HTTP default server without upgrading it to HTTPS', () => {
+    expect(normalizeDefaultServerURL('http://intranet.example.com:8080/')).toBe('http://intranet.example.com:8080')
+  })
+
   it('reads the channel id, default server and desktop product name', () => {
     expect(parseDesktopChannelProfile(channelValue())).toEqual({
       channelId: 'acme',
@@ -254,7 +258,7 @@ describe('desktop channel profile', () => {
     ['https://ai.acme.example.com/', 'https://ai.acme.example.com'],
     ['https://ai.acme.example.com///', 'https://ai.acme.example.com'],
     ['https://ai.acme.example.com/picoaide', 'https://ai.acme.example.com/picoaide'],
-    // 回环允许 http(本机调试/自签内网)
+    // 内网部署允许 http
     ['http://127.0.0.1:8080', 'http://127.0.0.1:8080'],
     ['http://localhost:8080', 'http://localhost:8080'],
   ])('accepts %s', (input, expected) => {
@@ -262,8 +266,6 @@ describe('desktop channel profile', () => {
   })
 
   it.each([
-    // 明文指向外部主机 = 把整批客户端降级到明文,必须拒绝
-    ['http://ai.acme.example.com'],
     ['ftp://ai.acme.example.com'],
     ['not a url'],
     [''],

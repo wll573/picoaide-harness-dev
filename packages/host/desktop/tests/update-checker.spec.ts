@@ -21,7 +21,7 @@ import {
 // 客户端只从**它登录的那台服务端**取更新(2026-09-10 定案):测试里的更新源
 // 一律是服务端清单地址,不再是任何分发面目录;渠道隔离改由 expectedChannel
 // (服务端自报的渠道 id)覆盖。
-const SERVER = 'https://server.test'
+const SERVER = 'http://server.test'
 const MANIFEST_URL = serverManifestURL(SERVER)
 
 const RELEASE_SHA256 = 'a'.repeat(64)
@@ -187,13 +187,12 @@ describe('release manifest parsing', () => {
   })
 
   it.each([
-    ['a plain http url', { url: 'http://release.picoaide.com/PicoAide.dmg', sha256: RELEASE_SHA256 }],
     ['a protocol-relative url', { url: '//release.picoaide.com/PicoAide.dmg', sha256: RELEASE_SHA256 }],
     ['a relative url', { url: 'releases/2.7.0/PicoAide.dmg', sha256: RELEASE_SHA256 }],
     ['a non-string url', { url: 42, sha256: RELEASE_SHA256 }],
     ['a missing url', { sha256: RELEASE_SHA256 }],
   ])('rejects an asset with %s', (_case, asset) => {
-    // 清单是安全边界:拼接式下载地址一律拒绝,绝不猜测绝对地址。
+    // 清单是安全边界:非绝对下载地址一律拒绝,绝不猜测绝对地址。
     expect(parseReleaseManifest({
       schema: 1,
       client: { version: '2.7.0', assets: { 'mac-universal': asset } },
@@ -250,7 +249,7 @@ describe('服务端给不出安全下载地址（client_unavailable）', () => {
       schema: 1,
       channel_id: 'official',
       server: { version: '2.10.0' },
-      client_unavailable: 'server origin is not https; set PICOAI_PUBLIC_BASE_URL',
+      client_unavailable: 'server origin is unavailable; set PICOAI_PUBLIC_BASE_URL',
     })
 
     await expect(checkForUpdateDetailed({
@@ -259,7 +258,7 @@ describe('服务端给不出安全下载地址（client_unavailable）', () => {
       request,
     })).resolves.toEqual({
       kind: 'unavailable',
-      reason: 'server origin is not https; set PICOAI_PUBLIC_BASE_URL',
+      reason: 'server origin is unavailable; set PICOAI_PUBLIC_BASE_URL',
     })
     // 老的布尔式 API 仍然返回 null(兼容既有调用方与测试)。
     await expect(checkForUpdate({ manifestURL: MANIFEST_URL, currentVersion: '2.9.9', request }))
@@ -311,7 +310,7 @@ describe('public Desktop version check', () => {
 
     expect(calls).toHaveLength(1)
     expect(calls[0]?.url).toBe(MANIFEST_URL)
-    expect(calls[0]?.url).toBe('https://server.test/api/client/v2/updates/manifest')
+    expect(calls[0]?.url).toBe('http://server.test/api/client/v2/updates/manifest')
     // 客户端不再直连任何分发面(2026-09-10 定案):请求里绝不能出现它。
     expect(calls[0]?.url).not.toContain('release.picoaide.com')
     expect(calls[0]?.url).not.toContain('api.github.com')
@@ -327,21 +326,21 @@ describe('public Desktop version check', () => {
   })
 
   it('builds the manifest URL from the signed-in server, tolerating trailing slashes', () => {
-    expect(serverManifestURL('https://server.test')).toBe(
-      'https://server.test/api/client/v2/updates/manifest',
+    expect(serverManifestURL('http://server.test')).toBe(
+      'http://server.test/api/client/v2/updates/manifest',
     )
-    expect(serverManifestURL('https://server.test/')).toBe(
-      'https://server.test/api/client/v2/updates/manifest',
+    expect(serverManifestURL('http://server.test/')).toBe(
+      'http://server.test/api/client/v2/updates/manifest',
     )
-    expect(serverManifestURL('https://server.test///')).toBe(
-      'https://server.test/api/client/v2/updates/manifest',
+    expect(serverManifestURL('http://server.test///')).toBe(
+      'http://server.test/api/client/v2/updates/manifest',
     )
     // 子路径部署(反代挂在 /picoaide 下)必须原样保留前缀。
-    expect(serverManifestURL('https://server.test/picoaide')).toBe(
-      'https://server.test/picoaide/api/client/v2/updates/manifest',
+    expect(serverManifestURL('http://server.test/picoaide')).toBe(
+      'http://server.test/picoaide/api/client/v2/updates/manifest',
     )
-    expect(serverChannelURL('https://server.test/')).toBe(
-      'https://server.test/api/client/v2/channel',
+    expect(serverChannelURL('http://server.test/')).toBe(
+      'http://server.test/api/client/v2/channel',
     )
   })
 

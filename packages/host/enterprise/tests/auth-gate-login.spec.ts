@@ -178,9 +178,9 @@ function servedLoginPage(config: Config): string {
 
 describe('auth-gate login page: 内置地址后不再提供"修改服务端地址"', () => {
   it('渠道包内置了地址 → 页面上没有返回入口，但仍带自动连接标记', () => {
-    const html = servedLoginPage({ defaultServer: 'https://harness.example.com' })
+    const html = servedLoginPage({ defaultServer: 'http://harness.example.com' })
     expect(html).toContain('data-default-server="1"')
-    expect(html).toContain('value="https://harness.example.com"')
+    expect(html).toContain('value="http://harness.example.com"')
     // 断言的是**标记**：脚本里始终有 `getElementById('back-btn')`（判空守卫），
     // 所以这里查的是按钮元素与它的可见文案。
     expect(html).not.toContain('id="back-btn"')
@@ -210,7 +210,7 @@ describe('auth-gate login page: 内置地址后不再提供"修改服务端地�
     // brandScriptLiteral()（JSON.stringify，引号未转义）被插进 value="…" 属性，
     // JSON 自己的 " 闭合属性 ⇒ 登录页出现任意属性/内联 JS（真实复现过 onfocus
     // 处理器读密码框）。这里断言单遍填充：值原样（仅属性转义）落进 value。
-    const hostile = 'https://harness.example.com/__BRAND_JSON__'
+    const hostile = 'http://harness.example.com/__BRAND_JSON__'
     const html = servedLoginPage({ defaultServer: hostile })
     const valueAttr = html.match(/id="server"[^>]*/u)?.[0] ?? ''
     // 属性里是**原值**（斜杠与下划线无需转义），没有被替换成品牌 JSON。

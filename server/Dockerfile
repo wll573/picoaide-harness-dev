@@ -153,11 +153,11 @@ RUN rm -f /opt/picoaide/client/.keep
 # 目录位置固定,服务端直接读(无需 entrypoint 落盘:镜像层里读文件是只读、
 # 一次性、随镜像升级而更新,正是我们要的语义)。
 ENV PICOAI_CLIENT_RELEASE_DIR=/opt/picoaide/client
-# 下载地址来源:客户端只接受**绝对 https** 地址(见 packages/host/desktop 的
+# 下载地址来源:客户端接受**绝对 http(s)** 地址(见 packages/host/desktop 的
 # desktop-release.ts)。反代(Caddy)设了 X-Forwarded-Proto: https 就无需配置;
-# 否则在此显式声明对外地址(如 PICOAI_PUBLIC_BASE_URL=https://ai.example.com,
+# 否则在此显式声明对外地址(如 PICOAI_PUBLIC_BASE_URL=http://harness.example.com,
 # 允许带子路径),否则清单不下发 client 段并给出 client_unavailable 原因。
-# ENV PICOAI_PUBLIC_BASE_URL=https://ai.example.com
+# ENV PICOAI_PUBLIC_BASE_URL=http://harness.example.com
 
 # --- 内置技能随镜像分发（"技能内置到服务端、客户端按需安装"） ---
 # 平台自带技能（当前是 WASM 应用作者手册 app-builder）放在镜像层里，服务端把

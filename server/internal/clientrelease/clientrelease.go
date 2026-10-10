@@ -125,9 +125,9 @@ func manifest(c *gin.Context, serverVersion, channel string) {
 		"server":     gin.H{"version": serverVersion},
 	}
 	// 下载地址按请求来源拼出,不写死 —— 官方 HTTPS 与内网自签/非 443 端口都对。
-	// 但客户端只接受**绝对 https** 地址(见 packages/host/desktop 的
-	// desktop-release.ts):给不出安全地址时宁可明说不可用,也不下发一个会被
-	// 整份丢弃、客户端静默显示"已是最新"的 http 链接。
+	// 客户端接受**绝对 http/https** 地址(见 packages/host/desktop 的
+	// desktop-release.ts):隔离内网可以直接使用 HTTP，不能因为没有 TLS 就把
+	// 更新链路静默判成不可用。
 	origin := RequestOrigin(c)
 	info := LoadInfo()
 	switch {
@@ -396,7 +396,7 @@ const PublicBaseURLEnv = "PICOAI_PUBLIC_BASE_URL"
 
 // originUnavailableReason 是"给不出安全下载地址"时的兜底原因说明
 // (下发给客户端/体现在服务端日志里,供运维定位)。
-const originUnavailableReason = "server origin is not https; set " + PublicBaseURLEnv
+const originUnavailableReason = "server origin is unavailable; set " + PublicBaseURLEnv
 
 // Origin 是客户端可达的绝对来源解析结果。
 type Origin struct {
@@ -465,7 +465,7 @@ func RequestOrigin(c *gin.Context) Origin {
 // URL(no-store 已挡住缓存投毒,但配置了对外地址时应以配置为权威)。
 var PublicBaseResolver func() string
 
-// configuredBaseURL 读取显式配置的对外地址(只接受 https/回环 http)。
+// configuredBaseURL 读取显式配置的对外地址(接受 http/https)。
 //
 // 取值非法时**明确告警一次**（而不是静默回落）——被拒的形态里就有"带凭据的 URL"
 // （R28 审计 AB1-01）：静默忽略会让管理员以为配置生效了，失败点被推迟到员工机器上的
@@ -480,7 +480,7 @@ func configuredBaseURL() string {
 		return ""
 	}
 	base, ok := normalizeBaseURL(raw)
-	if !ok || !isSecureBase(base) {
+	if !ok {
 		warnConfiguredBaseURLIgnored()
 		return ""
 	}
@@ -552,9 +552,6 @@ func resolveOrigin(in originInput) Origin {
 		if !ok {
 			return Origin{Reason: PublicBaseURLEnv + " is invalid: expect an absolute http(s) URL without query, fragment or userinfo"}
 		}
-		if !isSecureBase(base) {
-			return Origin{Reason: PublicBaseURLEnv + " must be https (the client rejects non-https download URLs)"}
-		}
 		return Origin{Base: base}
 	}
 	// 服务端显式配置的对外地址优先于请求头(P3-5)。
@@ -569,10 +566,7 @@ func resolveOrigin(in originInput) Origin {
 	if ForwardedProtoIsHTTPS(in.ForwardedProto) || in.TLS {
 		return Origin{Base: "https://" + in.Host}
 	}
-	if isLoopbackHost(in.Host) {
-		return Origin{Base: "http://" + in.Host}
-	}
-	return Origin{Reason: originUnavailableReason}
+	return Origin{Base: "http://" + in.Host}
 }
 
 // normalizeBaseURL 规范化显式配置的对外地址:去掉尾斜杠(允许子路径),
@@ -613,18 +607,6 @@ func normalizeBaseURL(raw string) (string, bool) {
 		return "", false
 	}
 	return strings.TrimRight(raw, "/"), true
-}
-
-// isSecureBase 判定来源是否安全:https 恒安全;http 仅回环(本地开发)可接受。
-func isSecureBase(base string) bool {
-	u, err := url.Parse(base)
-	if err != nil {
-		return false
-	}
-	if u.Scheme == "https" {
-		return true
-	}
-	return isLoopbackHost(u.Host)
 }
 
 // isLoopbackHost 判定 host(可含端口,IPv6 可带方括号)是否为本机回环。

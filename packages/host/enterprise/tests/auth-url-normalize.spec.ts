@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { normalizeServerURL } from '../src/server-connector/auth.ts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { assertServerURLAllowed, login, normalizeServerURL } from '../src/server-connector/auth.ts'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('normalizeServerURL', () => {
   it('strips a single trailing slash', () => {
@@ -31,5 +33,21 @@ describe('normalizeServerURL', () => {
 
   it('handles a bare protocol host with trailing slash after a port', () => {
     expect(normalizeServerURL('http://localhost:37532/')).toBe('http://localhost:37532')
+  })
+
+  it('allows an internal HTTP base through the real login request path', async () => {
+    const request = vi.fn<typeof fetch>(async () => Response.json({ token: 'token-1' }))
+    vi.stubGlobal('fetch', request)
+    assertServerURLAllowed('http://intranet.example.com')
+    await expect(login('http://intranet.example.com/', 'alice', 'password')).resolves.toMatchObject({
+      serverURL: 'http://intranet.example.com',
+      username: 'alice',
+      token: 'token-1',
+    })
+    expect(request).toHaveBeenCalledWith('http://intranet.example.com/api/client/v2/auth/login', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it.each(['ftp://intranet.example.com', 'file:///tmp/server'])('still rejects non-HTTP scheme %s', (serverURL) => {
+    expect(() => assertServerURLAllowed(serverURL)).toThrow()
   })
 })

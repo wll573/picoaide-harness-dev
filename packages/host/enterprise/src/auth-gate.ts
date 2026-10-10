@@ -1350,7 +1350,7 @@ export function apply(ctx: Context, config: Config): void {
    * 旧的链式 `.replaceAll('__A__', …).replaceAll('__B__', …)` 有一个注入面
    * （2026-09-17 二轮对抗审计 IP-1）：值本身是渠道/运维配置（未受信），只要某个
    * 值里出现**后面才替换**的占位符字面量，它就会在**另一个上下文**里被展开 ——
-   * 例如 `defaults.server_url = "https://host/__BRAND_JSON__"` 会把
+   * 例如 `defaults.server_url = "http://host/__BRAND_JSON__"` 会把
    * `brandScriptLiteral()`（JSON.stringify，引号未转义）插进
    * `value="__DEFAULT_SERVER__"` 属性里，JSON 自己的 `"` 闭合属性、后续内容变成
    * 标记（已用真实 channel.json + parse5 复现：登录页出现 onfocus 处理器，

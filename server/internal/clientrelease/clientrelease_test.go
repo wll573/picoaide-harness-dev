@@ -123,14 +123,14 @@ func TestManifestWithoutAssets(t *testing.T) {
 	}
 }
 
-// ---- 缺陷 1 回归(2026-09-10):下载地址必须是客户端可用的绝对 https ----
+// ---- 缺陷 1 回归(2026-09-10):下载地址必须是客户端可用的绝对 http(s) ----
 //
 // 旧实现按 X-Forwarded-Proto 推 proto,非 "https" 一律回落 http;而客户端
-// (packages/host/desktop/src/desktop-release.ts)只接受**绝对 https** URL,
+// (packages/host/desktop/src/desktop-release.ts)接受**绝对 http(s)** URL,
 // 一个 http 地址就让整份清单被判空 → 客户端静默显示"已是最新"。修法:
 //   - PICOAI_PUBLIC_BASE_URL 配了就是唯一权威来源;
-//   - 未配时只有 XFP:https / TLS / 回环 Host 三种情况能给出安全地址;
-//   - 其它情况不下发 client 段,改下发 client_unavailable 并在服务端告警一次。
+//   - 未配时 XFP:https / TLS 给出 https，其余有 Host 的请求回落 http;
+//   - 没有 Host 时不下发 client 段,改下发 client_unavailable 并在服务端告警一次。
 
 // oneAsset 造一份单平台(win-x64)资产清单。
 func oneAsset(t *testing.T) map[string]any {
@@ -225,7 +225,7 @@ func TestManifestRejectsInvalidPublicBaseURL(t *testing.T) {
 		"https://ai.example.com/#frag", // fragment
 		"ai.example.com",               // 不是绝对地址
 		"ftp://ai.example.com",         // 非 http(s)
-		"http://ai.example.com",        // 非 https 且非回环:客户端会丢弃
+		// 内网 HTTP 是合法部署形态，客户端不会再丢弃该地址。
 	} {
 		t.Run(bad, func(t *testing.T) {
 			t.Setenv(PublicBaseURLEnv, bad)
@@ -247,7 +247,7 @@ func TestManifestRejectsInvalidPublicBaseURL(t *testing.T) {
 	}
 }
 
-// 无法提供安全地址:不下发 client 段,改下发明确原因,且**绝不含链接**。
+// 无法拼出绝对地址:不下发 client 段,改下发明确原因,且**绝不含链接**。
 func TestManifestWithoutSecureOriginOmitsClientSection(t *testing.T) {
 	withReleaseDir(t, oneAsset(t), nil)
 	t.Setenv(PublicBaseURLEnv, "")
@@ -255,12 +255,11 @@ func TestManifestWithoutSecureOriginOmitsClientSection(t *testing.T) {
 	r := newRouter("2.7.0")
 
 	body := getManifest(t, r, func(req *http.Request) {
-		req.Host = "ai.example.com" // 非回环 + 无 XFP + 无 TLS
-		req.Header.Set("X-Forwarded-Proto", "http")
+		req.Host = ""
 	})
 
 	if _, ok := body["client"]; ok {
-		t.Fatalf("不安全来源下不得下发 client 段: %v", body)
+		t.Fatalf("缺少 Host 时不得下发 client 段: %v", body)
 	}
 	reason, _ := body["client_unavailable"].(string)
 	if reason == "" {
@@ -273,8 +272,8 @@ func TestManifestWithoutSecureOriginOmitsClientSection(t *testing.T) {
 		t.Fatalf("服务端段必须照常下发: %v", body)
 	}
 	// 每进程只告警一次:再来两次请求也不该重复刷屏。
-	getManifest(t, r, func(req *http.Request) { req.Host = "ai.example.com" })
-	getManifest(t, r, func(req *http.Request) { req.Host = "ai2.example.com" })
+	getManifest(t, r, func(req *http.Request) { req.Host = "" })
+	getManifest(t, r, func(req *http.Request) { req.Host = "" })
 	if *warns != 1 {
 		t.Fatalf("告警次数 = %d, want 1(每进程一次)", *warns)
 	}
@@ -317,10 +316,10 @@ func TestManifestSecureOriginDetection(t *testing.T) {
 		})
 	}
 
-	// 非回环 + 无 https 信号 → 不可用(旧实现会给 http 链接,被客户端静默丢弃)
+	// 非回环 + 无 https 信号 → 回落到可用的 http 来源。
 	body := getManifest(t, r, func(req *http.Request) { req.Host = "ai.example.com" })
-	if _, ok := body["client"]; ok {
-		t.Fatalf("非回环 http 不得下发 client 段: %v", body)
+	if _, ok := body["client"]; !ok {
+		t.Fatalf("非回环 http 应下发 client 段: %v", body)
 	}
 }
 
@@ -332,8 +331,8 @@ func TestResolveOrigin(t *testing.T) {
 		in   originInput
 		want string // 期望来源;空 = 不可用
 	}{
-		{"未配且无 https 信号", "", originInput{Host: "ai.example.com"}, ""},
-		{"未配且 XFP=http", "", originInput{ForwardedProto: "http", Host: "ai.example.com"}, ""},
+		{"未配且无 https 信号", "", originInput{Host: "ai.example.com"}, "http://ai.example.com"},
+		{"未配且 XFP=http", "", originInput{ForwardedProto: "http", Host: "ai.example.com"}, "http://ai.example.com"},
 		{"未配无 Host", "", originInput{ForwardedProto: "https"}, ""},
 		{"未配 XFP=https", "", originInput{ForwardedProto: "https", Host: "ai.example.com"}, "https://ai.example.com"},
 		{"未配 TLS", "", originInput{TLS: true, Host: "ai.example.com:8443"}, "https://ai.example.com:8443"},
@@ -341,7 +340,7 @@ func TestResolveOrigin(t *testing.T) {
 		{"配置 https", "https://ai.example.com/", originInput{Host: "ai.example.com"}, "https://ai.example.com"},
 		{"配置子路径", "https://ai.example.com/picoaide", originInput{Host: "x"}, "https://ai.example.com/picoaide"},
 		{"配置回环 http", "http://127.0.0.1:9000", originInput{ForwardedProto: "https", Host: "ai.example.com"}, "http://127.0.0.1:9000"},
-		{"配置非回环 http", "http://ai.example.com", originInput{Host: "ai.example.com"}, ""},
+		{"配置非回环 http", "http://ai.example.com", originInput{Host: "ai.example.com"}, "http://ai.example.com"},
 		{"配置带 query", "https://ai.example.com/?a=1", originInput{Host: "ai.example.com"}, ""},
 		{"配置带 fragment", "https://ai.example.com/#a", originInput{Host: "ai.example.com"}, ""},
 		{"配置相对地址", "ai.example.com", originInput{Host: "ai.example.com"}, ""},

@@ -110,7 +110,7 @@ export function compareSemVerVersions(left: string, right: string): number | nul
 /**
  * 版本检查的完整结果。
  *
- * `unavailable` 与"没有新版本"必须分开：服务端推不出安全的对外地址时会**明确**
+ * `unavailable` 与"没有新版本"必须分开：服务端推不出可用的对外地址时会**明确**
  * 说明原因（`client_unavailable`，见 server 的 `internal/clientrelease`）。把它
  * 当成"已是最新"就是审计里那条"界面永远显示已是最新、而链路其实断了"的静默故障。
  *

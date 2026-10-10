@@ -142,7 +142,7 @@ export const zh = {
   'update.releaseMissing': '检查更新失败：最新版本缺少可下载安装包',
   'update.checksumMismatch': '更新下载失败：安装包校验不一致（已自动重试），请稍后再试',
   'update.invalidArtifact': '更新下载失败：安装包格式不正确，请联系管理员',
-  'update.serverUnavailable': '检查更新失败：服务端未配置对外可用的 http 地址，请联系管理员',
+  'update.serverUnavailable': '检查更新失败：服务端未提供可用的下载地址，请联系管理员',
   'update.unsupported': '当前平台不支持自动更新',
   'update.upToDate': '已是最新版本',
   'update.interrupted': '下载中断，{seconds} 秒后重试（第 {attempt}/{max} 次）…',

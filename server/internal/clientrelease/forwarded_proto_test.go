@@ -2,7 +2,6 @@ package clientrelease
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -72,9 +71,8 @@ func xfpShapeName(header string) string {
 	return header
 }
 
-// 消费点 A：清单 URL 生成。`want=true` 的形态必须给出**逐字相同**的 https 下载地址
-// （修前的 `https` 行不得有任何行为变化），`want=false` 的形态必须不给 client 段
-// —— 宁可不给 URL，也不给一个会被客户端整份丢弃的错 URL。
+// 消费点 A：清单 URL 生成。`https` 形态给出 https 下载地址，其余有 Host 的形态
+// 回落到 http；只有缺少 Host 才无法生成绝对地址。
 func TestManifestURLsFollowForwardedProtoTable(t *testing.T) {
 	withReleaseDir(t, oneAsset(t), nil)
 	t.Setenv(PublicBaseURLEnv, "")
@@ -90,23 +88,15 @@ func TestManifestURLsFollowForwardedProtoTable(t *testing.T) {
 				}
 			})
 			got := assetURL(body, "win-x64")
-			want := ""
+			want := "http://ai.example.com/updates/client/Setup.exe"
 			if tc.want {
 				want = "https://ai.example.com/updates/client/Setup.exe"
 			}
 			if got != want {
 				t.Fatalf("XFP=%q 的 asset url = %q, want %q（%s）", tc.header, got, want, tc.note)
 			}
-			// 反向面：判不出 https 时必须**明说**不可用（而不是静默下发一份 assets 为空的清单）。
-			_, unavailable := body["client_unavailable"]
-			if tc.want && unavailable {
-				t.Fatalf("XFP=%q 不该报 client_unavailable: %v", tc.header, body)
-			}
-			if !tc.want && !unavailable {
-				t.Fatalf("XFP=%q 必须报 client_unavailable: %v", tc.header, body)
-			}
-			if !tc.want && strings.Contains(unavailableReason(body), "/updates/client/") {
-				t.Fatalf("XFP=%q 的不可用原因里不该有链接: %v", tc.header, body["client_unavailable"])
+			if _, unavailable := body["client_unavailable"]; unavailable {
+				t.Fatalf("XFP=%q 时 Host 在，不该报 client_unavailable: %v", tc.header, body)
 			}
 		})
 	}

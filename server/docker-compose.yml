@@ -103,9 +103,9 @@ services:
       # 所以改网段只需改 CADDY_IP 一处(NETWORK_SUBNET 冲突时的既有做法)。
       CADDY_IP: ${CADDY_IP:-172.28.0.2}
       # 本服务端对外可达地址(如 https://ai.example.com)。**配了就是唯一权威**;
-      # 留空则按请求推导(X-Forwarded-Proto: https → TLS → 回环 http)。
-      # 为什么要配:客户端更新清单里的下载地址必须是**绝对 https**,而客户端会
-      # 丢弃非 https 的整份清单。若前面挂的是不设 X-Forwarded-Proto 的反代,
+      # 留空则按请求推导(X-Forwarded-Proto/TLS → https，否则有 Host 时用 http)。
+      # 为什么要配:客户端更新清单里的下载地址必须是**绝对 http(s)**。若前面挂的是
+      # 不设 X-Forwarded-Proto 的反代,
       # 或服务端在反代后面判断不出协议,清单会按设计拒发 client 段
       # (`client_unavailable`),表现为"检查更新永远说已是最新"。
       PICOAI_PUBLIC_BASE_URL: ${PICOAI_PUBLIC_BASE_URL:-}

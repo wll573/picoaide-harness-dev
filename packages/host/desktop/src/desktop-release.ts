@@ -121,7 +121,7 @@ const SHA256_HEX = /^[0-9a-f]{64}$/u
 /**
  * 严格解析版本清单。任何结构不符都返回 null（调用方静默降级为「无更新」）。
  *
- * 只接受**绝对 https** URL 与非空 sha256：清单是安全边界 —— 拼接式下载地址
+ * 只接受**绝对 http/https** URL 与非空 sha256：清单是安全边界 —— 拼接式下载地址
  * 与缺失哈希（等于放弃完整性校验）都必须拒绝，而不是尽力猜测。
  *
  * `channel_id` **必填**，且给了 `expectedChannel` 时必须精确相等：渠道隔离是
@@ -155,7 +155,7 @@ export function parseReleaseManifest(
     if (entry === undefined) continue
     if (!isRecord(entry)) return null
     const { url, sha256, size } = entry
-    if (typeof url !== 'string' || !isHttpsURL(url)) return null
+    if (typeof url !== 'string' || !isHTTPURL(url)) return null
     if (typeof sha256 !== 'string' || !SHA256_HEX.test(sha256)) return null
     if (size !== undefined && (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0)) {
       return null
@@ -187,9 +187,10 @@ export function readClientUnavailableReason(input: unknown): string | undefined 
   return typeof reason === 'string' && reason.trim() !== '' ? reason.trim() : undefined
 }
 
-function isHttpsURL(value: string): boolean {
+function isHTTPURL(value: string): boolean {
   try {
-    return new URL(value).protocol === 'https:'
+    const protocol = new URL(value).protocol
+    return protocol === 'http:' || protocol === 'https:'
   } catch {
     return false
   }
