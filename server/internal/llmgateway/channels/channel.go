@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -28,15 +29,28 @@ type Channel interface {
 	RequestOverrides(modelID string) (overrides map[string]any, removeKeys []string)
 	// 能力预设(FetchModels 响应无值时的兜底)
 	DefaultModelCaps() (contextLen, maxOutput int64)
+	// TransformRequestBody 动态转换请求体,返回是否修改了 body。
+	// 用于需要按请求内容做参数转换的场景(如不同厂商思考参数的映射)。
+	// 未修改返回 false,调用方跳过重编码以省开销。
+	TransformRequestBody(body map[string]any) bool
 }
 
 var registry = map[string]Channel{}
 
 // Register 由各渠道包 init() 调用。
-func Register(c Channel) { registry[c.Name()] = c }
+func Register(c Channel) {
+	name := strings.ToLower(strings.TrimSpace(c.Name()))
+	if name == "" {
+		return
+	}
+	registry[name] = c
+}
 
 // Get 按名取渠道。
-func Get(name string) (Channel, bool) { c, ok := registry[name]; return c, ok }
+func Get(name string) (Channel, bool) {
+	c, ok := registry[strings.ToLower(strings.TrimSpace(name))]
+	return c, ok
+}
 
 // All 返回已注册渠道名(排序)。
 func All() []string {

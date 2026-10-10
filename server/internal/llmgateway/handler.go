@@ -157,7 +157,7 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		if ups[i].Channel != "" {
 			if ch, ok := channels.Get(ups[i].Channel); ok {
 				ov, rm := ch.RequestOverrides(req.Model)
-				if raw2, err := a.applyChannelOverrides(body, ov, rm); err == nil {
+				if raw2, err := a.applyChannelOverrides(body, ov, rm, ch); err == nil {
 					body = raw2
 				} else if a.rejectBusyBodyEdit(c, usageID, err) {
 					return
@@ -341,14 +341,76 @@ func (a *API) applyStreamUsageRequest(raw []byte) ([]byte, error) {
 }
 
 // applyChannelOverrides 深合并 overrides 进请求体,并删除 removeKeys 中的键。
-func (a *API) applyChannelOverrides(raw []byte, overrides map[string]any, removeKeys []string) ([]byte, error) {
+// ch 用于执行渠道级动态转换(如 Qwen 的思考参数映射),可为 nil(跳过转换)。
+func (a *API) applyChannelOverrides(raw []byte, overrides map[string]any, removeKeys []string, ch channels.Channel) ([]byte, error) {
 	return rewriteJSONObjectBody(a.db(), raw, func(body map[string]any) error {
-		for _, k := range removeKeys {
-			delete(body, k)
+		changed := false
+
+		// 1. 渠道级动态请求体转换(如 Qwen 的 thinking 参数映射)
+		if ch != nil {
+			if ch.TransformRequestBody(body) {
+				changed = true
+			}
 		}
-		deepMerge(body, overrides)
+
+		// 2. 删除指定 key
+		for _, k := range removeKeys {
+			if _, ok := body[k]; ok {
+				delete(body, k)
+				changed = true
+			}
+		}
+
+		// 3. 深合并 overrides
+		if len(overrides) > 0 {
+			deepMerge(body, overrides)
+			changed = true
+		}
+
+		if !changed {
+			return errBodyNoChange
+		}
 		return nil
 	})
+}
+
+// applyChannelRequestOverrides preserves the pre-merge helper signature for
+// package-local callers and older extensions. The protocol argument is kept
+// for source compatibility; channel selection already carries the protocol
+// specific behavior.
+func (a *API) applyChannelRequestOverrides(raw []byte, ch channels.Channel, modelID, _ string) ([]byte, error) {
+	var legacyQwenBudget any
+	var legacyQwenThinking bool
+	if _, ok := ch.(channels.Qwen); ok {
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err == nil {
+			if v, exists := body["thinking_budget"]; exists {
+				legacyQwenBudget = v
+			}
+			if thinking, ok := body["thinking"].(map[string]any); ok {
+				thinkingType, _ := thinking["type"].(string)
+				legacyQwenThinking = strings.EqualFold(thinkingType, "enabled")
+			}
+		}
+	}
+	var overrides map[string]any
+	var removeKeys []string
+	if ch != nil {
+		overrides, removeKeys = ch.RequestOverrides(modelID)
+	}
+	out, err := a.applyChannelOverrides(raw, overrides, removeKeys, ch)
+	if err != nil || legacyQwenBudget == nil && !legacyQwenThinking {
+		return out, err
+	}
+	var body map[string]any
+	if json.Unmarshal(out, &body) != nil {
+		return out, err
+	}
+	body["enable_thinking"] = legacyQwenThinking
+	if legacyQwenBudget != nil {
+		body["thinking_budget"] = legacyQwenBudget
+	}
+	return json.Marshal(body)
 }
 
 // deepMerge 将 src 合并进 dst(嵌套 map 递归合并,标量覆盖)。
