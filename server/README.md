@@ -47,6 +47,25 @@ PICOAI_ADMIN_PASSWORD=admin123 bin/picoaide-server \
 - 管理页：`http://localhost:8080/admin/`（用户 / 部门 / 网关 / 用量 / 商城 / 能力中心 / 品牌 / 门户）。
 - 无外网环境可 `go run scripts/mock-upstream.go` 起假上游联调网关。
 
+### 2. 纯 HTTP 内网启动（仅限明确接受明文风险的环境）
+
+HTTP 模式不启用 TLS，登录凭据、令牌和业务内容会以明文传输。请只在隔离网络中使用，并在部署时替换所有占位值；示例不包含真实密码：
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少设置占位值并在实际部署前改成强随机值：
+# PICOAI_ADMIN_PASSWORD=REPLACE_ME
+# PG_PASSWORD=REPLACE_ME
+# DOMAIN=server.example.com
+# TLS_MODE=http
+
+docker compose -f docker-compose.yml -f docker-compose.http.yml config
+docker compose -f docker-compose.yml -f docker-compose.http.yml up -d
+curl -f http://server.example.com/healthz
+```
+
+`docker-compose.http.yml` 会移除宿主机的 HTTPS 端口映射，并保留 HTTP 端口（默认 `80`，可用 `CADDY_HTTP_PORT` 调整）。访问地址使用 `http://`；不要把此覆盖文件与 HTTPS 证书模式混用。
+
 ## 文档
 
 | 文档 | 内容 |
