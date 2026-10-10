@@ -606,9 +606,9 @@ func channelLogoDarkURL() string {
 // 管理员配置了 portal.client_download_* 时以配置为准(可指向自有 CDN)。
 // 两者都没有时该平台显示为不可用(而不是给一个坏链接)。
 //
-// 内置地址与更新清单**同一口径**(clientrelease.RequestOrigin):客户端只从
-// https 来源装包,来源不安全时门户也不显示内置入口,并把原因写进下载区
-// (运维据此配置 PICOAI_PUBLIC_BASE_URL),而不是让下载区静默空着。
+// 内置地址与更新清单**同一口径**(clientrelease.RequestOrigin):内网采用 full-HTTP，
+// 来源不可用时门户不显示内置入口，并把原因写进下载区（运维据此配置
+// PICOAI_PUBLIC_BASE_URL），而不是让下载区静默空着。
 // @returns 下载项与补充说明(无补充说明时为空串)。
 func portalDownloads(c *gin.Context, settings map[string]string) ([]portal.Platform, string) {
 	legacy := settings["portal.client_download_url"]
@@ -653,10 +653,10 @@ func portalDownloads(c *gin.Context, settings map[string]string) ([]portal.Platf
 		item("Windows", "x64 · .exe 安装程序", settings["portal.client_download_win"], "win-x64"),
 	}
 
-	// 有平台因来源不安全而失去内置入口(且管理员没配自有地址)→ 说明原因。
+	// 有平台因来源不可用而失去内置入口(且管理员没配自有地址)→ 说明原因。
 	note := ""
 	if !origin.OK() && pick(settings["portal.client_download_win"]) == "" {
-		note = "本服务端当前无法提供安全(https)的安装包地址:" + origin.Reason + "。"
+		note = "本服务端当前无法提供可用的 http 安装包地址:" + origin.Reason + "。"
 	}
 	return platforms, note
 }

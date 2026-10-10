@@ -688,7 +688,7 @@ func TestResolveStartupChannelDeepLinkScheme(t *testing.T) {
 
 // ---- 缺陷 1 回归(2026-09-10):门户下载入口与更新清单同一口径 ----
 //
-// 门户的内置下载地址只在能给出安全(https)来源时显示;否则不显示入口并把
+// 门户的内置下载地址只在能给出可用来源时显示;否则不显示入口并把
 // 原因写进下载区(运维据此配置 PICOAI_PUBLIC_BASE_URL)。管理员配置的
 // portal.client_download_* 覆盖地址不受影响。
 
@@ -708,7 +708,7 @@ func withPortalReleaseDir(t *testing.T) {
 	t.Cleanup(func() { clientrelease.Dir = prev })
 }
 
-func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
+func TestPortalDownloadsRequireAvailableOrigin(t *testing.T) {
 	withPortalReleaseDir(t)
 	t.Setenv(clientrelease.PublicBaseURLEnv, "")
 
@@ -724,10 +724,10 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 		return portalDownloads(c, settings)
 	}
 
-	t.Run("安全来源显示内置入口", func(t *testing.T) {
+	t.Run("可用来源显示内置入口", func(t *testing.T) {
 		items, note := serve("ai.example.com", "https", nil)
 		if note != "" {
-			t.Fatalf("安全来源不该有说明: %q", note)
+			t.Fatalf("可用来源不该有说明: %q", note)
 		}
 		if len(items) != 1 {
 			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
@@ -737,7 +737,7 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 		}
 	})
 
-	t.Run("不安全来源不显示入口并说明原因", func(t *testing.T) {
+	t.Run("不可用来源不显示入口并说明原因", func(t *testing.T) {
 		items, note := serve("", "", nil)
 		if len(items) != 1 {
 			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
