@@ -1183,9 +1183,11 @@ func addModel(insert insertFunc, m *Model) (int64, error) {
 		m.InputModalities = []string{"text"}
 	}
 	modalitiesJSON, _ := json.Marshal(m.InputModalities)
-	id, err := insert(`INSERT INTO models (name, provider_id, display_name, default_params, input_modalities, input_price_per_1m, output_price_per_1m, cache_input_price_per_1m, offpeak_discount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.Name, m.ProviderID, m.DisplayName, m.DefaultParams, string(modalitiesJSON),
-		nilIfNilFloat64(m.InputPricePer1M), nilIfNilFloat64(m.OutputPricePer1M), nilIfNilFloat64(m.CacheInputPricePer1M), nilIfNilFloat64(m.OffpeakDiscount))
+	// phase1d: persist Hidden on insert so AddModel({Hidden:true}) is not a no-op
+	// (admin create still goes through UpdateModel; tests and sync paths use AddModel).
+	id, err := insert(`INSERT INTO models (name, provider_id, display_name, default_params, input_modalities, input_price_per_1m, output_price_per_1m, cache_input_price_per_1m, offpeak_discount, hidden)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, m.Name, m.ProviderID, m.DisplayName, m.DefaultParams, string(modalitiesJSON),
+		nilIfNilFloat64(m.InputPricePer1M), nilIfNilFloat64(m.OutputPricePer1M), nilIfNilFloat64(m.CacheInputPricePer1M), nilIfNilFloat64(m.OffpeakDiscount), m.Hidden)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return 0, ErrDuplicate

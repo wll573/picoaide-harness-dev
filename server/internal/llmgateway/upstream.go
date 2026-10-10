@@ -235,6 +235,15 @@ func loadUpstreamsDB(db *sql.DB) ([]Upstream, error) {
 				continue
 			}
 			u.Models = mergeModelNames(u.Models, synced)
+			// phase1d: provider.models JSON 仍可能列出已 hidden 的名字；merge 只追加
+			// synced，不会从 JSON 侧删掉。必须再减一次，否则「目录不可见 + 直打已知名
+			// 仍能用」——隐藏退化成只对界面生效。
+			hidden, herr := hiddenModelNames(tx, r.id)
+			if herr != nil {
+				log.Printf("gateway: skip provider %s: load hidden models: %v", u.Name, herr)
+				continue
+			}
+			u.Models = subtractModelNames(u.Models, hidden)
 			ups = append(ups, u)
 		}
 		return nil
@@ -271,6 +280,40 @@ func syncedModelNames(tx *sql.Tx, providerID int64) ([]string, error) {
 		names = append(names, n)
 	}
 	return names, rows.Err()
+}
+
+// hiddenModelNames 返回该 provider 在 models 表里标记为 hidden 的名字。
+// 用于从路由池里减去「JSON 列仍列出、但管理员已隐藏」的模型（phase1d）。
+func hiddenModelNames(tx *sql.Tx, providerID int64) (map[string]struct{}, error) {
+	rows, err := tx.Query(`SELECT name FROM models WHERE provider_id = ? AND hidden = TRUE`, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]struct{})
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out[n] = struct{}{}
+	}
+	return out, rows.Err()
+}
+
+// subtractModelNames 去掉 drop 集合中的名字，保持相对顺序。
+func subtractModelNames(names []string, drop map[string]struct{}) []string {
+	if len(drop) == 0 || len(names) == 0 {
+		return names
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		if _, hit := drop[n]; hit {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 // mergeModelNames appends b's names to a, dropping duplicates.
