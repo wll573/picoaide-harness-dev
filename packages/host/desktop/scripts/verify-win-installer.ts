@@ -89,7 +89,9 @@ function defaultOptions(): WindowsInstallerVerificationOptions {
     installerName: channelArtifactName(channel, 'nsis', {
       version: readVersion(desktopRoot), arch: 'x64', ext: 'exe',
     }),
-    applicationName: `${channel.productName}.exe`,
+    // Keep the localized display name while using the ASCII channel slug for
+    // the executable emitted by NSIS.
+    applicationName: `${/[^\x00-\x7F]/u.test(channel.productName) ? channel.slug : channel.productName}.exe`,
   }
 }
 

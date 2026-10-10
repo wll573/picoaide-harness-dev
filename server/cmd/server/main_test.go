@@ -729,15 +729,19 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 		if note != "" {
 			t.Fatalf("安全来源不该有说明: %q", note)
 		}
-		for i, want := range []string{"/updates/client/Setup.exe", "/updates/client/App.dmg", "/updates/client/App.AppImage"} {
-			if items[i].URL != want {
-				t.Errorf("%s url = %q, want %q", items[i].Name, items[i].URL, want)
-			}
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
+		}
+		if items[0].Name != "Windows" || items[0].URL != "/updates/client/Setup.exe" {
+			t.Errorf("Windows url = %q, want %q", items[0].URL, "/updates/client/Setup.exe")
 		}
 	})
 
 	t.Run("不安全来源不显示入口并说明原因", func(t *testing.T) {
-		items, note := serve("10.0.0.9", "", nil)
+		items, note := serve("", "", nil)
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
+		}
 		for _, p := range items {
 			if p.URL != "" {
 				t.Errorf("%s 不该有下载地址: %q", p.Name, p.URL)
@@ -752,14 +756,14 @@ func TestPortalDownloadsRequireSecureOrigin(t *testing.T) {
 	})
 
 	t.Run("管理员配置的自有地址仍然生效", func(t *testing.T) {
-		items, _ := serve("10.0.0.9", "", map[string]string{
+		items, _ := serve("", "", map[string]string{
 			"portal.client_download_win": "https://cdn.example.com/win.exe",
 		})
 		if items[0].URL != "https://cdn.example.com/win.exe" {
 			t.Errorf("管理员配置应优先: %q", items[0].URL)
 		}
-		if items[1].URL != "" {
-			t.Errorf("未配置的平台不该有地址: %q", items[1].URL)
+		if len(items) != 1 {
+			t.Fatalf("门户只应展示 Windows 下载入口，得到 %d 项", len(items))
 		}
 	})
 }
