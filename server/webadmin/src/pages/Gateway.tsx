@@ -28,6 +28,20 @@ interface Provider {
   protocol: string // 0043: openai(默认 chat/embeddings) | anthropic(/v1/messages)
 }
 
+interface ProviderKey {
+  id: number
+  provider_id: number
+  label: string
+  api_key: string
+  enabled: boolean
+  priority: number
+  cooldown_until?: string | null
+  failure_count: number
+  success_rate?: number | null
+  last_error_message?: string | null
+  last_error_status?: number | null
+}
+
 interface Channel {
   name: string
   base_url: string
@@ -201,6 +215,12 @@ export default function Gateway() {
   // 上游编辑(审计修复 M3):复用创建字段 + enabled 开关
   const [editProv, setEditProv] = useState<Provider | null>(null)
   const [editProvForm, setEditProvForm] = useState({ name: '', channel: '', base_url: '', api_key: '', models: '', enabled: true, protocol: '' })
+  const [keyProvider, setKeyProvider] = useState<Provider | null>(null)
+  const [providerKeys, setProviderKeys] = useState<ProviderKey[]>([])
+  const [keyLoading, setKeyLoading] = useState(false)
+  const [keyErr, setKeyErr] = useState('')
+  const [keyForm, setKeyForm] = useState({ label: '', api_key: '', priority: '0', enabled: true })
+  const [editingKeyId, setEditingKeyId] = useState<number | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -386,6 +406,48 @@ export default function Gateway() {
     } finally {
       setBusy(null)
     }
+  }
+
+
+  async function loadProviderKeys(providerId: number) {
+    setKeyLoading(true)
+    try {
+      const r = await request<{ keys?: ProviderKey[] }>(`${ADMIN_API}/providers/${providerId}/keys`)
+      setProviderKeys(r.keys ?? [])
+      setKeyErr('')
+    } catch (err: any) { setKeyErr(err.message) }
+    finally { setKeyLoading(false) }
+  }
+
+  function openKeyManager(p: Provider) {
+    setKeyProvider(p); setEditingKeyId(null); setKeyForm({ label: '', api_key: '', priority: '0', enabled: true }); loadProviderKeys(p.id)
+  }
+
+  async function saveProviderKey() {
+    if (!keyProvider || busy) return
+    if (!editingKeyId && !keyForm.api_key.trim()) { setKeyErr('新增密钥必须填写 API Key'); return }
+    setBusy(editingKeyId ? `edit-key-${editingKeyId}` : 'add-key')
+    try {
+      const body: Record<string, unknown> = { label: keyForm.label.trim(), priority: Number(keyForm.priority) || 0, enabled: keyForm.enabled }
+      if (!editingKeyId || keyForm.api_key.trim()) body.api_key = keyForm.api_key.trim()
+      await request(`${ADMIN_API}/providers/${keyProvider.id}/keys${editingKeyId ? `/${editingKeyId}` : ''}`, { method: editingKeyId ? 'PUT' : 'POST', body: JSON.stringify(body) })
+      setEditingKeyId(null); setKeyForm({ label: '', api_key: '', priority: '0', enabled: true }); await loadProviderKeys(keyProvider.id); flash('密钥已保存')
+    } catch (err: any) { setKeyErr(err.message) }
+    finally { setBusy(null) }
+  }
+
+  async function resetProviderKey(key: ProviderKey) {
+    if (!keyProvider || busy) return
+    setBusy(`reset-key-${key.id}`)
+    try { await request(`${ADMIN_API}/providers/${keyProvider.id}/keys/${key.id}/reset`, { method: 'POST' }); await loadProviderKeys(keyProvider.id); flash('冷却已重置') }
+    catch (err: any) { setKeyErr(err.message) } finally { setBusy(null) }
+  }
+
+  async function deleteProviderKey(key: ProviderKey) {
+    if (!keyProvider || busy || !window.confirm('删除该密钥?')) return
+    setBusy(`delete-key-${key.id}`)
+    try { await request(`${ADMIN_API}/providers/${keyProvider.id}/keys/${key.id}`, { method: 'DELETE' }); await loadProviderKeys(keyProvider.id); flash('密钥已删除') }
+    catch (err: any) { setKeyErr(err.message) } finally { setBusy(null) }
   }
 
   async function saveProviderEdit() {
@@ -734,7 +796,7 @@ export default function Gateway() {
                 <TableHead>渠道</TableHead>
                 <TableHead>协议</TableHead>
                 <TableHead>Base URL</TableHead>
-                <TableHead>API Key</TableHead>
+                <TableHead>密钥池</TableHead>
                 <TableHead>模型</TableHead>
                 <TableHead>启用</TableHead>
                 <TableHead className="text-right">操作</TableHead>
@@ -757,6 +819,7 @@ export default function Gateway() {
                   <TableCell>{p.protocol === 'anthropic' ? <Badge variant="outline">Anthropic</Badge> : p.protocol === 'both' ? <Badge variant="secondary">共用</Badge> : <Badge variant="secondary">OpenAI</Badge>}</TableCell>
                   <TableCell className="max-w-56 truncate font-mono text-xs">{p.base_url}</TableCell>
                   <TableCell>
+                    <Button size="sm" variant="outline" onClick={() => openKeyManager(p)}>管理密钥</Button>
                     {p.api_key ? (
                       p.api_key === '***' ? (
                         <span className="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
@@ -1247,6 +1310,80 @@ export default function Gateway() {
               <Label>启用该上游(停用后不参与模型路由,但模型仍可在本页管理)</Label>
             </div>
             <Button className="w-full" disabled={busy !== null} onClick={saveProviderEdit}>{busy === 'save-provider-edit' ? '处理中…' : '保存'}</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!keyProvider} onOpenChange={(v) => { if (!v) { setKeyProvider(null); setEditingKeyId(null); setKeyErr('') } }}>
+        <DialogContent className="max-w-3xl" data-testid="provider-keys-dialog">
+          <DialogHeader>
+            <DialogTitle>管理密钥 · {keyProvider?.name}</DialogTitle>
+            <DialogDescription>同一上游可配置多个 Key（密钥池轮换）；密钥仅显示掩码，编辑留空保留原密钥。优先级数字越小越优先。</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {keyErr && <div className="text-sm text-destructive" role="alert">{keyErr}</div>}
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>标签</TableHead>
+                  <TableHead>密钥</TableHead>
+                  <TableHead>状态</TableHead>
+                  <TableHead>冷却/失败</TableHead>
+                  <TableHead>成功率</TableHead>
+                  <TableHead className="text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {keyLoading ? (
+                  <TableRow data-testid="provider-keys-loading"><TableCell colSpan={6}>加载中…</TableCell></TableRow>
+                ) : providerKeys.map((k) => {
+                  const cooling = !!(k.cooldown_until && new Date(k.cooldown_until).getTime() > Date.now())
+                  const canReset = cooling || (k.failure_count ?? 0) > 0
+                  return (
+                    <TableRow key={k.id} data-testid={`provider-key-row-${k.id}`}>
+                      <TableCell>
+                        {k.label || '未命名'}
+                        <div className="text-xs text-muted-foreground">优先级 {k.priority}</div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs text-muted-foreground">
+                        <span className="inline-flex items-center gap-1"><Lock className="h-3 w-3" />••••••••</span>
+                      </TableCell>
+                      <TableCell>
+                        {k.enabled ? <Badge variant="secondary">启用</Badge> : <Badge variant="outline">停用</Badge>}
+                        {cooling && <Badge variant="destructive" className="ml-1">冷却中</Badge>}
+                      </TableCell>
+                      <TableCell>
+                        {cooling ? new Date(k.cooldown_until!).toLocaleString() : '—'} / {k.failure_count ?? 0}
+                      </TableCell>
+                      <TableCell>{k.success_rate == null ? '暂无数据' : `${(k.success_rate * 100).toFixed(1)}%`}</TableCell>
+                      <TableCell className="text-right space-x-1">
+                        <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => { setEditingKeyId(k.id); setKeyForm({ label: k.label || '', api_key: '', priority: String(k.priority ?? 0), enabled: k.enabled }) }}>编辑</Button>
+                        {canReset && <Button size="sm" variant="outline" disabled={busy !== null} onClick={() => resetProviderKey(k)}>{busy === `reset-key-${k.id}` ? '重置中…' : '重置冷却'}</Button>}
+                        <Button size="sm" variant="destructive" disabled={busy !== null} onClick={() => deleteProviderKey(k)}>{busy === `delete-key-${k.id}` ? '删除中…' : '删除'}</Button>
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+                {!keyLoading && providerKeys.length === 0 && (
+                  <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无密钥，可在下方添加（建议 ≥2 以启用轮换）</TableCell></TableRow>
+                )}
+              </TableBody>
+            </Table>
+            <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+              <Input placeholder="标签" aria-label="密钥标签" value={keyForm.label} onChange={(e) => setKeyForm({ ...keyForm, label: e.target.value })} />
+              <SecretInput placeholder={editingKeyId ? '留空则保留原密钥' : 'API Key'} aria-label="API Key" value={keyForm.api_key} onChange={(e) => setKeyForm({ ...keyForm, api_key: e.target.value })} />
+              <Input type="number" placeholder="优先级" aria-label="优先级" value={keyForm.priority} onChange={(e) => setKeyForm({ ...keyForm, priority: e.target.value })} />
+              <div className="flex items-center gap-2">
+                <Switch checked={keyForm.enabled} onCheckedChange={(v) => setKeyForm({ ...keyForm, enabled: v })} aria-label="启用密钥" />
+                <Label>启用</Label>
+                <Button size="sm" disabled={busy !== null} onClick={saveProviderKey}>
+                  {busy === 'add-key' || (editingKeyId && busy === `edit-key-${editingKeyId}`) ? '处理中…' : (editingKeyId ? '保存' : '添加')}
+                </Button>
+                {editingKeyId && (
+                  <Button size="sm" variant="ghost" disabled={busy !== null} onClick={() => { setEditingKeyId(null); setKeyForm({ label: '', api_key: '', priority: '0', enabled: true }) }}>取消编辑</Button>
+                )}
+              </div>
+            </div>
           </div>
         </DialogContent>
       </Dialog>

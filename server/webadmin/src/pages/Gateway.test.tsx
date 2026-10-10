@@ -820,3 +820,111 @@ describe('峰谷 weekdays 的三态（R18C-04）', () => {
     expect(String(puts[0].peak_windows)).toContain('"weekdays":[1]')
   })
 })
+
+describe('Gateway MultiKey-UI（密钥池）', () => {
+  const futureCooldown = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+
+  function keysImpl(path: string, init?: RequestInit) {
+    if (path === '/api/server/admin/providers/1/keys' && (!init?.method || init.method === 'GET')) {
+      return {
+        keys: [
+          {
+            id: 11,
+            provider_id: 1,
+            label: '主 Key',
+            api_key: '***',
+            enabled: true,
+            priority: 0,
+            cooldown_until: futureCooldown,
+            failure_count: 3,
+            success_rate: 0.5,
+          },
+          {
+            id: 12,
+            provider_id: 1,
+            label: '备 Key',
+            api_key: '***',
+            enabled: true,
+            priority: 1,
+            cooldown_until: null,
+            failure_count: 0,
+            success_rate: null,
+          },
+        ],
+      }
+    }
+    if (path === '/api/server/admin/providers/1/keys' && init?.method === 'POST') {
+      return { id: 13, provider_id: 1, label: '新 Key', api_key: '***', enabled: true, priority: 2, failure_count: 0 }
+    }
+    if (path === '/api/server/admin/providers/1/keys/11/reset' && init?.method === 'POST') {
+      return undefined
+    }
+    return baseImpl(path, init)
+  }
+
+  it('管理密钥：列出 ≥2 把 Key，展示冷却并可重置', async () => {
+    mockRequest.mockImplementation(async (path: string, init?: RequestInit) => keysImpl(path, init))
+    render(<Gateway />)
+    await waitForGatewayLoaded()
+    fireEvent.click(screen.getByRole('button', { name: '管理密钥' }))
+    const dialog = await screen.findByTestId('provider-keys-dialog')
+    expect(within(dialog).getByText('主 Key')).toBeInTheDocument()
+    expect(within(dialog).getByText('备 Key')).toBeInTheDocument()
+    expect(within(dialog).getByText('冷却中')).toBeInTheDocument()
+    expect(within(dialog).getByText('暂无数据')).toBeInTheDocument()
+    expect(within(dialog).getByText('50.0%')).toBeInTheDocument()
+    // 掩码展示，不出现明文
+    expect(dialog.textContent).not.toMatch(/sk-[a-zA-Z0-9]/)
+    fireEvent.click(within(dialog).getByRole('button', { name: '重置冷却' }))
+    await waitFor(() => {
+      expect(mockRequest.mock.calls.some(([p, init]) =>
+        p === '/api/server/admin/providers/1/keys/11/reset' && init?.method === 'POST'
+      )).toBe(true)
+    })
+  })
+
+  it('管理密钥：新增第二把以上 Key 时提交明文到 keys API，编辑留空不换密钥', async () => {
+    mockRequest.mockImplementation(async (path: string, init?: RequestInit) => keysImpl(path, init))
+    render(<Gateway />)
+    await waitForGatewayLoaded()
+    fireEvent.click(screen.getByRole('button', { name: '管理密钥' }))
+    const dialog = await screen.findByTestId('provider-keys-dialog')
+    fireEvent.change(within(dialog).getByLabelText('密钥标签'), { target: { value: '第三把' } })
+    fireEvent.change(within(dialog).getByLabelText('API Key'), { target: { value: 'sk-test-new-key' } })
+    fireEvent.change(within(dialog).getByLabelText('优先级'), { target: { value: '2' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '添加' }))
+    await waitFor(() => {
+      const post = mockRequest.mock.calls.find(([p, init]) =>
+        p === '/api/server/admin/providers/1/keys' && init?.method === 'POST'
+      )
+      expect(post).toBeTruthy()
+      const body = JSON.parse(String(post![1]?.body))
+      expect(body.api_key).toBe('sk-test-new-key')
+      expect(body.label).toBe('第三把')
+      expect(body.priority).toBe(2)
+    })
+
+    // 编辑：留空 api_key 不应带上
+    mockRequest.mockClear()
+    mockRequest.mockImplementation(async (path: string, init?: RequestInit) => {
+      if (path === '/api/server/admin/providers/1/keys/12' && init?.method === 'PUT') {
+        return { id: 12, provider_id: 1, label: '备 Key-改', api_key: '***', enabled: true, priority: 5, failure_count: 0 }
+      }
+      return keysImpl(path, init)
+    })
+    fireEvent.click(within(dialog).getAllByRole('button', { name: '编辑' })[1])
+    fireEvent.change(within(dialog).getByLabelText('密钥标签'), { target: { value: '备 Key-改' } })
+    fireEvent.change(within(dialog).getByLabelText('优先级'), { target: { value: '5' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '保存' }))
+    await waitFor(() => {
+      const put = mockRequest.mock.calls.find(([p, init]) =>
+        p === '/api/server/admin/providers/1/keys/12' && init?.method === 'PUT'
+      )
+      expect(put).toBeTruthy()
+      const body = JSON.parse(String(put![1]?.body))
+      expect(body.label).toBe('备 Key-改')
+      expect(body.priority).toBe(5)
+      expect(body).not.toHaveProperty('api_key')
+    })
+  })
+})
