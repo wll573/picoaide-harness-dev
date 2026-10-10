@@ -120,7 +120,7 @@ describe('Gateway 网关配置页', () => {
     })
     const dialog = await openDialog()
     fireEvent.change(dialog.getByPlaceholderText('如 deepseek'), { target: { value: 'ds-anthropic' } })
-    fireEvent.change(dialog.getByPlaceholderText('https://api.example.com'), { target: { value: 'https://api.deepseek.com/anthropic/v1' } })
+    fireEvent.change(dialog.getByPlaceholderText('http://api.example.com'), { target: { value: 'https://api.deepseek.com/anthropic/v1' } })
     fireEvent.change(dialog.getByPlaceholderText('sk-...'), { target: { value: 'sk-a' } })
     // 选择 Anthropic 协议
     fireEvent.click(screen.getAllByText('OpenAI 兼容(chat/completions、embeddings)')[0]!)
@@ -133,7 +133,7 @@ describe('Gateway 网关配置页', () => {
   it('提交含 sync.added 时显示"已上架 N 个模型"', async () => {
     const dialog = await openDialog()
     fireEvent.change(dialog.getByPlaceholderText('如 deepseek'), { target: { value: 'deepseek2' } })
-    fireEvent.change(dialog.getByPlaceholderText('https://api.example.com'), { target: { value: 'https://api.deepseek.com' } })
+    fireEvent.change(dialog.getByPlaceholderText('http://api.example.com'), { target: { value: 'https://api.deepseek.com' } })
     fireEvent.change(dialog.getByPlaceholderText('sk-...'), { target: { value: 'sk-x' } })
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
     expect(await screen.findByText(/已上架 2 个模型/)).toBeInTheDocument()
@@ -148,7 +148,7 @@ describe('Gateway 网关配置页', () => {
     })
     const dialog = await openDialog()
     fireEvent.change(dialog.getByPlaceholderText('如 deepseek'), { target: { value: 'deepseek2' } })
-    fireEvent.change(dialog.getByPlaceholderText('https://api.example.com'), { target: { value: 'https://api.deepseek.com' } })
+    fireEvent.change(dialog.getByPlaceholderText('http://api.example.com'), { target: { value: 'https://api.deepseek.com' } })
     fireEvent.change(dialog.getByPlaceholderText('sk-...'), { target: { value: 'sk-x' } })
     fireEvent.click(screen.getByRole('button', { name: '添加' }))
     expect(await screen.findByText(/已保存,但模型同步失败/)).toBeInTheDocument()

@@ -133,6 +133,40 @@ func TestAdminProviders(t *testing.T) {
 	}
 }
 
+func TestAdminProviderHTTPBaseURLAccepted(t *testing.T) {
+	r, db, hdr := adminTestSetup(t)
+	defer db.Close()
+
+	const baseURL = "http://127.0.0.1:18080/v1"
+	if err := validateUpstreamBaseURL(baseURL); err != nil {
+		t.Fatalf("http Base URL rejected by validator: %v", err)
+	}
+
+	w, out := adminReq(t, r, "POST", "/api/server/admin/providers",
+		`{"name":"intranet-http","base_url":"`+baseURL+`","api_key":"test-key","models":["test-model"]}`, hdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create provider with http Base URL: %d %s", w.Code, w.Body.String())
+	}
+	p, ok := out["provider"].(map[string]any)
+	if !ok || p["base_url"] != baseURL {
+		t.Fatalf("created provider base_url = %v, want %q", p["base_url"], baseURL)
+	}
+
+	// The model catalog and provider update path must preserve the same intranet URL.
+	w, _ = adminReq(t, r, "PUT", "/api/server/admin/providers/1",
+		`{"base_url":"http://127.0.0.1:18081/v1"}`, hdr)
+	if w.Code != http.StatusOK {
+		t.Fatalf("update provider to http Base URL: %d %s", w.Code, w.Body.String())
+	}
+	providers, err := serverstore.ListGatewayProviders(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(providers) != 1 || providers[0].BaseURL != "http://127.0.0.1:18081/v1" {
+		t.Fatalf("stored provider Base URL = %+v", providers)
+	}
+}
+
 func TestAdminProviderChannel(t *testing.T) {
 	r, db, hdr := adminTestSetup(t)
 	defer db.Close()

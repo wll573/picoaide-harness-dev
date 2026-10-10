@@ -1144,7 +1144,7 @@ export default function Gateway() {
               <Input
                 type="url"
                 value={provForm.base_url}
-                placeholder={provForm.channel ? channels.find((c) => c.name === provForm.channel)?.base_url ?? '' : 'https://api.example.com'}
+                placeholder={provForm.channel ? channels.find((c) => c.name === provForm.channel)?.base_url ?? '' : 'http://api.example.com'}
                 onChange={(e) => setProvForm({ ...provForm, base_url: e.target.value })}
               />
             </div>
@@ -1218,7 +1218,7 @@ export default function Gateway() {
             <div className="space-y-1">
               <Label>Base URL</Label>
               <Input type="url" value={editProvForm.base_url}
-                placeholder={editProvForm.channel ? channels.find((c) => c.name === editProvForm.channel)?.base_url ?? '' : 'https://api.example.com'}
+                placeholder={editProvForm.channel ? channels.find((c) => c.name === editProvForm.channel)?.base_url ?? '' : 'http://api.example.com'}
                 onChange={(e) => setEditProvForm({ ...editProvForm, base_url: e.target.value })} />
             </div>
             <div className="space-y-1">
