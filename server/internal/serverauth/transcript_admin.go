@@ -101,6 +101,30 @@ func (a *AdminAPI) listLLMTranscripts(c *gin.Context) {
 		WriteError(c, http.StatusBadRequest, "VALIDATION", err.Error())
 		return
 	}
+	if c.Query("group_by") == "session" {
+		page, err := serverstore.ListLLMTranscriptSessions(a.DB, filter, offset, limit)
+		if err != nil {
+			WriteError(c, http.StatusInternalServerError, "INTERNAL", "查询会话审计失败")
+			return
+		}
+		ids := make([]int64, 0, len(page.Items))
+		for _, item := range page.Items {
+			ids = append(ids, item.UserID)
+		}
+		names, namesErr := serverstore.UsernamesByIDs(a.DB, ids)
+		type sessionRow struct {
+			serverstore.LLMTranscriptSession
+			Username    string `json:"username"`
+			UserDeleted bool   `json:"user_deleted"`
+		}
+		items := make([]sessionRow, 0, len(page.Items))
+		for _, item := range page.Items {
+			name, ok := names[item.UserID]
+			items = append(items, sessionRow{item, name, namesErr == nil && !ok})
+		}
+		c.JSON(http.StatusOK, gin.H{"sessions": items, "total": page.Total})
+		return
+	}
 	page, err := serverstore.ListLLMTranscriptsFiltered(a.DB, filter, offset, limit)
 	if err != nil {
 		WriteError(c, http.StatusInternalServerError, "INTERNAL", "查询审计记录失败")

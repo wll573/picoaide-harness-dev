@@ -1250,3 +1250,71 @@ func TestUsageDayWindowIndependentOfTimezone(t *testing.T) {
 //   - TestDeptBudgetCost
 //   - TestDeptBudgetCostBatch
 //   - TestDeptBudgetMultiMembership
+
+// TestUsageAggregateUserDayMonthTokensAndRequests fixes the management query
+// contract: each user/day/month bucket reports both token directions and the
+// number of usage rows, with rows grouped before pagination at the API layer.
+func TestUsageAggregateUserDayMonthTokensAndRequests(t *testing.T) {
+	db, cleanup := newUsageDB(t)
+	defer cleanup()
+	a, err := CreateUser(db, &User{Username: "aggregate-a", Source: "local", Status: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := CreateUser(db, &User{Username: "aggregate-b", Source: "local", Status: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	insert := func(uid int64, wall string, input, output int64) {
+		t.Helper()
+		id, err := RecordUsageKind(db, uid, "m", input, output, "chat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		setCreatedAt(t, db, id, wall)
+	}
+	insert(a, "2026-08-10 09:00:00", 10, 2)
+	insert(a, "2026-08-10 10:00:00", 3, 1)
+	insert(b, "2026-08-11 09:00:00", 7, 5)
+
+	from, to := bjDate(t, "2026-08-10"), bjDate(t, "2026-08-11")
+	users, err := UsageAggregate(db, from, to, "user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(users) != 2 {
+		t.Fatalf("user buckets = %+v", users)
+	}
+	byLabel := map[string]UsageAggregateRow{}
+	for _, row := range users {
+		byLabel[row.Label] = row
+	}
+	for _, want := range []struct {
+		label                   string
+		input, output, requests int64
+	}{
+		{label: "aggregate-a", input: 13, output: 3, requests: 2},
+		{label: "aggregate-b", input: 7, output: 5, requests: 1},
+	} {
+		row, ok := byLabel[want.label]
+		if !ok || row.PromptTokens != want.input || row.CompletionTokens != want.output || row.Requests != want.requests {
+			t.Fatalf("user bucket %q = %+v, want input=%d output=%d requests=%d", want.label, row, want.input, want.output, want.requests)
+		}
+	}
+
+	days, err := UsageAggregate(db, from, to, "day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(days) != 2 || days[0].Requests != 2 || days[0].PromptTokens != 13 || days[1].Requests != 1 || days[1].CompletionTokens != 5 {
+		t.Fatalf("day buckets = %+v", days)
+	}
+
+	months, err := UsageAggregate(db, bjDate(t, "2026-08-01"), bjDate(t, "2026-09-01"), "month")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(months) != 2 || months[0].Label != "2026-08" || months[0].Requests != 3 || months[0].PromptTokens != 20 || months[0].CompletionTokens != 8 || months[1].Requests != 0 {
+		t.Fatalf("month buckets = %+v", months)
+	}
+}
