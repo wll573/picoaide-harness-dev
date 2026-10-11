@@ -14,9 +14,9 @@
 #   clientassets   客户端安装包 + CLIENT-RELEASE.json(随镜像分发;目录必须存在,可为空)
 #   channelassets  渠道内容目录(内含 <CHANNEL>/;目录必须存在,可为空)
 #
-# 构建(本地单平台;`make docker-image` 就是这条,CHANNEL 缺省 official):
-#   mkdir -p client-assets/client channels-context/official   # 空目录合法
-#   docker build --build-arg VERSION=0.4.0 --build-arg CHANNEL=official \
+# 构建(本地单平台;`make docker-image` 就是这条,CHANNEL 缺省 shenji):
+#   mkdir -p client-assets/client channels-context/shenji   # 空目录合法；内网默认 shenji
+#   docker build --build-arg VERSION=0.4.0 --build-arg CHANNEL=shenji \
 #     --build-context clientassets=./client-assets \
 #     --build-context channelassets=./channels-context \
 #     -t picoaide-harness-server:v0.4.0 .
@@ -123,11 +123,11 @@ COPY docker-compose.yml Caddyfile.internal Caddyfile.autocert Caddyfile.manual .
 ARG VERSION=dev
 RUN echo "$VERSION" > /opt/picoaide/VERSION
 
-# 本镜像所属渠道:官方镜像构建时为 official。服务端 updatecheck 据此校验清单的
+# 本镜像所属渠道:内网交付缺省 shenji；官方公开构建传 CHANNEL=official。服务端 updatecheck 据此校验清单的
 # channel_id(PICOAI_CHANNEL 可在部署 .env 覆盖为品牌渠道)。
 # 三者必须自洽:渠道、PICOAI_UPDATE_ENDPOINT 指向的目录、清单里的 channel_id ——
 # 不一致会被 updatecheck 判为"检查不可用"(fail-loud,不静默跨渠道升级)。
-ARG CHANNEL=official
+ARG CHANNEL=shenji
 RUN echo "$CHANNEL" > /opt/picoaide/CHANNEL
 ENV PICOAI_CHANNEL=$CHANNEL
 
@@ -210,7 +210,7 @@ ENV PICOAI_SKILL_SEED_DIR=/opt/picoaide/skills
 # 因此改渠道内容 = 改配置 → 重新构建镜像,内容始终可审计、可追溯。
 # 本地构建不带该上下文时源目录为空 → 渠道目录缺文件,服务端回落内置文案
 # (channel.Load 的兜底),不影响启动。
-# 渠道由构建参数选定(CI 传 --build-arg CHANNEL=<id>;本地默认 official),
+# 渠道由构建参数选定(CI 传 --build-arg CHANNEL=<id>;本地默认 shenji),
 # 构建上下文 channels-context/<id>/ 由 CI 从私有渠道仓检出后暂存。
 # 渠道化因此发生在**构建期**:同一个 Dockerfile,参数不同 → 不同渠道的镜像。
 COPY --from=channelassets ${CHANNEL}/ /opt/picoaide/channel/

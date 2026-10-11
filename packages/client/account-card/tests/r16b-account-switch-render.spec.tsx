@@ -54,15 +54,26 @@ function snapshot(overrides: Record<string, unknown> = {}): Record<string, unkno
     yesterday_cost: 0,
     total_usage: 0,
     total_cost: 0,
+    input_tokens: 0,
+    output_tokens: 0,
     ...overrides,
   }
 }
 
-/** `/api/pico/account/usage` 的 200：`data` 是快照，`identity` 是**宿主盖的章**。 */
-function usageReply(balance: number, owner: string, extra: Record<string, unknown> = {}): Reply {
+/** `/api/pico/account/usage` 的 200：`data` 是快照，`identity` 是**宿主盖的章**。
+ *
+ *  第一个参数是这份快照的**总 Token** —— 内网交付口径下界面主视觉是 Token 用量
+ *  （金额/余额字段仍在下发与解析，只是不再渲染），所以这条回归要钉的量是它。 */
+function usageReply(totalTokens: number, owner: string, extra: Record<string, unknown> = {}): Reply {
   return {
     body: {
-      data: snapshot({ balance_money: balance, monthly_cost: 3.5, ...extra }),
+      data: snapshot({
+        total_usage: totalTokens,
+        input_tokens: Math.floor(totalTokens * 0.9),
+        output_tokens: Math.ceil(totalTokens * 0.1),
+        monthly_cost: 3.5,
+        ...extra,
+      }),
       fetchedAt: 1,
       state: 'idle',
       error: null,
@@ -142,25 +153,25 @@ async function renderCard(): Promise<void> {
   await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 0) }) })
 }
 
-describe('R16B-01：余额只在取它的会话身份下渲染', () => {
-  it('① 挂载时已经是新账号、但拿到的是上一个账号盖过章的快照 ⇒ 不渲染该金额', async () => {
+describe('R16B-01：用量只在取它的会话身份下渲染', () => {
+  it('① 挂载时已经是新账号、但拿到的是上一个账号盖过章的快照 ⇒ 不渲染该用量', async () => {
     // 服务端已经把身份切到 bob，而这一发 usage 是切换**之前**生成的（章是 alice）。
     routes.set(`GET ${AUTH_PATH}`, authReply('bob'))
     routes.set(`GET ${USAGE_PATH}`, usageReply(11, 'alice'))
 
     await renderCard()
 
-    // 行内不得出现上一个账号的金额；停在**不可信占位**（`—` + 「余额获取失败」，
-    // 与令牌失效 P1-5 同一套词汇：余额属于计费口径，宁可留白不可展示错数）。
-    expect(rowButton().textContent, '换号窗口内渲染了上一个账号的余额').not.toContain('11.00')
+    // 行内不得出现上一个账号的用量；停在**不可信占位**（`—` + 「用量获取失败」，
+    // 与令牌失效 P1-5 同一套词汇：用量属于计费口径，宁可留白不可展示错数）。
+    expect(rowButton().textContent, '换号窗口内渲染了上一个账号的用量').not.toContain('11')
     expect(rowButton().textContent).toContain('—')
-    expect(rowButton().getAttribute('aria-label')).toContain('余额获取失败')
+    expect(rowButton().getAttribute('aria-label')).toContain('用量获取失败')
     expect(dialog()).toBeNull()
 
     // 浮层里刷新按钮必须禁用（这份数字不属于当前账号，没有可刷的对象）。
     await press(rowButton())
     expect(refreshButton().disabled, '身份不符期间刷新按钮必须禁用').toBe(true)
-    expect(dialog()!.textContent).not.toContain('¥11.00')
+    expect(dialog()!.textContent).not.toContain('11')
   })
 
   it('② 轮询观察到换号 ⇒ 丢弃这一发；下一拍在新身份下重取才渲染', async () => {
@@ -168,32 +179,33 @@ describe('R16B-01：余额只在取它的会话身份下渲染', () => {
     try {
       await act(async () => { root.render(<AccountCard wide />) })
       await act(async () => { await vi.advanceTimersByTimeAsync(0) })
-      expect(rowButton().textContent).toContain('¥11.00')
+      expect(rowButton().textContent).toContain('11')
 
-      // 第二拍：身份变成 bob，但 usage 回包仍带着 alice 的章与金额（宿主未修 /
+      // 第二拍：身份变成 bob，但 usage 回包仍带着 alice 的章与用量（宿主未修 /
       // 响应生成于切换之前 —— 这一发无论来自哪条路径都不可信）。
       routes.set(`GET ${AUTH_PATH}`, authReply('bob'))
       routes.set(`GET ${USAGE_PATH}`, usageReply(11, 'alice'))
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
-      expect(rowButton().textContent, '换号那一拍渲染了上一个账号的余额').not.toContain('11.00')
+      expect(rowButton().textContent, '换号那一拍渲染了上一个账号的用量').not.toContain('11')
 
-      // 第三拍：bob 自己的余额（章也对上了）⇒ 正常渲染。
+      // 第三拍：bob 自己的用量（章也对上了）⇒ 正常渲染。
       routes.set(`GET ${USAGE_PATH}`, usageReply(22, 'bob'))
       await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
-      expect(rowButton().textContent).toContain('¥22.00')
+      expect(rowButton().textContent).toContain('22')
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('③ 身份不符时用量行（metaParts）也必须一起作废，不能只作废金额', async () => {
+  it('③ 身份不符时「本月/今日」那行也必须一起作废，不能只作废主视觉', async () => {
     routes.set(`GET ${AUTH_PATH}`, authReply('bob'))
-    // 章是 alice ⇒ 整份不可信；金额 0（不会被 ¥ 断言抓到），用量 3.5 才是这条的判据。
-    routes.set(`GET ${USAGE_PATH}`, usageReply(0, 'alice'))
+    // 章是 alice ⇒ 整份不可信；主视觉用 0（不会被 Token 断言抓到），
+    // 而 monthly_usage 才是这条用例的判据 —— 它必须一起消失。
+    routes.set(`GET ${USAGE_PATH}`, usageReply(0, 'alice', { monthly_usage: 7_700, today_usage: 350 }))
 
     await renderCard()
     await press(rowButton())
-    expect(dialog()!.textContent, '不可信快照的用量行仍在渲染').not.toContain('3.50')
-    expect(dialog()!.textContent).not.toContain('¥0.00')
+    expect(dialog()!.textContent, '不可信快照的用量行仍在渲染').not.toContain('7,700')
+    expect(dialog()!.textContent).not.toContain('3.50')
   })
 })

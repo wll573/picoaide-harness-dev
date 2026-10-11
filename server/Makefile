@@ -5,7 +5,7 @@ IMAGE ?= ghcr.io/picoaide/picoaide-harness-server
 TAG ?= latest
 # 渠道(镜像内容的一部分):Dockerfile 的 channelassets 上下文取
 # channels-context/<CHANNEL>/(CI 从私有渠道仓检出;本地为空目录 = 不带渠道内容)。
-CHANNEL ?= official
+CHANNEL ?= shenji
 # 注入镜像内 --version 的版本号(默认取 git describe;可显式覆盖 VERSION=0.4.0)
 VERSION ?= $(shell git describe --tags --always 2>/dev/null | sed 's/^v//')
 
@@ -113,7 +113,7 @@ webadmin:
 
 # 服务端 Docker 镜像(计划 Task 4.6):本地构建单平台,带版本注入(--version 输出 VERSION)
 # 用法:make docker-image 或 make docker-image IMAGE=ghcr.io/picoaide/picoaide-harness-server TAG=v0.4.0
-#      CHANNEL=<渠道 id>(缺省 official;渠道内容取 channels-context/<id>/)
+#      CHANNEL=<渠道 id>(缺省 shenji;渠道内容取 channels-context/<id>/)
 #
 # **两个命名构建上下文是必需的**(2026-09-23 审计 K-05):Dockerfile 里
 # `COPY --from=clientassets …`(客户端安装包随镜像分发)与

@@ -83,7 +83,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
         <div className="mb-6 text-center">
           {logo}
           <h1 className="text-[22px] font-bold tracking-tight text-foreground">{brand?.display_name || NEUTRAL_ADMIN_TITLE}</h1>
-          <p className="mt-1.5 text-[13px] text-muted-foreground">Enterprise AI Gateway · Admin Console</p>
+          <p className="mt-1.5 text-[13px] text-muted-foreground">{brand?.tagline || '管理后台'}</p>
           {step === 'password' ? (
             <p className="mt-1 flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
               <KeyRound className="h-3 w-3" />

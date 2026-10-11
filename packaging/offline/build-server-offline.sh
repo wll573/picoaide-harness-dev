@@ -106,7 +106,7 @@ if command -v docker >/dev/null && [[ "${BUILD_IMAGE:-0}" == 1 ]]; then
     exit 1
   }
   SERVER_VERSION=${VERSION:-offline}
-  CHANNEL=${CHANNEL:-official}
+  CHANNEL=${CHANNEL:-shenji}
   CLIENT_VERSION=${CLIENT_VERSION:-$SERVER_VERSION}
   IMAGE_TAG=${TAG:-$SERVER_VERSION}
   if docker image inspect "picoaide-harness-server:$IMAGE_TAG" >/dev/null 2>&1; then

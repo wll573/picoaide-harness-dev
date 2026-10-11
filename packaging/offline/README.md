@@ -106,7 +106,7 @@ Windows 构建产生的 `*Setup*.exe` 需要通过受控介质带到 Ubuntu 构�
 
 `prepare-windows-toolchain.ps1` 同时下载 Node 官方 `SHASUMS256.txt`，在生成工具链包前校验 Node 压缩包；工具链包只接受空的 `OutputRoot`，避免把旧文件或旧校验清单混入新介质。`build-windows.ps1` 和缓存恢复脚本会检查外部 `tar.exe`、Corepack 和 Yarn/PNPM 命令的退出码。内网 Windows 构建会先离线恢复 Yarn/PNPM 依赖、构建上游 Harness 和 workspace，再执行原生 NSIS 打包及安装包校验。
 
-如需内网 Logo/品牌配置，在隔离前先把私有渠道构建上下文一并导入；构建时设置 `CHANNEL=<渠道ID>` 和 `CHANNEL_CONTEXT=/path/to/channels-context`。未传私有渠道资产时，镜像使用通用回退内容。
+内网交付默认 `CHANNEL=shenji`（`build-server-offline.sh`）：注入 `channels/shenji` + `brands/project` 神机素材。隔离前请把私有渠道构建上下文一并导入，并设置 `CHANNEL_CONTEXT=/path/to/channels-context`（或显式 `CHANNEL=shenji`）。未传私有渠道资产时，镜像使用中性回退内容（不含厂商品牌）。
 
 `prepare-docker-images.sh` 应在独立的联网构建机/专用 Docker daemon 上运行；它会拉取固定 tag 的多架构基础镜像并导出 amd64 内容。不要在承载现有业务容器的 Docker daemon 上准备基础镜像包。
 

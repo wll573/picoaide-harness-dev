@@ -23,6 +23,8 @@ const VALID: UsagePayload = {
   yesterday_cost: 0.8,
   total_usage: 500_000,
   total_cost: 40.1,
+  input_tokens: 460_000,
+  output_tokens: 40_000,
 }
 
 describe('usage contract', () => {

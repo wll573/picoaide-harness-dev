@@ -124,6 +124,12 @@ export default function App() {
   const channel = useChannel()
   const sidebarName = adminSiteName(channel) || NEUTRAL_ADMIN_TITLE
   const sidebarLogo = adminLogoURL(channel)
+  // 标签页标题跟随渠道显示名（神机注入后为「神机 · 管理后台」）。
+  useEffect(() => {
+    const prev = document.title
+    document.title = sidebarName === NEUTRAL_ADMIN_TITLE ? NEUTRAL_ADMIN_TITLE : `${sidebarName} · 管理后台`
+    return () => { document.title = prev }
+  }, [sidebarName])
   // 移动端侧栏抽屉开关(< lg 断点;桌面 lg 固定展开)
   const [mobileNav, setMobileNav] = useState(false)
   // 0057 密码/MFA 自助管理
