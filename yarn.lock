@@ -2650,6 +2650,34 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@deepseek-ai/dsh-llm-deepseek@patch:@deepseek-ai/dsh-llm-deepseek@npm%3A0.2.0-rc.2#./patches/dsh-llm-deepseek@0.2.0-rc.2.patch::locator=picoaide-harness%40workspace%3A.":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-llm-deepseek@patch:@deepseek-ai/dsh-llm-deepseek@npm%3A0.2.0-rc.2#./patches/dsh-llm-deepseek@0.2.0-rc.2.patch::version=0.2.0-rc.2&hash=db8156&locator=picoaide-harness%40workspace%3A."
+  dependencies:
+    "@deepseek-ai/cosmokit": "npm:~1.8.5"
+    "@deepseek-ai/dsh-brand": "npm:0.2.0-rc.2"
+    "@deepseek-ai/dsh-util-values": "npm:0.2.0-rc.2"
+    "@deepseek-ai/schemastery": "npm:~3.18.4"
+    eventsource-parser: "npm:^3.1.0"
+  peerDependencies:
+    "@deepseek-ai/cordis": ~4.0.4
+    "@deepseek-ai/cordis-plugin-loader": ~1.0.5
+    "@deepseek-ai/dsh-anonymous-user-id": 0.2.0-rc.2
+    "@deepseek-ai/dsh-atomic-write": 0.2.0-rc.2
+    "@deepseek-ai/dsh-attachment": 0.2.0-rc.2
+    "@deepseek-ai/dsh-deepseek-llm-api-extensions": 0.2.0-rc.2
+    "@deepseek-ai/dsh-fs": 0.2.0-rc.2
+    "@deepseek-ai/dsh-home-paths": 0.2.0-rc.2
+    "@deepseek-ai/dsh-launch-environment": 0.2.0-rc.2
+    "@deepseek-ai/dsh-llm": 0.2.0-rc.2
+    "@deepseek-ai/dsh-timeout": 0.2.0-rc.2
+  peerDependenciesMeta:
+    "@deepseek-ai/cordis-plugin-loader":
+      optional: true
+  checksum: 10c0/676b2e80e01debc7a9c9c09c5dc9781d5eb6008c84da35314347ef4472f4e4e0bcb4413ae9d06dcb5420b19a0714aa1cc3e2359e5f7ce0991538766cb821d16d
+  languageName: node
+  linkType: hard
+
 "@deepseek-ai/dsh-llm-pi-ai@npm:0.2.0-rc.2":
   version: 0.2.0-rc.2
   resolution: "@deepseek-ai/dsh-llm-pi-ai@npm:0.2.0-rc.2"
@@ -4036,6 +4064,15 @@ __metadata:
   peerDependencies:
     "@deepseek-ai/cordis": ~4.0.4
   checksum: 10c0/48e4b534c935108569cc02081e77f9a9807e83e3a4e139520bca62e77cd8fa6e89e6fc8bbcb953c891307c7812dc6dc691a2e05219abce9122c1eb9390f331df
+  languageName: node
+  linkType: hard
+
+"@deepseek-ai/dsh-timeout@patch:@deepseek-ai/dsh-timeout@npm%3A0.2.0-rc.2#./patches/dsh-timeout@0.2.0-rc.2.patch::locator=picoaide-harness%40workspace%3A.":
+  version: 0.2.0-rc.2
+  resolution: "@deepseek-ai/dsh-timeout@patch:@deepseek-ai/dsh-timeout@npm%3A0.2.0-rc.2#./patches/dsh-timeout@0.2.0-rc.2.patch::version=0.2.0-rc.2&hash=936d29&locator=picoaide-harness%40workspace%3A."
+  peerDependencies:
+    "@deepseek-ai/cordis": ~4.0.4
+  checksum: 10c0/3aeaeea3b73816837f2f16d4f1379dc0cada89c156525edd8440f7c6babfa38476e9f63864ad33bb6067ff29f3472c3aec33d8cf84942bd7357a33b136476e5d
   languageName: node
   linkType: hard
 

@@ -20,6 +20,22 @@ import (
 	"time"
 )
 
+// chatContinueMode extracts ChatContinue fault-injection markers from user text.
+// Markers (substring match, case-sensitive):
+//
+//	CHATCONTINUE:HANG  — emit a few SSE chunks then hang (no [DONE]/ never closes)
+//	CHATCONTINUE:ABORT — emit a few SSE chunks then abruptly close the connection
+//	CHATCONTINUE:ERROR — emit a few SSE chunks then an SSE error event and stop
+//	CHATCONTINUE:SLOW  — emit chunks with a long per-chunk delay (for idle tests)
+func chatContinueMode(text string) string {
+	for _, mode := range []string{"HANG", "ABORT", "ERROR", "SLOW"} {
+		if strings.Contains(text, "CHATCONTINUE:"+mode) {
+			return mode
+		}
+	}
+	return ""
+}
+
 type chatReq struct {
 	Model    string `json:"model"`
 	Stream   bool   `json:"stream"`
@@ -139,6 +155,12 @@ func main() {
 				fmt.Fprint(w, "data: [DONE]\n\n")
 				return
 			}
+			mode := chatContinueMode(last)
+			sleepEvery := 5 * time.Millisecond
+			if mode == "SLOW" {
+				sleepEvery = 2 * time.Second
+			}
+			emitted := 0
 			for _, ch := range content {
 				chunk := map[string]any{
 					"id": "mock-1", "object": "chat.completion.chunk", "model": req.Model,
@@ -149,7 +171,29 @@ func main() {
 				if flusher != nil {
 					flusher.Flush()
 				}
-				time.Sleep(5 * time.Millisecond)
+				emitted++
+				// After a few chunks, inject ChatContinue faults.
+				if emitted == 3 {
+					switch mode {
+					case "HANG":
+						select {} // never finishes — client idle watchdog must end the turn
+					case "ABORT":
+						if hj, ok := w.(http.Hijacker); ok {
+							if conn, _, err := hj.Hijack(); err == nil {
+								conn.Close()
+								return
+							}
+						}
+						return
+					case "ERROR":
+						fmt.Fprint(w, "data: {\"error\":{\"message\":\"mock ChatContinue mid-stream error\",\"type\":\"server_error\"}}\n\n")
+						if flusher != nil {
+							flusher.Flush()
+						}
+						return
+					}
+				}
+				time.Sleep(sleepEvery)
 			}
 			usage := map[string]any{
 				"id": "mock-1", "object": "chat.completion.chunk", "model": req.Model,
@@ -233,9 +277,13 @@ func main() {
 	// real citations. Also verifies the proxied key header reached us.
 	http.HandleFunc("/v1/messages", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Model  string `json:"model"`
-			Stream bool   `json:"stream"`
-			Tools  []struct {
+			Model    string `json:"model"`
+			Stream   bool   `json:"stream"`
+			Messages []struct {
+				Role    string          `json:"role"`
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+			Tools []struct {
 				Type string `json:"type"`
 			} `json:"tools"`
 		}
@@ -243,6 +291,29 @@ func main() {
 			http.Error(w, `{"error":{"message":"bad request"}}`, 400)
 			return
 		}
+		lastUser := ""
+		for _, m := range req.Messages {
+			if m.Role != "user" {
+				continue
+			}
+			var asString string
+			if json.Unmarshal(m.Content, &asString) == nil {
+				lastUser = asString
+				continue
+			}
+			var blocks []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(m.Content, &blocks) == nil {
+				for _, b := range blocks {
+					if b.Type == "text" {
+						lastUser += b.Text
+					}
+				}
+			}
+		}
+		msgMode := chatContinueMode(lastUser)
 		proxiedKey := r.Header.Get("x-api-key")
 		if proxiedKey == "" {
 			proxiedKey = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
@@ -259,18 +330,42 @@ func main() {
 			w.Header().Set("Cache-Control", "no-cache")
 			w.WriteHeader(200)
 			flusher, _ := w.(http.Flusher)
+			flush := func() {
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
 			// SSE events must be separated by a blank line or EventSource parsers
 			// coalesce the whole body into one frame (DeepSeek Messages then
 			// throws MALFORMED_RESPONSE on JSON.parse of concatenated data).
 			fmt.Fprintf(w, "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_mock\",\"model\":%q,\"usage\":{\"input_tokens\":%d,\"output_tokens\":0},\"stop_reason\":null}}\n\n", req.Model, usageIn)
+			flush()
 			fmt.Fprint(w, "event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n")
+			flush()
 			fmt.Fprintf(w, "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":%q}}\n\n", text)
+			flush()
+			switch msgMode {
+			case "HANG":
+				select {}
+			case "ABORT":
+				if hj, ok := w.(http.Hijacker); ok {
+					if conn, _, err := hj.Hijack(); err == nil {
+						conn.Close()
+						return
+					}
+				}
+				return
+			case "ERROR":
+				fmt.Fprint(w, "event: error\ndata: {\"type\":\"error\",\"error\":{\"type\":\"server_error\",\"message\":\"mock ChatContinue mid-stream error\"}}\n\n")
+				flush()
+				return
+			case "SLOW":
+				time.Sleep(2 * time.Second)
+			}
 			fmt.Fprint(w, "event: content_block_stop\ndata: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
 			fmt.Fprintf(w, "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":%d}}\n\n", usageOut)
 			fmt.Fprint(w, "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
+			flush()
 			return
 		}
 		resp := map[string]any{

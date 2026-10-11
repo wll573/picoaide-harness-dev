@@ -1,0 +1,90 @@
+diff --git a/lib/index.js b/lib/index.js
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -75,7 +75,13 @@
+ * Create a rearmable idle watchdog for an async iterator. The timer exists only
+ * while {@link IdleWatchdog.next} is outstanding, so consumer think time does
+ * not count as provider idle time. The returned signal is stable for the whole
+-* call and only notifies; the iterator must observe it to terminate its work.
++* call and only notifies; the iterator must observe it to release the resources
++* of a demand the deadline abandoned.
++*
++* Desktop/神机 patch (ChatContinue): race each demand against the idle deadline so
++* a transport that ignores abort (undici in-flight body read) cannot leave the
++* agent `running` forever. Ported from DeepSeek Harmony
++* `dbb150ff0` / latest idleWatchdog (pin 0.2.0-rc.2 → Harmony 0.2.1-alpha.2).
+ *
+ * @param upstream - caller cancellation fused into the stable signal.
+ * @param timeoutMs - positive finite idle interval in milliseconds.
+@@ -86,13 +92,17 @@
+ 	assertTimerDelay(timeoutMs, "idleWatchdog timeoutMs");
+ 	const timeout = new AbortController();
+ 	const signal = upstream === void 0 ? timeout.signal : AbortSignal.any([upstream, timeout.signal]);
++	// Deadline owns the outstanding demand. A transport can leave an aborted
++	// read pending forever; waiting for the iterator to observe the signal
++	// would leave the caller waiting past its own deadline.
++	const reason = new TimeoutReason(code, timeoutMs);
+ 	let timer;
+ 	let outstanding = false;
+ 	let disposed = false;
+ 	const arm = () => {
+ 		if (timer !== void 0) clearTimeout(timer);
+ 		timer = setTimeout(() => {
+-			timeout.abort(new TimeoutReason(code, timeoutMs));
++			timeout.abort(reason);
+ 		}, timeoutMs);
+ 	};
+ 	return {
+@@ -102,8 +112,22 @@
+ 			if (outstanding) throw new Error("idleWatchdog next is already outstanding");
+ 			outstanding = true;
+ 			arm();
++			let rejectExpired;
++			const expired = new Promise((_resolve, reject) => {
++				rejectExpired = reject;
++			});
++			const onAbort = () => {
++				rejectExpired(reason);
++			};
++			timeout.signal.addEventListener("abort", onAbort, { once: true });
+ 			try {
+-				return await iterator.next();
++				// Per-demand race: do not keep a lifetime expired promise (retains raced values).
++				return await Promise.race([
++					iterator.next().finally(() => {
++						timeout.signal.removeEventListener("abort", onAbort);
++					}),
++					expired
++				]);
+ 			} finally {
+ 				clearTimeout(timer);
+ 				timer = void 0;
+diff --git a/lib/types/index.d.ts b/lib/types/index.d.ts
+--- a/lib/types/index.d.ts
++++ b/lib/types/index.d.ts
+@@ -45,9 +45,14 @@
+     /** Stable signal aborted by upstream cancellation or this watchdog's timeout. */
+     readonly signal: AbortSignal;
+     /**
+-     * Await one iterator demand while the idle timer is armed.
++     * Await one iterator demand while the idle timer is armed. The deadline
++     * settles the demand even when the awaited work ignores its abort signal.
+      * @param iterator - iterator whose next value represents provider progress.
+      * @returns the iterator's next result.
++     * @throws The {@link TimeoutReason} of this watchdog when the idle interval
++     *   elapses first. The abandoned demand stays the caller's to release through
++     *   {@link IdleWatchdog.signal}; an async generator queues its own return
++     *   behind that demand, so callers must not await it.
+      */
+     next<T>(iterator: AsyncIterator<T>): Promise<IteratorResult<T>>;
+     /** Rearm an outstanding demand after transport activity that yields no iterator value; otherwise a no-op. */
+@@ -70,7 +75,8 @@
+  * Create a rearmable idle watchdog for an async iterator. The timer exists only
+  * while {@link IdleWatchdog.next} is outstanding, so consumer think time does
+  * not count as provider idle time. The returned signal is stable for the whole
+- * call and only notifies; the iterator must observe it to terminate its work.
++ * call and only notifies; the iterator must observe it to release the resources
++ * of a demand the deadline abandoned.
+  *
+  * @param upstream - caller cancellation fused into the stable signal.
+  * @param timeoutMs - positive finite idle interval in milliseconds.
