@@ -3,6 +3,8 @@ package serverstore
 import (
 	"strings"
 	"testing"
+
+	"github.com/picoaide/picoaide/internal/util"
 )
 
 func TestMigrateLLMTranscriptPrivacyUpgradesLegacyPlaintext(t *testing.T) {
@@ -37,9 +39,12 @@ func TestMigrateLLMTranscriptPrivacyUpgradesLegacyPlaintext(t *testing.T) {
 	if strings.Contains(row.RequestBody, "private") || !strings.Contains(row.RequestBody, "hello") {
 		t.Fatalf("request after migration = %s", row.RequestBody)
 	}
-	response, err := ReadLLMTranscriptResponse(db, id)
+	response, decryptable, reason, err := ReadLLMTranscriptResponse(db, id)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !decryptable || reason != "" {
+		t.Fatalf("response status decryptable=%v reason=%q", decryptable, reason)
 	}
 	if strings.Contains(string(response), "reasoning_content") || strings.Contains(string(response), "private") || !strings.Contains(string(response), "answer") {
 		t.Fatalf("response after migration = %s", response)
@@ -48,8 +53,128 @@ func TestMigrateLLMTranscriptPrivacyUpgradesLegacyPlaintext(t *testing.T) {
 	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(stored, "enc:v1:") {
-		t.Fatalf("request remains plaintext: %s", stored)
+	if strings.HasPrefix(stored, "enc:v1:") {
+		t.Fatalf("migration must not re-encrypt; got %s", stored)
+	}
+	if !strings.Contains(stored, "hello") {
+		t.Fatalf("migrated request missing hello: %s", stored)
+	}
+}
+
+func TestMigrateLLMTranscriptPrivacyDecryptsLegacyCiphertextToPlain(t *testing.T) {
+	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
+	db, cleanup := NewTestDB(t)
+	t.Cleanup(cleanup)
+	userID, err := CreateUser(db, &User{Username: "legacy-enc-user", Source: "local", Status: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := CreateLLMTranscript(db, userID, "/v1/chat/completions", "m", []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encReq, err := encryptTranscriptPayload([]byte(`{"messages":[{"role":"user","content":"legacy-secret"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE llm_transcripts SET request_body_enc=? WHERE id=?`, encReq, id); err != nil {
+		t.Fatal(err)
+	}
+	encChunk, err := encryptTranscriptPayload([]byte(`data: {"choices":[{"delta":{"content":"legacy-answer"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AppendLLMTranscriptChunk(db, id, 0, []byte("placeholder")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE llm_transcript_chunks SET payload_enc=? WHERE transcript_id=?`, encChunk, id); err != nil {
+		t.Fatal(err)
+	}
+	changed, err := MigrateLLMTranscriptPrivacy(db)
+	if err != nil || changed != 1 {
+		t.Fatalf("migration changed=%d err=%v", changed, err)
+	}
+	var storedReq, storedChunk string
+	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&storedReq); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT payload_enc FROM llm_transcript_chunks WHERE transcript_id=?`, id).Scan(&storedChunk); err != nil {
+		t.Fatal(err)
+	}
+	if strings.HasPrefix(storedReq, util.EncPrefix) || !strings.Contains(storedReq, "legacy-secret") {
+		t.Fatalf("request should be plaintext after migration: %s", storedReq)
+	}
+	if strings.HasPrefix(storedChunk, util.EncPrefix) || !strings.Contains(storedChunk, "legacy-answer") {
+		t.Fatalf("chunk should be plaintext after migration: %s", storedChunk)
+	}
+}
+
+func TestLegacyEncryptedTranscriptReadsAndDamagedStays(t *testing.T) {
+	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
+	db, cleanup := NewTestDB(t)
+	t.Cleanup(cleanup)
+	userID, err := CreateUser(db, &User{Username: "legacy-read-user", Source: "local", Status: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _, err := CreateLLMTranscript(db, userID, "/v1/chat/completions", "m", []byte(`{"model":"m"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encReq, err := encryptTranscriptPayload([]byte(`{"messages":[{"role":"user","content":"still-readable"}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE llm_transcripts SET request_body_enc=? WHERE id=?`, encReq, id); err != nil {
+		t.Fatal(err)
+	}
+	row, err := GetLLMTranscript(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.RequestDecryptable || !strings.Contains(row.RequestBody, "still-readable") {
+		t.Fatalf("legacy enc row should decrypt: %+v", row)
+	}
+
+	// Plant undecryptable ciphertext; must not overwrite / delete.
+	damaged := "enc:v1:not-valid-ciphertext===="
+	if _, err := db.Exec(`UPDATE llm_transcripts SET request_body_enc=? WHERE id=?`, damaged, id); err != nil {
+		t.Fatal(err)
+	}
+	row, err = GetLLMTranscript(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.RequestDecryptable || row.RequestDecryptReason == "" {
+		t.Fatalf("damaged row should be marked: decryptable=%v reason=%q body=%q", row.RequestDecryptable, row.RequestDecryptReason, row.RequestBody)
+	}
+	var still string
+	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&still); err != nil {
+		t.Fatal(err)
+	}
+	if still != damaged {
+		t.Fatalf("damaged ciphertext must be preserved, got %q", still)
+	}
+
+	if err := AppendLLMTranscriptChunk(db, id, 0, []byte("placeholder")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE llm_transcript_chunks SET payload_enc=? WHERE transcript_id=?`, damaged, id); err != nil {
+		t.Fatal(err)
+	}
+	body, ok, reason, err := ReadLLMTranscriptResponse(db, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || reason == "" {
+		t.Fatalf("damaged chunk should mark response: ok=%v reason=%q body=%q", ok, reason, body)
+	}
+	var chunkStill string
+	if err := db.QueryRow(`SELECT payload_enc FROM llm_transcript_chunks WHERE transcript_id=?`, id).Scan(&chunkStill); err != nil {
+		t.Fatal(err)
+	}
+	if chunkStill != damaged {
+		t.Fatalf("damaged chunk ciphertext must be preserved, got %q", chunkStill)
 	}
 }
 

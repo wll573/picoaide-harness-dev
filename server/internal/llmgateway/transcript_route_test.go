@@ -44,7 +44,7 @@ func TestTranscriptMiddlewareAuditsNonStreamingRoute(t *testing.T) {
 	if row.Provider != "r3p" || row.InputTokens != 1000000 || row.OutputTokens <= 0 || row.TotalTokens != row.InputTokens+row.OutputTokens {
 		t.Fatalf("transcript usage metadata = provider=%q input=%d output=%d total=%d", row.Provider, row.InputTokens, row.OutputTokens, row.TotalTokens)
 	}
-	response, err := serverstore.ReadLLMTranscriptResponse(db, row.ID)
+	response, _, _, err := serverstore.ReadLLMTranscriptResponse(db, row.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestTranscriptMiddlewareAuditsStreamingRouteInOrder(t *testing.T) {
 	if page.Total != 1 || len(page.Items) != 1 {
 		t.Fatalf("transcripts = %+v", page)
 	}
-	response, err := serverstore.ReadLLMTranscriptResponse(db, page.Items[0].ID)
+	response, _, _, err := serverstore.ReadLLMTranscriptResponse(db, page.Items[0].ID)
 	if err != nil {
 		t.Fatal(err)
 	}

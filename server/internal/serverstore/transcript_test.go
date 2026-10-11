@@ -46,27 +46,33 @@ func TestLLMTranscriptRoundTripAndPagination(t *testing.T) {
 	if row.RequestBody != string(SanitizeLLMTranscriptRequest(request)) || row.ResponseBytes != int64(len(response)) || row.ResponseSHA != hex.EncodeToString(sum[:]) {
 		t.Fatalf("transcript metadata = %+v", row)
 	}
-	gotResponse, err := ReadLLMTranscriptResponse(db, id)
+	gotResponse, decryptable, reason, err := ReadLLMTranscriptResponse(db, id)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !decryptable || reason != "" {
+		t.Fatalf("response decryptable=%v reason=%q", decryptable, reason)
 	}
 	if !bytes.Equal(gotResponse, response) {
 		t.Fatalf("response = %q, want %q", gotResponse, response)
 	}
+	if !row.RequestDecryptable || row.RequestDecryptReason != "" {
+		t.Fatalf("request decryptable=%v reason=%q", row.RequestDecryptable, row.RequestDecryptReason)
+	}
 
-	var encryptedRequest string
-	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&encryptedRequest); err != nil {
+	var storedRequest string
+	if err := db.QueryRow(`SELECT request_body_enc FROM llm_transcripts WHERE id=?`, id).Scan(&storedRequest); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(encryptedRequest, util.EncPrefix) || strings.Contains(encryptedRequest, "hello") {
-		t.Fatal("请求正文未按 AES-GCM 加密落库")
+	if strings.HasPrefix(storedRequest, util.EncPrefix) || !strings.Contains(storedRequest, "hello") {
+		t.Fatalf("请求正文应明文落库, got %q", storedRequest)
 	}
-	var encryptedChunk string
-	if err := db.QueryRow(`SELECT payload_enc FROM llm_transcript_chunks WHERE transcript_id=? AND seq=0`, id).Scan(&encryptedChunk); err != nil {
+	var storedChunk string
+	if err := db.QueryRow(`SELECT payload_enc FROM llm_transcript_chunks WHERE transcript_id=? AND seq=0`, id).Scan(&storedChunk); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(encryptedChunk, util.EncPrefix) || strings.Contains(encryptedChunk, "first") {
-		t.Fatal("响应分块未按 AES-GCM 加密落库")
+	if strings.HasPrefix(storedChunk, util.EncPrefix) || !strings.Contains(storedChunk, "first") {
+		t.Fatalf("响应分块应明文落库, got %q", storedChunk)
 	}
 
 	page, err := ListLLMTranscriptsFiltered(db, LLMTranscriptFilter{UserID: userID, Model: "qwen3", Endpoint: "/v1/chat/completions"}, 0, 10)

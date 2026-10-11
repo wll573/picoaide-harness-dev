@@ -185,6 +185,18 @@ func redactTranscriptReasoning(value any) any {
 	}
 }
 
+// storeTranscriptPayload returns the value to persist in *_enc columns.
+// Boss decision (plain): audit bodies are stored as plaintext. Column names
+// keep the historical *_enc suffix; they are not encrypted on new writes.
+func storeTranscriptPayload(body []byte) string {
+	if body == nil {
+		return ""
+	}
+	return string(body)
+}
+
+// encryptTranscriptPayload is retained only so tests can plant legacy
+// enc:v1: rows. Production write paths must not call it.
 func encryptTranscriptPayload(body []byte) (string, error) {
 	key, err := util.GetMasterKey()
 	if err != nil {
@@ -193,13 +205,15 @@ func encryptTranscriptPayload(body []byte) (string, error) {
 	return util.Encrypt(key, string(body)), nil
 }
 
+// decryptTranscriptPayload opens a stored body. Plaintext (no enc:v1: prefix)
+// is returned as-is. Legacy encrypted rows are decrypted when the master key
+// can open them; otherwise an error is returned so callers can mark damaged
+// without overwriting the ciphertext.
 func decryptTranscriptPayload(raw string) ([]byte, error) {
 	if raw == "" {
 		return nil, nil
 	}
 	if !strings.HasPrefix(raw, util.EncPrefix) {
-		// Rows written before transcript encryption was wired are retained for
-		// one read so the startup backfill can upgrade them safely.
 		return []byte(raw), nil
 	}
 	key, err := util.GetMasterKey()
@@ -211,6 +225,26 @@ func decryptTranscriptPayload(raw string) ([]byte, error) {
 		return nil, err
 	}
 	return []byte(plain), nil
+}
+
+// decodeTranscriptPayload is the read-path helper: plaintext or decryptable
+// ciphertext becomes plain bytes with ok=true; undecryptable legacy ciphertext
+// returns ok=false and a reason, leaving the DB row untouched (no data loss).
+func decodeTranscriptPayload(raw string) (plain []byte, ok bool, reason string) {
+	if raw == "" {
+		return nil, true, ""
+	}
+	if !strings.HasPrefix(raw, util.EncPrefix) {
+		return []byte(raw), true, ""
+	}
+	plain, err := decryptTranscriptPayload(raw)
+	if err != nil {
+		if _, keyErr := util.GetMasterKey(); keyErr != nil {
+			return nil, false, "master_key_unavailable"
+		}
+		return nil, false, "decrypt_failed"
+	}
+	return plain, true, ""
 }
 
 func transcriptPayloadIsEncrypted(raw string) bool {

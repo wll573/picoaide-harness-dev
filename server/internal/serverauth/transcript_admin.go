@@ -148,11 +148,18 @@ func (a *AdminAPI) getLLMTranscript(c *gin.Context) {
 		WriteError(c, http.StatusInternalServerError, "INTERNAL", "读取审计记录失败")
 		return
 	}
-	// 审计正文在库中 AES-GCM 加密，详情接口解密后只返回已经过隐私过滤的副本。
-	response, err := serverstore.ReadLLMTranscriptResponse(a.DB, id)
+	// 审计正文明文留存（历史 enc:v1: 行读时解密）；无法解密的旧密文标 damaged，库内原值不动。
+	response, respOK, respReason, err := serverstore.ReadLLMTranscriptResponse(a.DB, id)
 	if err != nil {
 		WriteError(c, http.StatusInternalServerError, "INTERNAL", "读取审计响应失败")
 		return
+	}
+	decryptable := transcript.RequestDecryptable && respOK
+	decryptReason := ""
+	if !transcript.RequestDecryptable {
+		decryptReason = transcript.RequestDecryptReason
+	} else if !respOK {
+		decryptReason = respReason
 	}
 	rows := a.withUsernames([]serverstore.LLMTranscript{transcript})
 	c.JSON(http.StatusOK, gin.H{
@@ -162,8 +169,8 @@ func (a *AdminAPI) getLLMTranscript(c *gin.Context) {
 		// 管理端直接展示的可读文本：用户发了什么 / 模型回了什么（认不出形状时即原文）。
 		"request_text":     readableRequest(transcript.RequestBody),
 		"response_text":    readableResponse(string(response)),
-		"decryptable":      true, // 兼容旧前端字段；服务端已完成解密并通过隐私过滤
-		"decrypt_reason":   "",
+		"decryptable":      decryptable, // false = legacy ciphertext damaged; DB row kept
+		"decrypt_reason":   decryptReason,
 		"response_present": len(response) > 0,
 	})
 }
@@ -206,7 +213,7 @@ func (a *AdminAPI) exportLLMTranscripts(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		resp, _ := serverstore.ReadLLMTranscriptResponse(a.DB, r.ID)
+		resp, _, _, _ := serverstore.ReadLLMTranscriptResponse(a.DB, r.ID)
 		_ = w.Write([]string{
 			r.CreatedAt.Format("2006-01-02 15:04:05"), csvSafe(user), csvSafe(r.Model),
 			strconv.Itoa(r.StatusCode), strconv.FormatInt(r.InputTokens, 10), strconv.FormatInt(r.OutputTokens, 10),

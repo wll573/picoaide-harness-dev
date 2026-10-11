@@ -7,11 +7,15 @@ import (
 
 const transcriptMigrationChunkBytes = 64 << 10
 
-// MigrateLLMTranscriptPrivacy upgrades rows written by the pre-privacy
-// implementation. Those rows used the *_enc columns as plaintext and could
-// contain system prompts, tool schemas, and reasoning_content. The operation
-// is idempotent: encrypted rows are already on the new path and are skipped.
-// It returns the number of transcript rows changed.
+// MigrateLLMTranscriptPrivacy upgrades rows onto the plain audit path.
+//
+// Boss decision (plain): audit bodies are stored as plaintext. This migration:
+//   - sanitizes legacy plaintext that still contains system/tools/reasoning;
+//   - decrypts enc:v1: rows when possible, sanitizes, and rewrites as plaintext;
+//   - leaves undecryptable ciphertext unchanged (no data loss; read path marks damaged).
+//
+// It is idempotent: already-plain sanitized rows are skipped. Returns the number
+// of transcript rows changed.
 func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 	if db == nil {
 		return 0, nil
@@ -45,17 +49,20 @@ func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 
 		for _, row := range transcripts {
 			changedRow := false
-			if !transcriptPayloadIsEncrypted(row.requestBody) {
-				safeRequest := SanitizeLLMTranscriptRequest([]byte(row.requestBody))
-				encrypted, err := encryptTranscriptPayload(safeRequest)
-				if err != nil {
-					return fmt.Errorf("encrypt legacy transcript request %d: %w", row.id, err)
+
+			requestPlain, requestOK, _ := decodeTranscriptPayload(row.requestBody)
+			if requestOK {
+				safeRequest := SanitizeLLMTranscriptRequest(requestPlain)
+				stored := storeTranscriptPayload(safeRequest)
+				// Rewrite when still encrypted, or when sanitization changed content.
+				if transcriptPayloadIsEncrypted(row.requestBody) || stored != row.requestBody {
+					if _, err := tx.Exec(`UPDATE llm_transcripts SET request_body_enc=? WHERE id=?`, stored, row.id); err != nil {
+						return err
+					}
+					changedRow = true
 				}
-				if _, err := tx.Exec(`UPDATE llm_transcripts SET request_body_enc=? WHERE id=?`, encrypted, row.id); err != nil {
-					return err
-				}
-				changedRow = true
 			}
+			// If request ciphertext cannot be opened, leave it untouched.
 
 			chunkRows, err := tx.Query(`SELECT seq, payload_enc FROM llm_transcript_chunks
 				WHERE transcript_id=? ORDER BY seq`, row.id)
@@ -67,15 +74,19 @@ func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 				payload string
 			}
 			var chunks []chunk
-			legacyChunks := false
+			needsRewrite := false
+			allDecodable := true
 			for chunkRows.Next() {
 				var item chunk
 				if err := chunkRows.Scan(&item.seq, &item.payload); err != nil {
 					chunkRows.Close()
 					return err
 				}
-				if !transcriptPayloadIsEncrypted(item.payload) {
-					legacyChunks = true
+				if transcriptPayloadIsEncrypted(item.payload) {
+					needsRewrite = true
+				}
+				if _, ok, _ := decodeTranscriptPayload(item.payload); !ok {
+					allDecodable = false
 				}
 				chunks = append(chunks, item)
 			}
@@ -86,7 +97,16 @@ func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 			if err := chunkRows.Close(); err != nil {
 				return err
 			}
-			if !legacyChunks {
+
+			if len(chunks) == 0 {
+				if changedRow {
+					changed++
+				}
+				continue
+			}
+
+			// Undecryptable chunks: leave as-is (no data loss).
+			if !allDecodable {
 				if changedRow {
 					changed++
 				}
@@ -102,6 +122,16 @@ func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 				response = append(response, plain...)
 			}
 			safeResponse := SanitizeLLMTranscriptResponse(response)
+
+			// Rewrite when any chunk was encrypted, or sanitization changed the body.
+			original := string(response)
+			if !needsRewrite && string(safeResponse) == original {
+				if changedRow {
+					changed++
+				}
+				continue
+			}
+
 			if _, err := tx.Exec(`DELETE FROM llm_transcript_chunks WHERE transcript_id=?`, row.id); err != nil {
 				return err
 			}
@@ -110,13 +140,10 @@ func MigrateLLMTranscriptPrivacy(db *sql.DB) (int64, error) {
 				if end > len(safeResponse) {
 					end = len(safeResponse)
 				}
-				encrypted, err := encryptTranscriptPayload(safeResponse[offset:end])
-				if err != nil {
-					return fmt.Errorf("encrypt legacy transcript response %d: %w", row.id, err)
-				}
+				stored := storeTranscriptPayload(safeResponse[offset:end])
 				if _, err := tx.Exec(`INSERT INTO llm_transcript_chunks
 					(transcript_id, seq, payload_enc, byte_length) VALUES (?, ?, ?, ?)`,
-					row.id, seq, encrypted, end-offset); err != nil {
+					row.id, seq, stored, end-offset); err != nil {
 					return err
 				}
 				offset = end

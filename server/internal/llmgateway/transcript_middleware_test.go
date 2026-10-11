@@ -37,7 +37,7 @@ func TestTranscriptWriterPersistsCompleteResponse(t *testing.T) {
 	if err := serverstore.FinishLLMTranscript(db, id, http.StatusOK, writer.bytes, serverstore.TranscriptHashHex(writer.hash.Sum(nil)), "complete"); err != nil {
 		t.Fatal(err)
 	}
-	got, err := serverstore.ReadLLMTranscriptResponse(db, id)
+	got, _, _, err := serverstore.ReadLLMTranscriptResponse(db, id)
 	if err != nil || !bytes.Equal(got, body) {
 		t.Fatalf("stored response = %q, err=%v", got, err)
 	}
@@ -63,7 +63,7 @@ func TestTranscriptWriterRedactsReasoningBeforePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	writer.FlushAudit()
-	got, err := serverstore.ReadLLMTranscriptResponse(db, id)
+	got, _, _, err := serverstore.ReadLLMTranscriptResponse(db, id)
 	if err != nil {
 		t.Fatal(err)
 	}

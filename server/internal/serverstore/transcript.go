@@ -17,7 +17,8 @@ const maxTranscriptRequestBytes = 64 << 20
 var ErrLLMTranscriptResponseTooLarge = errors.New("transcript response exceeds audit limit")
 
 // LLMTranscript 是一行审计记录的**元数据**（不含 prompt/response 正文；正文在
-// request_body_enc 与加密分块里，见 GetLLMTranscript / ReadLLMTranscriptResponse）。
+// request_body_enc 与分块里，见 GetLLMTranscript / ReadLLMTranscriptResponse）。
+// 列名 *_enc 为历史命名；Boss 口径 plain 下新写入为明文，旧 enc:v1: 行读时解密。
 //
 // 0086 起补齐需求 §8.1 要求的可读字段：耗时、流式、token 三列、供应商、会话/工作区、
 // 错误原因。老行（0086 之前落库的）这些列取 DB 默认值（0/false/”）。
@@ -44,6 +45,10 @@ type LLMTranscript struct {
 	ErrorMessage  string     `json:"error_message"`
 	CreatedAt     time.Time  `json:"created_at"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	// RequestDecryptable is false when request_body_enc is legacy ciphertext that
+	// cannot be opened. The DB value is left untouched (no data loss).
+	RequestDecryptable   bool   `json:"-"`
+	RequestDecryptReason string `json:"-"`
 }
 
 type LLMTranscriptPage struct {
@@ -69,12 +74,9 @@ type LLMTranscriptFilter struct {
 	// Keyword 在**明文元数据**上做包含匹配：模型 / 端点 / 供应商 / 会话 / 工作区 /
 	// 错误原因 / 请求 id（需求 §8.2「关键词筛选」）。
 	//
-	// ⚠️ 边界（必须如实告知使用者，不要让人以为能搜正文）：**Prompt/Response 正文
-	// 是 AES-GCM 密文**（0083 起的分块加密），SQL 层匹配不了它 —— 这是"密钥不出
-	// 服务端、落库即密文"这条安全边界的直接代价，不是疏漏。要搜正文只能是"取回
-	// 候选行 → 解密 → 内存过滤"，那要求把一批明文读进内存，与本文件的加密留存
-	// 设计冲突，也答不了"总共多少条命中"。因此这里**只**搜明文元数据；正文的
-	// 检索留给"按会话/时间缩小范围后看详情"。
+	// ⚠️ 边界：关键词**只**搜明文元数据（模型/端点/供应商/会话/工作区/错误/请求 id）。
+	// Prompt/Response 正文体积大且可能含历史 enc:v1: 密文，不做 SQL 全文匹配；
+	// 要看正文请按会话/时间缩小范围后打开详情。
 	Keyword string
 }
 
@@ -139,10 +141,7 @@ func CreateLLMTranscriptDetailed(db *sql.DB, in TranscriptCreate) (int64, string
 	if len(safeBody) > maxTranscriptRequestBytes {
 		return 0, "", fmt.Errorf("transcript request exceeds %d bytes", maxTranscriptRequestBytes)
 	}
-	requestBodyEnc, err := encryptTranscriptPayload(safeBody)
-	if err != nil {
-		return 0, "", fmt.Errorf("encrypt transcript request: %w", err)
-	}
+	requestBodyEnc := storeTranscriptPayload(safeBody)
 	requestID, err := NewTranscriptRequestID()
 	if err != nil {
 		return 0, "", err
@@ -164,10 +163,7 @@ func AppendLLMTranscriptChunk(db *sql.DB, transcriptID, seq int64, payload []byt
 		return nil
 	}
 	safePayload := SanitizeLLMTranscriptResponse(payload)
-	payloadEnc, err := encryptTranscriptPayload(safePayload)
-	if err != nil {
-		return fmt.Errorf("encrypt transcript response: %w", err)
-	}
+	payloadEnc := storeTranscriptPayload(safePayload)
 	return withUsageSearchPath(db, func(tx *sql.Tx) error {
 		_, err := tx.Exec(`INSERT INTO llm_transcript_chunks
 			(transcript_id, seq, payload_enc, byte_length)
@@ -230,11 +226,10 @@ func GetLLMTranscript(db *sql.DB, id int64) (LLMTranscript, error) {
 		if completed.Valid {
 			row.CompletedAt = &completed.Time
 		}
-		requestBody, decryptErr := decryptTranscriptPayload(requestBodyEnc)
-		if decryptErr != nil {
-			return decryptErr
-		}
+		requestBody, ok, reason := decodeTranscriptPayload(requestBodyEnc)
 		row.RequestBody = string(requestBody)
+		row.RequestDecryptable = ok
+		row.RequestDecryptReason = reason
 		return nil
 	})
 	if err != nil {
@@ -243,15 +238,17 @@ func GetLLMTranscript(db *sql.DB, id int64) (LLMTranscript, error) {
 	return row, nil
 }
 
-// ReadLLMTranscriptResponse 按 seq 顺序拼出完整响应（解密后的审计分块）。
-func ReadLLMTranscriptResponse(db *sql.DB, transcriptID int64) ([]byte, error) {
-	var response []byte
-	err := withUsageSearchPathRead(db, func(tx *sql.Tx) error {
-		response = nil
-		rows, err := tx.Query(`SELECT payload_enc FROM llm_transcript_chunks
+// ReadLLMTranscriptResponse 按 seq 顺序拼出完整响应。
+// 新行与可解密的旧密文返回明文；任一旧分块无法解密时 decryptable=false，
+// 已解出的部分仍返回，库内密文不动（无数据丢失）。
+func ReadLLMTranscriptResponse(db *sql.DB, transcriptID int64) (body []byte, decryptable bool, reason string, err error) {
+	decryptable = true
+	err = withUsageSearchPathRead(db, func(tx *sql.Tx) error {
+		body = nil
+		rows, qerr := tx.Query(`SELECT payload_enc FROM llm_transcript_chunks
 			WHERE transcript_id=? ORDER BY seq`, transcriptID)
-		if err != nil {
-			return err
+		if qerr != nil {
+			return qerr
 		}
 		defer rows.Close()
 		for rows.Next() {
@@ -259,18 +256,22 @@ func ReadLLMTranscriptResponse(db *sql.DB, transcriptID int64) ([]byte, error) {
 			if err := rows.Scan(&payloadEnc); err != nil {
 				return err
 			}
-			payload, decryptErr := decryptTranscriptPayload(payloadEnc)
-			if decryptErr != nil {
-				return decryptErr
+			payload, ok, chunkReason := decodeTranscriptPayload(payloadEnc)
+			if !ok {
+				decryptable = false
+				if reason == "" {
+					reason = chunkReason
+				}
+				continue
 			}
-			response = append(response, payload...)
+			body = append(body, payload...)
 		}
 		return rows.Err()
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, "", err
 	}
-	return response, nil
+	return body, decryptable, reason, nil
 }
 
 // PurgeOldLLMTranscripts removes prompt/response records and their
