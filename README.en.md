@@ -115,6 +115,65 @@ Client upgrades and first-time installs can also fetch packages straight from **
 - The desktop shell itself is a legitimate DSH plugin; third-party plugins and desktop abilities share the same composition path;
 - Upstream is pinned, and future sync follows versions only without breaking local extensions.
 
+### Feature modules
+
+| Module | Capabilities |
+| --- | --- |
+| Chat and workspace | Create and resume sessions, search history, choose directories, reference files, run tools |
+| Desktop UI | Electron client, light / dark / system theme, sidebar, settings and account entry |
+| Model gateway | Unified providers, keys, models and protocols; request and usage records |
+| Accounts and organization | Local authentication, configurable LDAP / OIDC, registration approval, user and department management |
+| Capability hub | Browse, install and manage server-provided skills and agents |
+| Connectors and browser | Connect external tools and use browser features |
+| Scheduled tasks | Create recurring tasks, run immediately, inspect results |
+| App center | Browse and use server-provided apps |
+| Automated verification | Unit tests, type checks, repository guards, packaging checks, client E2E and real-environment verification |
+
+Available models, sign-in methods, capabilities and permissions are determined by the actual server you connect to.
+
+### Intranet and offline deployment
+
+- Pure HTTP intranet deployment is supported (the `server/docker-compose.http.yml` override does not expose HTTPS ports);
+- An offline build flow is provided — connected preparation machine → media → intranet build machine — covering the Ubuntu server and the native Windows client;
+- Offline media is verified against a SHA256 manifest; dependency caches are never committed to Git.
+
+See [`packaging/offline/README.md`](packaging/offline/README.md) and [docs/deploy/AI-DEPLOY.md](docs/deploy/AI-DEPLOY.md) for details.
+
+The intranet delivery branch (`integration/intranet-merge`) has additional administrator-facing deployment material; see "Intranet delivery notes" below.
+
+## Intranet delivery notes
+
+The following comes from the intranet delivery branch's operations documentation, for use when deploying and accepting the platform inside an organization. The platform shape, interfaces and installers remain as described above and on the official site.
+
+### Intranet deployment and operations documents
+
+| Goal | Entry |
+| --- | --- |
+| Ubuntu 24 server + Windows client intranet deployment | [docs/deploy/INTRANET-UBUNTU24-WINDOWS.md](docs/deploy/INTRANET-UBUNTU24-WINDOWS.md) |
+| DeepSeek Harness plugin inventory (intranet delivery scope) | [docs/deploy/DEEPSEEK-HARNESS-PLUGIN-INVENTORY.md](docs/deploy/DEEPSEEK-HARNESS-PLUGIN-INVENTORY.md) |
+| Intranet agent platform requirements (8 functional domains) | [docs/planning/intranet-agent-product-requirements.md](docs/planning/intranet-agent-product-requirements.md) |
+| Illustrated client guide | [docs/client-guide.md](docs/client-guide.md) |
+
+### Main capabilities on the intranet side
+
+| Module | Capability |
+| --- | --- |
+| Conversation and workspace | Start and resume conversations, search history, pick directories, reference files, run tools |
+| Desktop UI | Electron client, light / dark / system theme, sidebar, settings and account entry points |
+| Model gateway | Unified provider, key, model and protocol configuration; records requests and usage |
+| Accounts and organization | Local account authentication, configurable LDAP / OIDC, **registration requires administrator approval**, user and department management |
+| Capability center | Browse, install and manage server-provided skills and agents |
+| Connectors and browser | Connect external tools (MCP authentication supports `auto` endpoint-self-describing authorization); use browser features |
+| Scheduled tasks | Create recurring tasks, run them immediately, inspect execution results |
+| App center | Browse and use server-provided apps |
+| Automated verification | Unit tests, type checks, repository guards, packaging validation, client E2E and real-environment verification |
+
+### Registration approval and per-account data isolation
+
+- Newly registered accounts enter a **pending approval** state; an administrator must release them in the admin console before they can sign in (the login page shows an approval notice).
+- Local conversation data is isolated **per account**: on the same machine, different accounts cannot see each other's conversations, attachments or workspaces.
+- The client keeps a "create account" entry point, for compatibility with legacy authentication responses that only return registration success without a session.
+
 ## Documentation
 
 Ordinary users should start at the [official wiki](https://www.picoaide.com/en/docs/); developer docs are only needed for extension or maintenance.

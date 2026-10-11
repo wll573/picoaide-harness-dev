@@ -187,7 +187,7 @@ describe('cron client surfaces', () => {
     // `picoFootMenu` is the same hazard (its row can be disabled by a channel
     // overlay / the machine-wide patch): it is waited on from a CHILD scope, so
     // its absence costs only the popover entry.
-    expect(inject).toEqual(['slots', 'configForms', 'locale', 'workspaces', 'connection', 'sessions'])
+    expect(inject).toEqual(['slots', 'configForms', 'locale', 'workspaces', 'connection', 'sessions', 'uiWorkspace'])
   })
 
   it('registers the foot-lane entry from a child scope (the rest does not wait on it)', () => {

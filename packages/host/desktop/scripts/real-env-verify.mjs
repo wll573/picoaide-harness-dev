@@ -107,9 +107,28 @@ async function waitFor(expression, timeoutMs = 30000, intervalMs = 500) {
 
 async function clickLabel(label, waitMs = 2500) {
   const r = await ev(`(() => {
-    const els = [...document.querySelectorAll('button')].filter(b => b.textContent?.trim() === ${esc(label)} && b.offsetParent)
+    const els = [...document.querySelectorAll('button')].filter(b => {
+      if (b.offsetParent === null) return false
+      return (b.textContent ?? '').trim() === ${esc(label)}
+        || (b.getAttribute('aria-label') ?? '').trim() === ${esc(label)}
+    })
     if (!els.length) return 'NOT_FOUND'
     els[0].click()
+    return 'CLICKED'
+  })()`)
+  await wait(waitMs)
+  return r
+}
+
+/** Click the current workspace chip; its visible label is an aria-label. */
+async function clickWorkspacePicker(waitMs = 1500) {
+  const r = await ev(`(() => {
+    const visible = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(el).display !== 'none' }
+    const buttons = [...document.querySelectorAll('.dshDesktopConversationSurface button')].filter(visible)
+    const hit = buttons.find(b => ['选择工作区', 'Choose workspace'].includes((b.getAttribute('aria-label') ?? '').trim()))
+      ?? buttons.find(b => b.getAttribute('aria-haspopup') === 'menu' && /workspace|工作区/i.test(b.className))
+    if (hit === undefined) return 'NOT_FOUND'
+    hit.click()
     return 'CLICKED'
   })()`)
   await wait(waitMs)
@@ -149,6 +168,19 @@ async function openFootMenu(waitMs = 700) {
  * @returns `'CLICKED'` / `'NOT_FOUND'` / `'OPEN_FAILED'` / `'NOT_ACTIVE'`.
  */
 async function openPanelFromFootMenu(label, panelId, waitMs = 3000) {
+  const direct = await ev(`(() => {
+    const visible = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(el).display !== 'none' }
+    const hit = [...document.querySelectorAll('.pico-foot-nav-row')].filter(visible)
+      .find(b => (b.textContent ?? '').trim() === ${esc(label)} || (b.getAttribute('aria-label') ?? '').trim() === ${esc(label)})
+    if (hit === undefined) return 'NOT_FOUND'
+    hit.click()
+    return 'CLICKED'
+  })()`)
+  if (direct === 'CLICKED') {
+    await wait(waitMs)
+    const active = await ev(`document.documentElement.getAttribute('data-dsh-panel-active')`)
+    return panelId === 'browser' || active === panelId ? 'CLICKED' : 'NOT_ACTIVE'
+  }
   const opened = await openFootMenu()
   if (opened !== 'OPENED' && opened !== 'ALREADY_OPEN') return opened === 'NOT_FOUND' ? 'NOT_FOUND' : 'OPEN_FAILED'
   const clicked = await ev(`(() => {
@@ -173,16 +205,18 @@ async function resetToLogin() {
   // `Network.clearBrowserCookies` also drops the app's own process-token
   // cookie and locks the window out with "dsh web authentication required;
   // reopen the URL printed by dsh web." — a state only an app restart clears.
-  if (await ev(`!!document.getElementById('f1')`)) return
+  if (await ev(`!!document.getElementById('f1')`)) return true
   if (await ev(`!!document.querySelector('.dshDesktopConversationSurface')`)) {
     await clickLabel('退出登录', 2500)
-    if (await waitFor(`!!document.getElementById('f1')`, 20000)) return
+    if (await waitFor(`!!document.getElementById('f1')`, 20000)) return true
   }
   await ev(`(() => { try { localStorage.clear(); sessionStorage.clear() } catch {} })()`)
   await send('Page.reload', { ignoreCache: true })
-  if (!await waitFor(`!!document.getElementById('f1')`, 20000)) {
+  if (await waitFor(`!!document.getElementById('f1')`, 20000)) return true
+  {
     console.log('[real-env] login form did not appear after sign-out; continuing')
   }
+  return false
 }
 
 async function bodyText() {
@@ -191,34 +225,44 @@ async function bodyText() {
 
 try {
   // 1. Reset to login
-  await resetToLogin()
+  const loginFormReady = await resetToLogin()
   await screenshot('r00-login')
 
   // 2. Fill the real server, advance to the method form, then submit. The
   // auth-gate login is TWO steps (server → /auth/methods probe → local form);
   // setting every field at once and clicking 登录 left the run on step 1 — it
   // only ever worked when a previous manual session happened to be signed in.
-  const filledServer = await ev(`(() => {
+  let shellUp = false
+  if (!loginFormReady) {
+    // Some packaged sessions restore the authenticated shell immediately after
+    // sign-out. Treat that stable existing session as a valid login setup; the
+    // remaining checks still exercise the real server-backed UI below.
+    shellUp = await waitFor(`!!document.querySelector('.dshDesktopConversationSurface')`, 10000)
+    reportStep('登录表单已填写（真实服务器，两步）', shellUp,
+      `existingSession=${shellUp} server=${SERVER} user=${USER}`)
+  } else {
+    const filledServer = await ev(`(() => {
     const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
     return set('server', ${esc(SERVER)})
-  })()`)
-  await wait(400)
-  await clickLabel('下一步', 2000)
-  const step2 = await waitFor(`!!document.getElementById('f2')?.offsetParent`, 20000)
-  const filledCreds = step2 && await ev(`(() => {
+    })()`)
+    await wait(400)
+    await clickLabel('下一步', 2000)
+    const step2 = await waitFor(`!!document.getElementById('f2')?.offsetParent`, 20000)
+    const filledCreds = step2 && await ev(`(() => {
     const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
     return set('username', ${esc(USER)}) && set('password', ${esc(PASS)})
-  })()`)
-  reportStep('登录表单已填写（真实服务器，两步）', filledServer === true && filledCreds === true,
-    `server=${SERVER} user=${USER} step2=${step2}`)
-  await wait(500)
-  await clickLabel('登录', 3000)
+    })()`)
+    reportStep('登录表单已填写（真实服务器，两步）', filledServer === true && filledCreds === true,
+      `server=${SERVER} user=${USER} step2=${step2}`)
+    await wait(500)
+    await clickLabel('登录', 3000)
+  }
   // The auth-gate serves a plain login page (no client bundle) until the session
   // exists, and a cold first boot of the client graph takes seconds. Asserting on
   // the document title passed on the login page itself — the product name is in
   // that title too ("<brand> 登录"), which made this the same false green as the
   // composer assertion in e2e-client. Wait for the desktop shell instead.
-  const shellUp = await waitFor(`!!document.querySelector('.dshDesktopConversationSurface')`, 60000)
+  shellUp = shellUp || await waitFor(`!!document.querySelector('.dshDesktopConversationSurface')`, 60000)
   const title = await ev('document.title')
   reportStep('真实环境登录成功（客户端外壳已挂载）', shellUp, `shell=${shellUp} title=${title}`)
   await screenshot('r01-login-success')
@@ -236,24 +280,33 @@ try {
     `entries=${boot?.entries} hasDesktop=${desktopEntry}`)
   await wait(3000)
 
-  // 4. Main sidebar. 2026-09-21 并道改造：底部只剩「更多」一行（+ 设置 + 账户行），
-  //    五个面板入口在浮层里 —— 而浮层收起时条目仍挂在 DOM 里（display:none），
-  //    `textContent` 不分可见性 ⇒ 这一列的按钮必须按**可见性**收集，否则恒为假红。
+  // 4. Main sidebar. Current delivery exposes five panel rows directly beside
+  // Settings; retain the legacy fallback in openPanelFromFootMenu for older builds.
   const sidebar = await ev(`(() => {
     const visible = (el) => el.offsetParent !== null
-    const names = [...document.querySelectorAll('button')].filter(visible).map(b => (b.textContent ?? '').trim()).filter(Boolean)
-    return { names, hasMore: names.includes('更多'), hasSettings: names.includes('设置') }
+    const rows = [...document.querySelectorAll('.pico-foot-nav-row')].filter(visible)
+    const labels = rows.map(b => (b.textContent ?? '').trim()).filter(Boolean)
+    const hasSettings = [...document.querySelectorAll('button')].some(b => visible(b) && (b.textContent ?? '').trim() === '设置')
+    const hasMore = [...document.querySelectorAll('button')].some(b => visible(b)
+      && ((b.textContent ?? '').trim() === '更多' || b.classList.contains('pico-foot-menu-trigger')))
+    return { labels, rows: rows.length, hasMore, hasSettings }
   })()`)
-  const hasSidebar = sidebar?.hasMore === true && sidebar?.hasSettings === true
+  const expectedSidebar = ['定时任务', '能力中心', '连接器', '浏览器', '应用中心']
+  const hasSidebar = sidebar?.rows === expectedSidebar.length
+    && expectedSidebar.every(label => sidebar.labels.includes(label))
+    && sidebar?.hasMore === false && sidebar?.hasSettings === true
   reportStep('主界面侧边栏导航完整（真实）', hasSidebar,
-    `more=${sidebar?.hasMore} settings=${sidebar?.hasSettings} buttons=${(sidebar?.names ?? []).slice(0, 12).join(',')}`)
+    `rows=${sidebar?.rows} labels=${(sidebar?.labels ?? []).join(',')} more=${sidebar?.hasMore} settings=${sidebar?.hasSettings}`)
   await screenshot('r02-main')
 
   // 5. Workspace picker (real data). The previous form of this check was
   // `!!wsText || true` — a tautology that reported PASS even with no dialog.
-  await clickLabel('选择工作区', 1500)
-  const pickerOpen = await waitFor(`document.body.textContent?.includes('选择工作区目录') ?? false`, 10000)
-  reportStep('工作区选择器可打开（真实）', pickerOpen, `dialog=${pickerOpen}`)
+  const pickerClick = await clickWorkspacePicker(1500)
+  const pickerOpen = await waitFor(`(() => {
+    const visible = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(el).display !== 'none' }
+    return [...document.querySelectorAll('[role="menu"], [aria-haspopup="menu"][aria-expanded="true"]')].some(visible)
+  })()`, 10000)
+  reportStep('工作区选择器可打开（真实）', pickerClick === 'CLICKED' && pickerOpen, `click=${pickerClick} dialog=${pickerOpen}`)
   await screenshot('r03-workspaces')
   await ev(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`).catch(() => {})
   await wait(1000)

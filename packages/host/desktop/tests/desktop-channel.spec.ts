@@ -257,14 +257,20 @@ describe('desktop channel profile', () => {
     // 回环允许 http(本机调试/自签内网)
     ['http://127.0.0.1:8080', 'http://127.0.0.1:8080'],
     ['http://localhost:8080', 'http://localhost:8080'],
+    // 内网 HTTP 放行（c06341ca4「HTTP 放行」）：明文的**外部**主机同样接受。
+    // 这条与回环那两条是同一条策略 —— 内网交付的服务端就是 `http://10.x.x.x:8080`，
+    // 而它既不是回环也不是 https。拒绝它等于渠道包无法指向自家服务端。
+    // 校验剩下的职责只有一条：协议必须是 http/https（挡住 file / ftp 这类写错的配置）。
+    ['http://ai.acme.example.com', 'http://ai.acme.example.com'],
+    ['http://10.0.0.5:8080', 'http://10.0.0.5:8080'],
   ])('accepts %s', (input, expected) => {
     expect(normalizeDefaultServerURL(input)).toBe(expected)
   })
 
   it.each([
-    // 明文指向外部主机 = 把整批客户端降级到明文,必须拒绝
-    ['http://ai.acme.example.com'],
+    // 非 http/https 的协议仍然拒绝:写错的配置会把整批客户端指向 file、ftp 等端点
     ['ftp://ai.acme.example.com'],
+    ['file:///etc/passwd'],
     ['not a url'],
     [''],
     ['   '],

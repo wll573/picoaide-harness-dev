@@ -99,6 +99,13 @@ PicoAide Harness 是一个三层系统：**桌面客户端 / 本地 Harness 服�
 | **我们新增的 bundle 层** | 九个自有包：`@picoaide/dsh-enterprise`、`-account-card`、`-wasm-apps`、`-foot-menu`、`-wasm-apps-host`、`-connectors`、`-browser`、`-cron` 与 `dsh-memory-evolve`；另有上游的实验性语音输入 bundle | 自有包各带一层组装补丁，加上桌面包自身的 `cordis.patch.yml`（由 `@picoaide/dsh-enterprise` 的 bundle 列表首项携带）合计十层，作为 profile 的 bundle 层进入组合，顺序固定 |
 | **显式禁用的上游行** | 见下一节 | 关闭都有具体理由，不是「用不到就关」 |
 
+服务端侧的数据底座与上面的装配面是同一条链上的两半，一并列在这里：
+
+- PostgreSQL（PG-only；部署形态为 compose 内置容器，二进制也接受外部实例的 `-pg-dsn`），
+  迁移位于 `migrations-pg/`（编号 0001–0091，历史上删减过部分编号，故有连续空档）；
+- usage 明细按月原生分区（保留 N 月可配，默认 6），日/月账本永久保留（历史统计 10 年不丢）；
+- 共享技能 / Agent 归档直存 DB；审计哈希链（防篡改）、RBAC 角色、余额发放幂等锚。
+
 ### 被显式禁用的上游行
 
 | 行 | 关闭原因（摘要） |
@@ -200,7 +207,7 @@ PicoAide Harness 是一个三层系统：**桌面客户端 / 本地 Harness 服�
 | 项目 | 事实 |
 |---|---|
 | 数据库 | 只支持 PostgreSQL。容器化交付内置 PG 18；服务端二进制也接受外部实例（`-pg-dsn` 为必填参数） |
-| 迁移 | `server/internal/serverstore/migrations-pg/`，文件名形状 `NNNN_<描述>.sql`（四位编号 + 下划线），服务端启动时自动执行；编号区间 `0001–0084`（历史上删减过部分编号，因此有连续空档）。**迁移是单向的**：回滚镜像不能把库降回旧结构，升级前必须先备份 |
+| 迁移 | `server/internal/serverstore/migrations-pg/`，文件名形状 `NNNN_<描述>.sql`（四位编号 + 下划线），服务端启动时自动执行；编号区间 `0001–0091`（历史上删减过部分编号，因此有连续空档）。**迁移是单向的**：回滚镜像不能把库降回旧结构，升级前必须先备份 |
 | usage 明细 | 按 `created_at` 做**原生月分区**（`usage_YYYYMM`），保留 N 个月可配（默认 6），过期用 `DROP PARTITION` 秒删；删除明细不影响账本 |
 | usage 账本 | `usage_daily`（按年分区）/ `usage_monthly` **永久保留**，由账本任务从明细幂等重算，因此历史统计不会因为明细过期而丢 |
 | 审计 | `audit_logs` 带**哈希链**：每行的 `hash = sha256(prev_hash \| username \| action \| detail \| created_at)`，`prev_hash` 指向前一行；写入用 advisory lock 串行化，避免并发插入读到同一个 `prev_hash` 形成分叉。保留策略可配，裁剪时保留被删批次的最新一条作为锚，链仍可自证 |

@@ -128,10 +128,10 @@ export const zh = {
   'account.password.errShort': '新密码至少 10 位',
   'account.password.errMismatch': '两次输入的新密码不一致',
   'account.password.errFailed': '修改失败:{error}',
-  'account.password.external': '当前为企业统一认证(SSO/LDAP),密码由企业管理员管理',
+  'account.password.external': '当前为统一认证(SSO/LDAP)，密码由管理员管理',
   'account.password.forceHint': '你的密码已被管理员重置,请先修改密码后再使用。',
   // 首屏 hero 徽章兜底（渠道未配置 client.tagline 时；按界面语言取，见 channel-vars.ts）。
-  'hero.tagline': '企业版',
+  'hero.tagline': '标准版',
   // 更新面文案（2026-09-15 审计 BUG-07）：这些字符串以前硬编码在
   // UpdateIndicator/UpdateSection 里，英文界面下整块是中文。
   'update.serviceUnavailable': '更新服务不可用',
@@ -271,9 +271,9 @@ export const en: Record<keyof typeof zh, string> = {
   'account.password.errShort': 'New password needs at least 10 characters',
   'account.password.errMismatch': 'The two new passwords do not match',
   'account.password.errFailed': 'Failed to change password: {error}',
-  'account.password.external': 'Managed by enterprise IdP (SSO/LDAP); password changes are not available here',
+  'account.password.external': 'Managed by your identity provider (SSO/LDAP); password changes are not available here',
   'account.password.forceHint': 'Your password was reset by an administrator. Please set a new password before continuing.',
-  'hero.tagline': 'Enterprise',
+  'hero.tagline': 'Standard',
   'update.serviceUnavailable': 'Update service unavailable',
   'update.ready': 'Version {version} is downloaded — click "Install update" to finish',
   'update.available': 'Version {version} found, preparing the download…',

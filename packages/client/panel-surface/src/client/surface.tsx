@@ -47,8 +47,8 @@ import { PANEL_STYLE_ATTR, panelStylesheet } from './stylesheet.ts'
 /**
  * 文档里是否存在**内层模态**（确认框/表单）—— 存在时 Esc 归那一层，装载器让位。
  *
- * 本判据只有**这一个实现**：装载器的 Esc 守卫与底部「更多」浮层
- * （`@picoaide/dsh-foot-menu` 的 `FootMenuRow`）都调它。此前两边各写各的，
+ * 本判据只有**这一个实现**：装载器的 Esc 守卫与侧边栏底部的导航行
+ * （`@picoaide/dsh-foot-menu` 的 `FootNavRows`）都调它。此前两边各写各的，
  * 于是同一次按键在两个包里得到不同答案 —— 那正是这条缺陷的成因。
  *
  * **两个角色都要认**：`[role="dialog"]` 是**精确值**属性选择器，`alertdialog`
@@ -186,11 +186,10 @@ export function mountPanelSurface(options: PanelSurfaceOptions): PanelSurfaceHan
    *   · `activate()` 先记下当时的 `document.activeElement`，再聚焦容器 `tabIndex=-1`；
    *   · `close()` 在**焦点仍属于本面板**时把它还回那个元素，用户已经点到别处时不抢；
    *   · **触发方不得在 `activate()` 之后自己 `focus()` 锚点** —— 那会把焦点从刚打开的
-   *     面板里抢走。2026-09-25 审计 FIX-29 P2 的现场正是这条：底部「更多」浮层的条目
-   *     `activate()` 之后 `closeMenu(true)` 把焦点抢回侧边栏行，键盘用户按 Tab 进不去
-   *     面板（浮层侧的修法见 `@picoaide/dsh-foot-menu` 的 `FootMenuRow`：先把焦点交还
-   *     锚点、再激活 ⇒ 这里记下的归还目标就是「更多」行本身，条目随浮层关闭消失，
-   *     不能当归还目标）；
+   *     面板里抢走。2026-09-25 审计 FIX-29 P2 的现场正是这条：侧边栏导航行的条目
+   *     `activate()` 之后把焦点抢回侧边栏行，键盘用户按 Tab 进不去
+   *     面板（修法见 `@picoaide/dsh-foot-menu` 的 `FootNavRows`：**先激活**，
+   *     不再把焦点抢回该行 —— 行是常驻元素，面板关闭时焦点自然回到它）；
    *   · 另一个面板接管（`dsh-panel-activate` 广播）时**不归还** —— 否则会把焦点丢给
    *     上一个面板的触发元素，还会被新面板记成自己的归还目标。
    */

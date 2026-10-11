@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { request } from '../api'
@@ -71,7 +71,7 @@ const AUDIT_SETTINGS_PATH = '/api/server/admin/audit/settings'
  */
 async function waitForAuditRows(rows: number): Promise<void> {
   if (rows < 2) throw new Error(`waitForAuditRows 只用于 rows>=2（空态占位行会与之同形），收到 ${rows}`)
-  await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
+  await waitFor(() => expect(within(screen.getByTestId('audit-log-card')).getAllByRole('row')).toHaveLength(rows + 1), { timeout: 5000 })
 }
 
 /**
@@ -113,6 +113,34 @@ beforeEach(() => {
   HTMLAnchorElement.prototype.click = function (this: HTMLAnchorElement) {
     downloadAnchors.push({ href: this.href, download: this.download })
   }
+})
+
+describe('Prompt/Response 审计按会话展示', () => {
+  it('汇总同一 session，并可回到该 session 的请求明细', async () => {
+    setCurrentAdmin(SUPER)
+    const session = {
+      user_id: 7, username: 'alice', user_deleted: false, session_id: 'chat-7',
+      transcript_id: 101, request_count: 2, failure_count: 1, pending_count: 0,
+      total_tokens: 42, models: 'deepseek-chat', created_at: '2026-10-09T10:00:00Z', last_at: '2026-10-09T10:01:00Z',
+    }
+    mockRequest.mockImplementation(async (path: string) => {
+      const p = String(path)
+      if (p.startsWith('/api/server/admin/audit?')) return { logs: LOGS, total: LOGS.length }
+      if (p.startsWith(AUDIT_SETTINGS_PATH)) return { retention_days: 180 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('group_by=session')) return { sessions: [session], total: 1 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('session_id=chat-7')) {
+        return { transcripts: [{ id: 101, request_id: 'req-101', user_id: 7, username: 'alice', session_id: 'chat-7', model: 'deepseek-chat', audit_status: 'complete', created_at: session.created_at }], total: 1 }
+      }
+      return {}
+    })
+    render(<Audit />)
+    await waitFor(() => expect(screen.getByText('chat-7')).toBeInTheDocument())
+    expect(screen.getByText('2 次请求 · 42 Tokens')).toBeInTheDocument()
+    expect(screen.getByText('1 次失败')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '查看会话' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '查看对话' })).toBeInTheDocument())
+    expect(mockRequest.mock.calls.some(([path]) => String(path).includes('session_id=chat-7') && !String(path).includes('group_by=session'))).toBe(true)
+  })
 })
 
 async function exportCsv(): Promise<string> {
@@ -197,7 +225,7 @@ describe('审计员访问审计保留策略(R7-RV-2 残留)', () => {
     expect(screen.getByText(/audit:retention:write/)).toBeInTheDocument()
     // 读面不受影响:导出 CSV 与筛选仍在。
     expect(screen.getByRole('button', { name: /导出 CSV/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /筛选/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '筛选' })).toBeInTheDocument()
     // 且不会去写接口(只读 GET)。
     expect(mockRequest.mock.calls.map(([p]) => String(p)).some((p) => p.includes('/audit/settings'))).toBe(true)
   })
@@ -333,7 +361,7 @@ describe('审计动作表覆盖组织共享库动作(SG-5)', () => {
     setCurrentAdmin(SUPER)
     render(<Audit />)
     await waitForAuditRows(ORG_LOGS.length)
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     expect(await screen.findByRole('option', { name: '下架共享技能' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: '重新上架共享技能' })).toBeInTheDocument()
   })
@@ -492,7 +520,10 @@ function goSourceFiles(dir: string, out: string[] = []): string[] {
 
 /** 服务端源码文件清单（webadmin/node_modules/data 不是服务端写入面）。 */
 const GO_SOURCES: GoSourceFile[] = goSourceFiles(SERVER_DIR).map((f) => ({
-  path: f.slice(SERVER_DIR.length + 1),
+  // Windows 上 `readdir` 返回反斜杠路径，而库里存的断言键一律是 POSIX 形态。
+  // 用 `split/join` 而不是 `replaceAll`：后者是 ES2021，本包 tsconfig 的
+  // `lib` 停在 ES2020 ⇒ 直接 TS2550 编译错（webadmin 构建 = tsc -b && vite build）。
+  path: f.slice(SERVER_DIR.length + 1).split('\\').join('/'),
   text: readFileSync(f, 'utf8'),
 }))
 
@@ -624,7 +655,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
       expect(texts.has(ACTION_LABEL[action]!)).toBe(true)
     }
 
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     // 选项在 portal 里，同样一次查询取全集再比对（逐个 getByRole 是 N 次整文档扫描）。
     const options = new Set(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim()))
     for (const action of SERVER_ACTIONS) {
@@ -644,7 +675,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
     render(<Audit />)
     // 只等这一行落地（waitForAuditRows 只接受 >=2 行：空态占位行与 1 行同形）。
     expect(await screen.findByText('登录成功')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     const options = new Set(screen.getAllByRole('option').map((o) => (o.textContent ?? '').trim()))
     // 「全部操作」是固定首项；其余必须是 ACTION_LABEL 的全部取值。
     const labels = new Set(Object.values(ACTION_LABEL))
@@ -672,7 +703,7 @@ describe('审计动作表 = 服务端写点真源（R1-uxw-3 双向对拍）', (
     expect(screen.getByText(/数据范围超出用途所需/)).toBeInTheDocument()
     expect(screen.queryByText('wasm_app_release_reject')).toBeNull()
 
-    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(screen.getByRole('combobox', { name: '全部操作' }))
     fireEvent.click(await screen.findByRole('option', { name: '拒绝应用版本' }))
     fireEvent.click(screen.getByRole('button', { name: '筛选' }))
     await waitFor(() => {

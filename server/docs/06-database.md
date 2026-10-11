@@ -3,7 +3,7 @@
 ## 1. 服务端(PostgreSQL,PG-only 2026-08)
 
 > 2026-08 起 SQLite 已全面下线:服务端数据库为 PostgreSQL(内置容器或外部实例)。
-> 迁移在 `internal/serverstore/migrations-pg/`(0001–0084;0007 已废弃;0028 下线
+> 迁移在 `internal/serverstore/migrations-pg/`(0001–0091;0007 已废弃;0028 下线
 > 知识库/MCP 表并独立审计表 audit_logs;0039 usage 按月原生分区 + 日/月账本;
 > 0040/0041 归档直存 DB;0042 connectors;0043/0044 provider protocol;
 > 0045 glitchtip 下架;0046 rbac 角色;0047 brand 快照;0048 审计哈希链;
@@ -24,7 +24,16 @@
 > 0077 网关 Files API 归属台账 `gateway_files`、0078 台账容量字段与清理索引、
 > 0079 回收标记 `gateway_files.reaping_at`(2026-09-22)、0080 模型目录缺失标记
 > `models.catalog_missing`、0081 回收世代号 `gateway_files.reap_gen`(2026-09-23,fencing token)、
-> 0082 月报订阅的待补期号与失败退避(`report_subscriptions.pending_period`/`fail_streak`/`next_attempt_at`,2026-09-25)** —— 前三条(0073-0076)随
+> 0082 月报订阅的待补期号与失败退避(`report_subscriptions.pending_period`/`fail_streak`/`next_attempt_at`,2026-09-25)、
+> 0083 连接器认证模式新增 `auto`(放宽 `connectors_auth_mode_check`;2026-10-08)、
+> 0084 默认第三方 MCP 连接器改为「端点自述授权」(只改没被动过的种子行;2026-10-08)、
+> 0085 LLM 请求/响应 transcript 留存(`llm_transcripts` + 加密分块 `llm_transcript_chunks`)、
+> 0086 上游多 API Key 池 `gateway_provider_api_keys`(优先级 + 冷却态,从既有
+> `gateway_providers.api_key_enc` 回填)、0087 托管客户端策略(`managed_user_configs`/
+> `managed_skill_policies`/`managed_client_devices`)、0088 LLM 审计明细字段(用户/会话、
+> 工作区、Token 计数、流式状态与错误原因)、0089 上游 API Key 成功率与最近错误、
+> 0090 管理员「隐藏」模型(`models.hidden`)、0091 上游可配的超时/重试与协议开关
+> (`gateway_providers` 的 `timeout_seconds`/`max_key_attempts`/`responses_enabled`/`chat_enabled`)** —— 前三条(0073-0076)随
 > 2026-09-19「WASM 应用客户端专属」改造落地(应用子域/换票/匿名面/服务端 `ai.chat`
 > 同批删除,见 03-api-reference.md §11b),0077-0079 随 2026-09-22 网关文件直通、归属隔离与「按员工看占用 + 清理」落地
 > (见下 `gateway_files`),0080 随审计 G-02 的上游目录抖动保护落地,0081 随第四轮审计 R4-C-1 的回收器 fencing 落地,

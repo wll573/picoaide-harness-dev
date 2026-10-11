@@ -30,6 +30,9 @@ export const USAGE_PAYLOAD_KEYS = [
   'yesterday_cost',
   'total_usage',
   'total_cost',
+  // 方向拆分(2026-10 内网交付口径):界面不再展示金额,用量靠这两个分量说清。
+  'input_tokens',
+  'output_tokens',
 ] as const
 
 /** 账户卡消费的用量载荷(唯一类型定义)。 */
@@ -53,6 +56,10 @@ export interface UsagePayload {
   yesterday_cost: number
   total_usage: number
   total_cost: number
+  /** 历史输入 tokens（prompt 侧）。 */
+  input_tokens: number
+  /** 历史输出 tokens（completion 侧）。`total_usage` = 两者之和。 */
+  output_tokens: number
 }
 
 function isNum(v: unknown): v is number {
@@ -81,6 +88,12 @@ export function parseUsagePayload(raw: unknown): UsagePayload | null {
       typeof r.is_admin !== 'boolean' || typeof r.balance_mode !== 'string') {
     return null
   }
+  // 方向拆分是**后加的可选字段**：旧服务端不下发它们（部署升级不同步时客户端
+  // 必须先跑起来），所以缺失时归一到 0 而不是整份作废。这与必填字段的规则不同，
+  // 是有意的取舍：金额/用量主口径缺失说明这份载荷不可信，而"输入/输出拆分
+  // 缺失"只说明服务端还没升级 —— 此时 total_usage 仍然是对的。
+  const input = isNum(r.input_tokens) ? r.input_tokens : 0
+  const output = isNum(r.output_tokens) ? r.output_tokens : 0
   return {
     balance_money: r.balance_money,
     balance_activated: r.balance_activated,
@@ -96,5 +109,7 @@ export function parseUsagePayload(raw: unknown): UsagePayload | null {
     yesterday_cost: r.yesterday_cost,
     total_usage: r.total_usage,
     total_cost: r.total_cost,
+    input_tokens: input,
+    output_tokens: output,
   }
 }

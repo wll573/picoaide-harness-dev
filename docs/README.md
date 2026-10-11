@@ -2,7 +2,7 @@
 
 [English documentation](README.en.md)
 
-这里是 PicoAide Harness 的产品与开发文档入口。**用户文档已迁移到官网 Wiki**（[桌面客户端](https://www.picoaide.com/docs/desktop/) · [产品哲学](https://www.picoaide.com/docs/philosophy/) · [常见问题](https://www.picoaide.com/docs/faq/)）；本目录保留维护者视角的文档。想参与贡献？见[参与贡献](../CONTRIBUTING.md)。
+这里保留项目的产品、部署与开发文档。当前开发仓的修改说明和构建命令见[项目 README](../README.md)，客户端操作见[本地图文教程](client-guide.md)。上游官网 Wiki 仍可作为参考（[桌面客户端](https://www.picoaide.com/docs/desktop/) · [产品哲学](https://www.picoaide.com/docs/philosophy/) · [常见问题](https://www.picoaide.com/docs/faq/)）。
 
 ## 按目标阅读
 

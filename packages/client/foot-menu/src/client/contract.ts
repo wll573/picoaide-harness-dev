@@ -135,9 +135,9 @@ export function createFootMenuService(): FootMenuService {
 }
 
 /**
- * 当前安装的登记表实例（`FootMenuRow` 渲染时读取）。
+ * 当前安装的登记表实例（`FootNavRows` 渲染时读取）。
  *
- * 为什么是模块级：本包的 `apply` 与 `FootMenuRow` 住在**同一个**客户端 bundle 里，
+ * 为什么是模块级：本包的 `apply` 与 `FootNavRows` 住在**同一个**客户端 bundle 里，
  * 所以这里的单例就是同一份模块实例；跨 bundle 的那一半走 Cordis 服务（见上）。
  */
 let installed: FootMenuService | undefined
@@ -146,7 +146,7 @@ let installed: FootMenuService | undefined
  * 把登记表挂到上下文上（`apply` 调用一次）。
  *
  * 两件事必须一起做，而且**只能在这里做一次**：
- *  - **模块单例**：`FootMenuRow` 渲染时读它（`apply` 与组件在同一份 bundle 里）；
+ *  - **模块单例**：`FootNavRows` 渲染时读它（`apply` 与组件在同一份 bundle 里）；
  *  - **Cordis 服务**：兄弟 bundle 用它登记条目（跨 bundle 唯一的通道）。
  *
  * 顺序是语义的一部分：**先 `provide` 再落地单例**。`provide` 是会抛的（服务名已被别的

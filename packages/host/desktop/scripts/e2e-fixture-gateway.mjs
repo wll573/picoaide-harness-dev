@@ -186,7 +186,8 @@ const server = createServer((req, res) => {
       monthly_usage: 1234, monthly_cost: 12.3,
       today_usage: 0, today_cost: 0.5,
       yesterday_usage: 0, yesterday_cost: 0,
-      total_usage: 0, total_cost: 25.6,
+      total_usage: 1234, total_cost: 25.6,
+      input_tokens: 600, output_tokens: 634,
       balance_money: 88.5, balance_activated: true, balance_enabled: true,
       balance_monthly: 100, balance_mode: 'add',
     }))

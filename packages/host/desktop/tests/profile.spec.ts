@@ -287,6 +287,24 @@ describe('desktop profile composition', {
     expect(rows.find(row => row.id === 'desktop-updates')).toEqual(expect.objectContaining({
       name: 'dsh-plugin-desktop/updates',
     }))
+    // 内网交付（需求 §11）：默认权限档位钉死为**完全权限**，否则每次写操作都要
+    // 有人点审批，而审批面板一旦没装上（见 package.json 的 ui-approval 依赖），
+    // 对话就 fail-closed 中断。
+    //
+    // 这里断言 `config` 的**全量**（不是 objectContaining）：`presets` 表必须逐字
+    // 保留 —— 只钉 defaultPreset，用户仍能用 `/permission` 切回更窄的档位；把
+    // presets 一起覆盖掉就等于把切换能力删了。
+    expect(rows.find(row => row.id === 'permission')).toEqual(expect.objectContaining({
+      name: '@deepseek-ai/dsh-permission-presets',
+      config: {
+        presets: {
+          'read-only': { sandbox: 'read-only', approval: 'ask' },
+          'workspace-write': { sandbox: 'workspace-write', approval: 'ask' },
+          'danger-full-access': { sandbox: 'danger-full-access', approval: 'never' },
+        },
+        defaultPreset: 'danger-full-access',
+      },
+    }))
     expect(rows.map(row => row.id)).not.toContain('desktop-terminal')
     expect(rows.map(row => row.id)).not.toContain('desktop-pnpm')
     expect(rows.map(row => row.id)).not.toContain('desktop-profiles')

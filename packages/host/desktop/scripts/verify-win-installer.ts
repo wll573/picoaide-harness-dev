@@ -89,7 +89,10 @@ function defaultOptions(): WindowsInstallerVerificationOptions {
     installerName: channelArtifactName(channel, 'nsis', {
       version: readVersion(desktopRoot), arch: 'x64', ext: 'exe',
     }),
-    applicationName: `${channel.productName}.exe`,
+    // NSIS cannot reliably receive non-ASCII executable names through its
+    // command-line defines on Windows. channel-build keeps the display name
+    // localized but emits the executable under the ASCII channel slug.
+    applicationName: `${/[^\x00-\x7F]/u.test(channel.productName) ? channel.slug : channel.productName}.exe`,
   }
 }
 

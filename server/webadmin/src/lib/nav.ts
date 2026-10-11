@@ -9,7 +9,7 @@
 // 未声明 perms 的条目 fail-closed(仅超管可见),防止以后新增页面漏声明。
 import {
   HardDrive,
-  Users, Settings2, KeyRound, BarChart3, Store, ScrollText, Network, Server, Bug, Plug, Boxes,
+  Users, Settings2, KeyRound, BarChart3, Store, ScrollText, Network, Server, Bug, Plug, Boxes, ShieldCheck, FileClock,
   type LucideIcon,
 } from 'lucide-react'
 import {
@@ -23,6 +23,7 @@ import {
   PERM_SERVERINFO_READ,
   PERM_USAGE_READ,
   PERM_USER_READ,
+  PERM_MANAGED_READ,
   type MeUser,
 } from './rbac'
 
@@ -30,6 +31,7 @@ import {
 export {
   PERM_USER_READ, PERM_DEPT_READ, PERM_AUTH_READ, PERM_GATEWAY_READ, PERM_USAGE_READ,
   PERM_MARKET_READ, PERM_CAP_READ, PERM_CONNECTOR_READ, PERM_SERVERINFO_READ, PERM_AUDIT_READ,
+  PERM_MANAGED_READ,
 } from './rbac'
 
 export interface NavEntry {
@@ -44,6 +46,7 @@ export interface NavEntry {
 export const NAV_ENTRIES: NavEntry[] = [
   // 管理分区(super_admin 专属; auditor 仅有 user:read 只读)
   { to: '/users', label: '用户', icon: Users, section: '管理', perms: [PERM_USER_READ] },
+  { to: '/managed-config', label: '用户托管', icon: ShieldCheck, section: '管理', perms: [PERM_MANAGED_READ] },
   { to: '/departments', label: '部门', icon: Network, section: '管理', perms: [PERM_DEPT_READ] },
   { to: '/auth', label: '认证', icon: KeyRound, section: '管理', perms: [PERM_AUTH_READ] },
   // 运维分区(super_admin; auditor 仅有 usage:read)
@@ -71,6 +74,11 @@ export const NAV_ENTRIES: NavEntry[] = [
   { to: '/server-info', label: '服务器信息', icon: Server, section: '运维', perms: [PERM_SERVERINFO_READ] },
   // 审计分区(auditor + super_admin 只读)
   { to: '/audit', label: '审计日志', icon: ScrollText, section: '审计', perms: [PERM_AUDIT_READ] },
+  // 2026-10-02(需求 §8.1):「敏感操作日志」从审计页拆出。登录/登出/管理员自助与
+  // 普通管理操作(login_*/admin_mfa_*/password_change/role_change/gateway_config 等)
+  // **不得混入交互审计列表**(那里是 Prompt/Response 全文)，保留的系统事件放本页。
+  // 数据源与服务端接口与审计页同一条(GET /audit)，凭据同点(读侧 audit:read)。
+  { to: '/system-logs', label: '系统日志', icon: FileClock, section: '审计', perms: [PERM_AUDIT_READ] },
 ]
 
 /** 单个条目是否对当前用户可见。 */

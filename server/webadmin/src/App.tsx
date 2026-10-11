@@ -16,12 +16,16 @@ import { ROUTER_FUTURE } from './lib/router-future'
 // 路由级懒加载(性能优化 2026-P):各页面拆成独立 JS chunk,首屏只加载
 // 当前路由页面;其余页面(含各自依赖)在导航时按需加载,降低首屏体积。
 const UsersPage = lazy(() => import('./pages/Users'))
+const ManagedConfig = lazy(() => import('./pages/ManagedConfig'))
 const Departments = lazy(() => import('./pages/Departments'))
 const Gateway = lazy(() => import('./pages/Gateway'))
 const GatewayFiles = lazy(() => import('./pages/GatewayFiles'))
 const Auth = lazy(() => import('./pages/Auth'))
 const ErrorMonitoring = lazy(() => import('./pages/ErrorMonitoring'))
 const Audit = lazy(() => import('./pages/Audit'))
+// 2026-10-02(需求 §8.1):系统日志页从审计面拆出 —— 登录/登出/管理员自助与普通
+// 管理操作不再混进 Prompt/Response 交互审计列表，单独成页(读权限同 audit:read)。
+const SystemLogs = lazy(() => import('./pages/SystemLogs'))
 const ServerInfo = lazy(() => import('./pages/ServerInfo'))
 // 2026-09-02:「市场 · 技能」与「能力中心」合并为单入口(与客户端 IA 对齐)。
 const CapabilityCenter = lazy(() => import('./pages/CapabilityCenter'))
@@ -357,6 +361,7 @@ export default function App() {
                 <Routes>
                   <Route path="/" element={<Navigate to={landingPath} />} />
                   <Route path="/users" element={<UsersPage />} />
+                  <Route path="/managed-config" element={<ManagedConfig />} />
                   <Route path="/departments" element={<Departments />} />
                   <Route path="/gateway" element={<Gateway />} />
                   <Route path="/gateway-files" element={<GatewayFiles />} />
@@ -387,6 +392,7 @@ export default function App() {
                       等价的那个子页(应用中心现在是「应用」「运营看板」「限制项」三页)。 */}
                   <Route path="/app-platform" element={<Navigate to="/app-center/limits" replace />} />
                   <Route path="/audit" element={<Audit />} />
+                  <Route path="/system-logs" element={<SystemLogs />} />
                   <Route path="/server-info" element={<ServerInfo />} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>

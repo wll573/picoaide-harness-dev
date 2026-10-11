@@ -96,6 +96,7 @@ func TestTransientWebhookFailureRecoversOnFirstRetry(t *testing.T) {
 	}))
 	defer srv.Close()
 	base := bjAt(2026, 9, 15, 0)
+	// created_at 与注入时钟同月（游标下界 = CurrentPeriod(created_at)，见 reports_test.go）。
 	createSubscriptionAt(t, db, "ops", srv.URL, base)
 	clock := base
 	for h := 0; h < 3; h++ {
@@ -145,6 +146,7 @@ func TestTwoInstancesDoNotDuplicateDelivery(t *testing.T) {
 	}))
 	defer srv.Close()
 	now := bjAt(2026, 9, 15, 10)
+	// created_at 与注入时钟同月（游标下界 = CurrentPeriod(created_at)，见 reports_test.go）。
 	createSubscriptionAt(t, db, "ops", srv.URL, now)
 	s1 := NewScheduler(db, time.Hour, func() time.Time { return now })
 	s2 := NewScheduler(db, time.Hour, func() time.Time { return now })
@@ -203,6 +205,7 @@ func TestCrossMonthFailureKeepsPendingPeriod(t *testing.T) {
 
 	// 9/30 23:00（北京）：这一轮应当投 8 月报表，推送失败。
 	sep := bjAt(2026, 9, 30, 23)
+	// created_at 与注入时钟同月（游标下界 = CurrentPeriod(created_at)，见 reports_test.go）。
 	createSubscriptionAt(t, db, "ops", srv.URL, sep)
 	_ = NewScheduler(db, time.Hour, func() time.Time { return sep }).tryRun()
 	// 10/1 00:00（北京）：webhook 恢复 —— 跨过月界，仍必须补投 8 月那一期。

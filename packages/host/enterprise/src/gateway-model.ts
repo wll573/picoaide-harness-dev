@@ -22,10 +22,9 @@ const GATEWAY_LLM_NS = GATEWAY_LLM_ROW_ID as SettingsNamespace
  * the session removes the credential and resets the section.
  *
  * 0.1.7 起这里**只写 `baseURL`**：
- *  · `protocol` 键已从上游 `llm-deepseek` 删除，**配了就抛错**
- *    （`llm-deepseek/src/config.ts:207` → `llm-deepseek: protocol is not configurable;
- *    remove it and use a Messages-compatible baseURL`）。适配器只剩 Messages 一条路径，
- *    端点固定 `<baseURL>/messages` ⇒ 写 `<server>/v1` 就是网关的 `/v1/messages`。
+ *  · `protocol` 键已从上游 `llm-deepseek` 删除，**配了就抛错**。模型网关由
+ *    `gateway-llm.ts` 注册的本地 Chat Completions adapter 接管，写 `<server>/v1`
+ *    后请求固定落到 `/v1/chat/completions`。
  *  · 鉴权不再经过 settings 的 `apiKeyEnv`：那个键只存在于上游
  *    `dsh-llm-deepseek-api-key` 的私有 Config（且它硬编码 `x-api-key`，对只认
  *    `Authorization: Bearer` 的网关必然 401）。本行换成 `gateway-llm.ts` 的 provider

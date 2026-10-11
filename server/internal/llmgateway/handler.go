@@ -70,11 +70,12 @@ var errStreamLineTooLong = errors.New("upstream stream line too long")
 
 // API holds gateway dependencies.
 type API struct {
-	DB     *sql.DB
-	client *http.Client // non-stream requests (bounded timeout)
-	sse    *http.Client // streaming requests (lifecycle = request context)
-	rl     *rateLimiter
-	conc   *concurrencyMeter // 按模型 in-flight 计数(2026-08-31)
+	DB      *sql.DB
+	client  *http.Client // non-stream requests (bounded timeout)
+	sse     *http.Client // streaming requests (lifecycle = request context)
+	rl      *rateLimiter
+	conc    *concurrencyMeter // 按模型 in-flight 计数(2026-08-31)
+	keyPool *providerKeyPool
 }
 
 // handleChatCompletions proxies /v1/chat/completions to the matching upstream.
@@ -116,7 +117,7 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIChat)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -157,11 +158,18 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 		if ups[i].Channel != "" {
 			if ch, ok := channels.Get(ups[i].Channel); ok {
 				ov, rm := ch.RequestOverrides(req.Model)
-				if raw2, err := a.applyChannelOverrides(body, ov, rm); err == nil {
+				if raw2, err := a.applyChannelOverrides(body, ov, rm, ch); err == nil {
 					body = raw2
 				} else if a.rejectBusyBodyEdit(c, usageID, err) {
 					return
 				}
+			}
+		} else if adapter, ok := thinkingAdapterFromDefaultParams(defaultParams); ok {
+			// 手动渠道 + 配置了思考适配器 → 应用参数转换
+			if raw2, err := a.applyThinkingAdapter(body, adapter); err == nil {
+				body = raw2
+			} else if a.rejectBusyBodyEdit(c, usageID, err) {
+				return
 			}
 		}
 		if defaultParams != "" {
@@ -181,13 +189,26 @@ func (a *API) handleChatCompletions(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forward(c, &ups[i], body, req.Stream)
+		// 需求 §7.3：同 provider 内换 Key 重试（最多 maxKeyAttemptsPerProvider 次，
+		// 失败过的 Key 不再选，且只在没有产生可交付内容时重试）。见 forwardWithKeyRetry。
+		// 请求体由闭包捕获（不是形参）—— 见 forwardSendFunc 的注释：outbound_identity_test
+		// 的 AST 守卫要求每个 forward* 调用的实参可追溯到 prepareOutboundBody 的产物，
+		// 而闭包捕获的外层变量仍在判据可见范围内。
+		var attempt Upstream
+		var lease *keyLease
+		attempt, lease, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forward(c, up, body, req.Stream)
+		})
+		_ = lease // 租约的成败已在 forwardWithKeyRetry 内逐次记账（recordLeaseResponse）
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			// 0086（需求 §8.1「模型和供应商」）：把实际命中的供应商名交给审计中间件。
+			// 用 merge 而非整体 set —— 后面对截断打标时不能把它清掉。
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			// P1-6:pending 行在调用上游前插入(失败即拒绝),provider 此刻才
 			// 确定 —— 补一次绑定,让回填结算按实际 provider 取价。
 			if usageID > 0 {
@@ -314,6 +335,160 @@ func (a *API) applyMaxTokensDefault(raw []byte, defaultParams string) ([]byte, e
 	})
 }
 
+// --- 思考参数适配器(手动渠道模型用) ---
+//
+// 背景:客户端(DeepSeek 风格)统一用 thinking.type + reasoning_effort(off/low/high/max)
+// 控制思考模式,但不同模型厂商的参数名和档位不同。渠道型 Provider 通过 Channel 接口
+// 的 TransformRequestBody 做转换;手动型 Provider(channel="")则通过模型 default_params
+// 中的 _thinking_adapter 字段指定转换模式。
+//
+// 支持的适配器模式:
+//   - deepseek(默认/空):原样透传,不做转换
+//   - qwen:档位映射(off→none,low→low,high→medium,max→xhigh),
+//     删除 thinking 字段和 thinking_budget(与 reasoning_effort 互斥)
+//   - strip_open:精细化 strip——关闭时保留 reasoning_effort=none(确保关闭),
+//     开启档位时删除全部思考参数(让模型走自身默认行为)
+//   - strip_all:完全删除 thinking / reasoning_effort / thinking_budget,
+//     模型始终走默认配置
+
+// thinkingAdapterFromDefaultParams 从模型 default_params JSON 中提取
+// _thinking_adapter 值;不存在/解析失败时返回空串(= deepseek 模式,不转换)。
+func thinkingAdapterFromDefaultParams(params string) (string, bool) {
+	if params == "" {
+		return "", false
+	}
+	var p struct {
+		ThinkingAdapter string `json:"_thinking_adapter"`
+	}
+	if err := json.Unmarshal([]byte(params), &p); err != nil {
+		return "", false
+	}
+	if p.ThinkingAdapter == "" {
+		return "", false
+	}
+	return p.ThinkingAdapter, true
+}
+
+// qwenEffortMap:DeepSeek 档位 → Qwen 档位。
+var qwenEffortMap = map[string]string{
+	"off":  "none",
+	"low":  "low",
+	"high": "medium",
+	"max":  "xhigh",
+}
+
+// applyThinkingAdapter 按适配器模式转换请求体中的思考参数。
+// adapter 为空时直接返回原字节(零开销)。
+func (a *API) applyThinkingAdapter(raw []byte, adapter string) ([]byte, error) {
+	if adapter == "" || adapter == "deepseek" {
+		return raw, nil
+	}
+	return rewriteJSONObjectBody(a.db(), raw, func(body map[string]any) error {
+		// 解析当前思考状态
+		thinkingObj, _ := body["thinking"].(map[string]any)
+		thinkingType, _ := thinkingObj["type"].(string)
+		effort, _ := body["reasoning_effort"].(string)
+
+		// 是否处于"关闭"状态
+		off := thinkingType == "disabled" || effort == "off"
+
+		changed := false
+
+		switch adapter {
+		case "qwen":
+			// 档位映射 + 删 thinking + 删 thinking_budget
+			var finalEffort string
+			switch {
+			case off:
+				finalEffort = "none"
+			case effort != "":
+				if mapped, ok := qwenEffortMap[effort]; ok {
+					finalEffort = mapped
+				} else {
+					finalEffort = effort // 未知档位原样保留
+				}
+			default:
+				// 只开了 thinking 没传档位 → 不设 effort,走模型默认(xhigh)
+				finalEffort = ""
+			}
+			// 删除 thinking 字段
+			if _, has := body["thinking"]; has {
+				delete(body, "thinking")
+				changed = true
+			}
+			// 更新 reasoning_effort
+			if finalEffort != "" {
+				if body["reasoning_effort"] != finalEffort {
+					body["reasoning_effort"] = finalEffort
+					changed = true
+				}
+			}
+			// 删除 thinking_budget(互斥)
+			if _, has := body["thinking_budget"]; has {
+				delete(body, "thinking_budget")
+				changed = true
+			}
+
+		case "strip_open":
+			// 精细化 strip:关闭时保留 none,开启时删全部
+			if off {
+				// 删除 thinking 结构,保留 reasoning_effort=none
+				if _, has := body["thinking"]; has {
+					delete(body, "thinking")
+					changed = true
+				}
+				if body["reasoning_effort"] != "none" {
+					body["reasoning_effort"] = "none"
+					changed = true
+				}
+				// 删 thinking_budget
+				if _, has := body["thinking_budget"]; has {
+					delete(body, "thinking_budget")
+					changed = true
+				}
+			} else {
+				// 开启状态:删除所有思考参数,让模型走默认
+				if _, has := body["thinking"]; has {
+					delete(body, "thinking")
+					changed = true
+				}
+				if _, has := body["reasoning_effort"]; has {
+					delete(body, "reasoning_effort")
+					changed = true
+				}
+				if _, has := body["thinking_budget"]; has {
+					delete(body, "thinking_budget")
+					changed = true
+				}
+			}
+
+		case "strip_all":
+			// 完全删除所有思考参数
+			if _, has := body["thinking"]; has {
+				delete(body, "thinking")
+				changed = true
+			}
+			if _, has := body["reasoning_effort"]; has {
+				delete(body, "reasoning_effort")
+				changed = true
+			}
+			if _, has := body["thinking_budget"]; has {
+				delete(body, "thinking_budget")
+				changed = true
+			}
+
+		default:
+			// 未知适配器模式:不做转换
+			return errBodyNoChange
+		}
+
+		if !changed {
+			return errBodyNoChange
+		}
+		return nil
+	})
+}
+
 // applyStreamUsageRequest injects stream_options.include_usage=true into a
 // streaming chat request (P1-1, metering gap). Without it, upstreams omit the
 // final usage chunk in SSE responses by default, so the streaming path could
@@ -341,14 +516,79 @@ func (a *API) applyStreamUsageRequest(raw []byte) ([]byte, error) {
 }
 
 // applyChannelOverrides 深合并 overrides 进请求体,并删除 removeKeys 中的键。
-func (a *API) applyChannelOverrides(raw []byte, overrides map[string]any, removeKeys []string) ([]byte, error) {
+// ch 用于执行渠道级动态转换(如 Qwen 的思考参数映射),可为 nil(跳过转换)。
+func (a *API) applyChannelOverrides(raw []byte, overrides map[string]any, removeKeys []string, ch channels.Channel) ([]byte, error) {
 	return rewriteJSONObjectBody(a.db(), raw, func(body map[string]any) error {
-		for _, k := range removeKeys {
-			delete(body, k)
+		changed := false
+
+		// 1. 渠道级动态请求体转换(如 Qwen 的 thinking 参数映射)
+		if ch != nil {
+			if ch.TransformRequestBody(body) {
+				changed = true
+			}
 		}
-		deepMerge(body, overrides)
+
+		// 2. 删除指定 key
+		for _, k := range removeKeys {
+			if _, ok := body[k]; ok {
+				delete(body, k)
+				changed = true
+			}
+		}
+
+		// 3. 深合并 overrides
+		if len(overrides) > 0 {
+			deepMerge(body, overrides)
+			changed = true
+		}
+
+		if !changed {
+			return errBodyNoChange
+		}
 		return nil
 	})
+}
+
+// applyChannelRequestOverrides preserves the pre-merge helper signature for
+// package-local callers and older extensions. The protocol argument is kept
+// for source compatibility; channel selection already carries the protocol
+// specific behavior.
+func (a *API) applyChannelRequestOverrides(raw []byte, ch channels.Channel, modelID, _ string) ([]byte, error) {
+	// The old helper exposed Qwen's pre-merge wire shape. Keep that exact
+	// compatibility behavior for extensions still calling this private helper;
+	// the production path below uses the newer TransformRequestBody contract.
+	var legacyQwenBudget any
+	var legacyQwenThinking bool
+	if _, ok := ch.(channels.Qwen); ok {
+		var body map[string]any
+		if err := json.Unmarshal(raw, &body); err == nil {
+			if v, exists := body["thinking_budget"]; exists {
+				legacyQwenBudget = v
+			}
+			if thinking, ok := body["thinking"].(map[string]any); ok {
+				thinkingType, _ := thinking["type"].(string)
+				legacyQwenThinking = strings.EqualFold(thinkingType, "enabled")
+			}
+		}
+	}
+	var overrides map[string]any
+	var removeKeys []string
+	if ch != nil {
+		overrides, removeKeys = ch.RequestOverrides(modelID)
+	}
+	out, err := a.applyChannelOverrides(raw, overrides, removeKeys, ch)
+	if err != nil || legacyQwenBudget == nil && !legacyQwenThinking {
+		return out, err
+	}
+	var body map[string]any
+	if json.Unmarshal(out, &body) != nil {
+		return out, err
+	}
+	body["enable_thinking"] = legacyQwenThinking
+	if legacyQwenBudget != nil {
+		body["thinking_budget"] = legacyQwenBudget
+	}
+	return json.Marshal(body)
 }
 
 // deepMerge 将 src 合并进 dst(嵌套 map 递归合并,标量覆盖)。
@@ -403,6 +643,11 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 	if stream {
 		client = a.sse
 	}
+	// 0089（需求 §7「超时策略」）：该上游显式配了超时时改用专属客户端。
+	// 语义是**首字节超时**（ResponseHeaderTimeout），与上游默认的 120s 同一档，
+	// 不是整个请求的总时限 —— 用 client.Timeout 会把长报告生成掐断（审计2026-M11
+	// 踩过：全量 client.Timeout 截断长响应），流式更是会整条流被杀。
+	client = clientForTimeout(client, up.TimeoutSeconds)
 	// F4: 流式请求的 context 与客户端断开解耦 —— 客户端断线后 serveStream
 	// 仍会 drain 上游直到拿到 usage chunk,否则按已转发内容估算计费;若沿用
 	// 客户端 context,取消会让上游停止、用量永远拿不到(免费漏洞)。
@@ -431,6 +676,35 @@ func (a *API) forward(c *gin.Context, up *Upstream, body outboundBody, stream bo
 // nonStreamBodyTimeout bounds reading a non-stream upstream body once headers
 // arrived (审计2026-M11:全量 client.Timeout 会截断长报告生成;这里只限 body 读)
 var nonStreamBodyTimeout = 10 * time.Minute
+
+// upstreamHeaderTimeoutCache 缓存"按超时值定制的客户端"，键是超时秒数。
+//
+// 为什么必须缓存：http.Client 的主要成本在 Transport（连接池）。每个请求新建一个
+// 客户端 = 每次请求新建一套连接池 ⇒ 连接无法复用、TLS 握手与 TCP 重建开销翻倍，
+// 高并发下表现为连接数暴涨。这里按**超时值**复用（取值域很小，实际就是管理员配的
+// 那几个数）；Transport 仍是各自的，但同一上游的请求共享同一个池。
+var upstreamHeaderTimeoutCache sync.Map // int → *http.Client
+
+// clientForTimeout 返回带指定首字节超时的客户端；seconds <= 0 表示"用内置默认"，
+// 直接返回传入的客户端（与今天完全一致）。
+//
+// 注意 Transport 是**复用同一份** newUpstreamTransport() 的结果还是新建：
+// 这里新建，因为 ResponseHeaderTimeout 是 Transport 上的字段，改它会影响所有
+// 共用该 Transport 的上游。新建的 Transport 与默认那份配置完全相同（含
+// SafeOutboundTransport 的 SSRF 复检），只有超时不同。
+func clientForTimeout(base *http.Client, seconds int) *http.Client {
+	if seconds <= 0 {
+		return base
+	}
+	if v, ok := upstreamHeaderTimeoutCache.Load(seconds); ok {
+		return v.(*http.Client)
+	}
+	t := newUpstreamTransport()
+	t.ResponseHeaderTimeout = time.Duration(seconds) * time.Second
+	c := &http.Client{Transport: t}
+	actual, _ := upstreamHeaderTimeoutCache.LoadOrStore(seconds, c)
+	return actual.(*http.Client)
+}
 
 // passHeaders 是透传给客户端的上游响应头白名单:其余头(Set-Cookie/Server/
 // hop-by-hop 等)一律丢弃(审计2026-L10)
@@ -540,6 +814,7 @@ func (a *API) serveJSON(c *gin.Context, resp *http.Response, userID, providerID 
 		var completionEstimated bool
 		ct, completionEstimated = estimateCompletionFallback(pt, ct, int64(len(body)))
 		estimated = estimated || completionEstimated
+		mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
 		usageID, err := serverstore.RecordUsageKindCachedEstimatedForProvider(a.DB, userID, providerID, model, pt, ct, cch, kind, estimated)
 		if err != nil {
 			// FIX-05 + G5b(审计 r3):**任何**结算失败都不得交付 —— 事务已回滚,
@@ -628,6 +903,27 @@ func sanitizeUpstreamError(body []byte, secrets []string) []byte {
 // 在拿到真实 usage chunk 与不过度占用上游资源之间折中。
 const streamDrainTimeout = 2 * time.Minute
 
+// streamKeepAliveEvery 是两次 SSE 心跳注释之间的最短间隔(需求 §12「代理缓冲导致
+// 前端长时间无响应」)。
+//
+// 为什么必须有它:整条链路只在"收到上游行"时才写字节。长思考模型在 reasoning
+// 阶段可以几分钟不吐 token,那段时间连接上**一个字节都不流动** —— 三个后果:
+//
+//	① nginx 等反代的 proxy_read_timeout 会掐断空闲连接(缺省 60s,正好落在
+//	   reasoning 的常见时长里);
+//	② 服务端自己的 WriteTimeout(5min)同样会掐断;
+//	③ 客户端分不出"模型在思考"与"连接死了",界面一直转圈。
+//
+// 心跳是 SSE 的**注释行**(`: ...`),按规范客户端必须忽略它 —— 因此它不改变
+// 事件语义,只让字节重新流动、刷新两侧的超时计时器。
+//
+// 取 15s 的理由:必须显著小于最常见的 60s 反代缺省(留出抖动余量),又不能让
+// 空闲流每分钟多写几十行(注释行同样占用带宽与日志面)。
+//
+// 与 streamIdleTimeout 同样做成可注入的 var(唯一理由是测试要把沉默窗口压到
+// 毫秒级 —— 真等 15s 的用例没人会跑,而不跑的判据等于没有)。
+var streamKeepAliveEvery = 15 * time.Second
+
 func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, secrets []string, requestBody clientBody, promptTokenCap int64) {
 	defer resp.Body.Close()
 	// upstream 4xx: no SSE to stream, the pending row is dropped
@@ -653,6 +949,11 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 	}
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
+	// SSE must reach the desktop client incrementally through Caddy/nginx or
+	// another reverse proxy. These headers are harmless for direct responses
+	// and prevent common proxy/cache buffering regressions in intranet setups.
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.WriteHeader(resp.StatusCode)
 	fl, _ := c.Writer.(http.Flusher)
 	br := bufio.NewReader(resp.Body)
@@ -665,6 +966,12 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 	// 它就是"正常结束"与"上游中途断连"的唯一区分依据 —— 没有它，两种形态在
 	// 客户端与服务端日志里都是"流没了"。
 	sawTerminal := false
+	// 合入口径（内网 HTTP 交付分支）：该分支另有一份等价的收尾判定 `doneSeen`
+	// （只认字面的 `data: [DONE]`）。二者是同一件事的两种实现，**保留本实现** ——
+	// 它按协议取标记（见 streamTerminalMarkerSeen：Responses 的 `response.completed`
+	// 不发 `[DONE]`，Anthropic 用 `message_stop`），只认 `[DONE]` 会把每一条正常
+	// 的 Responses/Anthropic 流都判成异常。同事那份随之删除，否则同一次截断会
+	// 写两条 in-band error。
 	var forwardedBytes int64
 	// deliveredContentBytes/Chunks 是**正文内容**口径(r7 r7f1-2,P2):只有解析到
 	// 正文/工具调用增量才累加,data: [DONE]/event:/注释/纯 usage 行/上游 error
@@ -716,6 +1023,11 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 	idleTick := time.NewTicker(time.Second)
 	defer idleTick.Stop()
 	lastLineAt := time.Now()
+	// lastClientWriteAt 是"上次向客户端写出字节"的时刻(含心跳注释行)。与
+	// lastLineAt 分开跟踪:后者回答"上游还活着吗"(空闲超时判据),前者回答
+	// "连接上多久没有字节流动了"(心跳判据)—— 一个健康但沉默的上游正是心跳
+	// 要覆盖的场景,拿 lastLineAt 当心跳判据就永远发不出去。
+	lastClientWriteAt := time.Now()
 	// F4:客户端断开后的 drain 上限,防止上游长时间占资源。
 	drainDeadline := time.Time{}
 
@@ -791,9 +1103,12 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 					if _, werr := c.Writer.WriteString(line); werr != nil {
 						clientGone = true
 						drainDeadline = time.Now().Add(streamDrainTimeout)
-					} else if fl != nil {
-						touchSSEWriteDeadline(c)
-						fl.Flush()
+					} else {
+						lastClientWriteAt = time.Now()
+						if fl != nil {
+							touchSSEWriteDeadline(c)
+							fl.Flush()
+						}
 					}
 				}
 			}
@@ -801,6 +1116,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 				if errors.Is(r.err, errStreamLineTooLong) {
 					// P2-8: 单行超过上限——不回传半行,直接中断该流。
 					lineTooLong = true
+					mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "line_too_long", ErrorMessage: "上游响应单行过大,流被中断"})
 					log.Printf("gateway: upstream stream line exceeds %d bytes, terminating", maxStreamLineBytes)
 					if !clientGone {
 						fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应单行过大"}}`)
@@ -833,6 +1149,7 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 							"(forwarded=%d bytes, delivered_content=%d bytes, chunks=%d): "+
 							"treating as truncated and closing with an error event",
 							forwardedBytes, deliveredContentBytes, deliveredContentChunks)
+						mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "truncated", ErrorMessage: "上游流在完成标记之前中断"})
 						fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游流在完成标记之前中断"}}`)
 						if fl != nil {
 							touchSSEWriteDeadline(c)
@@ -842,8 +1159,28 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 				}
 			}
 		case <-idleTick.C:
+			// 心跳优先于空闲判定:连接沉默超过 streamKeepAliveEvery 就写一条注释行,
+			// 让反代与服务端 WriteTimeout 的计时器重新起算。放在 idle 判定**之前**
+			// 是有意的 —— 上游正在长思考(idle 尚未超时)时正是心跳最该发的时候;
+			// 若放到后面,只有"已经超时"的流才会收到心跳,而那时已经在收尾了。
+			if !clientGone && time.Since(lastClientWriteAt) >= streamKeepAliveEvery {
+				if _, werr := c.Writer.WriteString(": keep-alive\n\n"); werr != nil {
+					clientGone = true
+					drainDeadline = time.Now().Add(streamDrainTimeout)
+				} else {
+					// 时间戳**无条件**更新:字节已经进到 ResponseWriter 了,是否拿到
+					// Flusher 只影响"何时真正发出",不影响"我们刚写过"。挂在 fl 分支里
+					// 会让 fl==nil 的路径每 tick 都重发一次心跳。
+					lastClientWriteAt = time.Now()
+					if fl != nil {
+						touchSSEWriteDeadline(c)
+						fl.Flush()
+					}
+				}
+			}
 			if time.Since(lastLineAt) > streamIdleTimeout {
 				idleTimedOut = true
+				mergeTranscriptOutcome(c, TranscriptOutcome{Incomplete: true, ErrorType: "idle_timeout", ErrorMessage: "上游响应空闲超时"})
 				log.Printf("gateway: stream idle timeout after %v, terminating", streamIdleTimeout)
 				if !clientGone {
 					fmt.Fprintf(c.Writer, "data: %s\n\n", `{"error":{"code":"UPSTREAM","message":"上游响应空闲超时"}}`)
@@ -908,6 +1245,19 @@ func (a *API) serveStream(c *gin.Context, resp *http.Response, usageID int64, se
 			}
 		}
 	}
+	// Persist the same final token values used for settlement in the transcript
+	// metadata so audit rows can be reconciled with usage rows.
+	auditPT, auditCT := reportedPT, reportedCT
+	if auditPT <= 0 || auditCT <= 0 {
+		billable := deliveredContentChunks > 0 || deliveredContentBytes > 0 || reportedCT > 0 || reportedCache > 0
+		if billable {
+			auditPT, _ = estimatePromptFallback(auditPT, ptSeen, requestBody, promptTokenCap)
+			auditCT, _ = estimateCompletionFallback(auditPT, auditCT, deliveredContentBytes)
+		} else {
+			auditPT, auditCT = 0, 0
+		}
+	}
+	mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: auditPT, OutputTokens: auditCT})
 }
 func readLineBounded(br *bufio.Reader, max int) (string, error) {
 	var buf []byte

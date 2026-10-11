@@ -345,6 +345,27 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"writeAuditBatch":   r13gePinned,    // audit.go —— usageWriteTx
 	"BalanceLedgerPage": r13gePinned,    // balance.go
 	"BalanceLedgerSum":  r13gePinned,    // balance.go
+	// R27（0083–0087 交付面）：审计正文与 Key 池收进族内集合后，触碰它们的函数
+	// 一律改走池上已钉入口 —— 读用 withUsageSearchPathRead，写用 withUsageSearchPath。
+	"AddGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"UpdateGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"DeleteGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"ResetGatewayProviderAPIKey":  r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"ListGatewayProviderAPIKeys":  r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"GetGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"CreateLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
+	"MigrateLLMTranscriptPrivacy": r13gePinned, // transcript_migration.go —— withUsageSearchPath
+	"AppendLLMTranscriptChunk":    r13gePinned, // transcript.go —— withUsageSearchPath
+	"FinishLLMTranscriptDetailed": r13gePinned, // transcript.go —— withUsageSearchPath
+	"GetLLMTranscript":            r13gePinned, // transcript.go —— withUsageSearchPathRead
+	"ReadLLMTranscriptResponse":   r13gePinned, // transcript.go —— withUsageSearchPathRead
+	"PurgeOldLLMTranscripts":      r13gePinned, // transcript.go —— withUsageSearchPath
+	// 会话分组审计（`dcceefe07a` 按 session 分组）与明细列表共用同一个分页查询实现：
+	// SQL 全部落在 `listLLMTranscriptRows`（已钉只读入口），两个公开入口都是它的薄包装，
+	// 因此 SQL 持有方是 pinned、两个入口是 via-caller。
+	"ListLLMTranscriptsFiltered": r13geViaCaller, // transcript.go —— listLLMTranscriptRows
+	"ListLLMTranscriptSessions":  r13geViaCaller, // transcript_sessions.go —— listLLMTranscriptRows
+	"listLLMTranscriptRows":      r13gePinned,    // transcript.go —— withUsageSearchPathRead（明细与会话共用的分页查询）
 	// R18C-02：两个认领入口都只是 claimGatewayFile 的薄包装（认领协议的唯一实现，
 	// 已钉写事务在那里），所以它们是 via-caller。
 	"ClaimExpiredGatewayFile":              r13geViaCaller, // gateway_files.go —— claimGatewayFile
@@ -399,6 +420,7 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"UserMonthlyCostBatch":                 r13gePinned,    // usage.go
 	"UserMonthlyUsage":                     r13gePinned,    // usage.go
 	"UserMonthlyUsageBatch":                r13gePinned,    // usage.go
+	"UserTotalInputOutputTokens":           r13gePinned,    // usage.go —— newUsageReadConn
 	"UserTotalUsageCost":                   r13gePinned,    // usage.go
 	"gatewayFileReapClaimActive":           r13gePinned,    // gateway_files.go
 	"GrantMonthlyBalance":                  r13gePinned,    // balance.go —— 事务内 pinUsageSearchPath
@@ -467,6 +489,8 @@ var r13geViaCallerOwners = map[string]string{
 	// 事务版（同一个函数的 Tx 形态）：由它们的池上包装钉。
 	"AuditLogTx":                  "llmgateway admin 的 provider 创建/更新 / 模型删除事务（serverstore.UsageWriteTx 开出的已钉事务）",
 	"listAuditLogsOn":             "listAuditLogs（withUsageSearchPathRead）",
+	"ListLLMTranscriptsFiltered":  "listLLMTranscriptRows（withUsageSearchPathRead，明细列表与会话列表共用的分页查询唯一实现）",
+	"ListLLMTranscriptSessions":   "listLLMTranscriptRows（withUsageSearchPathRead，同一实现；会话维度只是换 GROUP BY）",
 	"verifyAuditChainOn":          "VerifyAuditChain（withUsageSearchPathRead）",
 	"ClaimExpiredGatewayFile":     "claimGatewayFile（R18C-02：认领协议的唯一实现，内部 usageWriteTx 已钉）",
 	"ClaimGatewayFileForDeletion": "claimGatewayFile（R18C-02：删除路径与回收器共用同一认领实现）",

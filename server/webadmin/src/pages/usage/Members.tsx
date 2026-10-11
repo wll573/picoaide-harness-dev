@@ -8,9 +8,8 @@ import { Input } from '../../components/ui/input'
 import { Button } from '../../components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { PageHeader } from '../../components/page-header'
-import { employeeCountText, fmtY, type UserInfo } from './common'
-import { fmtTokens } from '../../lib/format'
-import { cn } from '../../lib/utils'
+import { employeeCountText, type UserInfo } from './common'
+import { fmtFull, fmtTokens } from '../../lib/format'
 
 // 成员用量(本月维度):用户列表 + 搜索;行点击 → 个人详情二级页
 export default function UsageMembers() {
@@ -46,7 +45,7 @@ export default function UsageMembers() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="成员用量" desc="本月每人消耗与配额(自然月口径);点击成员查看其近 30 天个人明细" />
+      <PageHeader title="成员用量" desc="本月每人 Token 消耗(自然月口径);点击成员查看其近 30 天个人明细" />
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <CardTitle className="text-base">成员列表</CardTitle>
@@ -71,9 +70,7 @@ export default function UsageMembers() {
                 <TableRow>
                   <TableHead>用户名</TableHead>
                   <TableHead>部门</TableHead>
-                  <TableHead className="text-right">本月费用</TableHead>
-                  <TableHead className="text-right">本月 tokens</TableHead>
-                  <TableHead className="text-right">账户余额</TableHead>
+                  <TableHead className="text-right">月度用量</TableHead>
                   <TableHead className="w-16">状态</TableHead>
                 </TableRow>
               </TableHeader>
@@ -87,22 +84,16 @@ export default function UsageMembers() {
                         </Link>
                       </TableCell>
                       <TableCell className="text-muted-foreground">{(u.groups ?? []).filter((g) => g !== '全员').join(', ') || '—'}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtY(u.monthly_cost)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtTokens(u.monthly_usage)}</TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {u.balance_activated ? (
-                          <span className={cn((u.balance_money ?? 0) <= 0 ? 'font-semibold text-destructive' : 'text-foreground')}>{fmtY(u.balance_money ?? 0)}</span>
-                        ) : (
-                          <span className="text-muted-foreground">未开通</span>
-                        )}
-                      </TableCell>
+                      {typeof u.monthly_usage === 'number'
+                        ? <TableCell className="text-right tabular-nums" title={fmtFull(u.monthly_usage)}>{fmtTokens(u.monthly_usage)}</TableCell>
+                        : <TableCell className="text-right text-muted-foreground">暂无用量</TableCell>}
                       <TableCell>
                         <Badge variant={u.status === 1 ? 'secondary' : 'destructive'}>{u.status === 1 ? '正常' : '停用'}</Badge>
                       </TableCell>
                     </TableRow>
                   )
                 })}
-                {users.length === 0 && <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无成员</TableCell></TableRow>}
+                {users.length === 0 && <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">暂无成员</TableCell></TableRow>}
               </TableBody>
             </Table>
           )}

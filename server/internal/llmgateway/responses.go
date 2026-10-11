@@ -64,7 +64,7 @@ func (a *API) handleResponses(c *gin.Context) {
 		return
 	}
 
-	ups, err := MatchModelsByProtocol(a.DB, req.Model, "openai")
+	ups, err := MatchModelsByProtocolFor(a.DB, req.Model, "openai", EndpointOpenAIResponses)
 	if err != nil {
 		serverauth.WriteError(c, http.StatusInternalServerError, "INTERNAL", "模型路由查询失败")
 		return
@@ -96,11 +96,18 @@ func (a *API) handleResponses(c *gin.Context) {
 		if ups[i].Channel != "" {
 			if ch, ok := channels.Get(ups[i].Channel); ok {
 				ov, rm := ch.RequestOverrides(req.Model)
-				if raw2, err := a.applyChannelOverrides(body, ov, rm); err == nil {
+				if raw2, err := a.applyChannelOverrides(body, ov, rm, ch); err == nil {
 					body = raw2
 				} else if a.rejectBusyBodyEdit(c, usageID, err) {
 					return
 				}
+			}
+		} else if adapter, ok := thinkingAdapterFromDefaultParams(defaultParams); ok {
+			// 手动渠道 + 配置了思考适配器 → 应用参数转换
+			if raw2, err := a.applyThinkingAdapter(body, adapter); err == nil {
+				body = raw2
+			} else if a.rejectBusyBodyEdit(c, usageID, err) {
+				return
 			}
 		}
 		if defaultParams != "" {
@@ -117,13 +124,17 @@ func (a *API) handleResponses(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forwardEndpoint(c, &ups[i], body, req.Stream, "/responses")
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/responses")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {
 					log.Printf("gateway: bind usage %d to provider %d failed: %v", usageID, ups[i].ID, serr)

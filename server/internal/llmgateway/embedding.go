@@ -113,23 +113,30 @@ func (e *Embedder) EmbedWithProvider(ctx context.Context, model string, texts []
 	var lastErr error
 	for i := range ups {
 		lastErr = nil // a fresh provider must not inherit a previous failure
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURLFor(ups[i].BaseURL, "/embeddings"), bytes.NewReader(body))
-		if err != nil {
-			lastErr = err
+		// 需求 §7.3：同 provider 内换 Key 重试（与 chat/completions/responses 同一实现）。
+		// 这里不能直接调 forwardWithKeyRetry —— embedding 不用 forward（它自己建请求、
+		// 有自己的客户端与响应解析），所以把"发一次"作为闭包传进去，重试策略仍是共享的那份。
+		api := &API{DB: e.db, keyPool: newProviderKeyPool(e.db)}
+		var resp *http.Response
+		// 命中的 Upstream 不回填：embedding 的归属按 `ups[i].ID` 记账（见函数返回处
+		// 的 providerID）—— 换 Key 不改变 provider，所以这里不需要它。
+		_, _, resp, lastErr = api.forwardWithKeyRetry(nil, ups[i], func(up *Upstream) (*http.Response, error) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURLFor(up.BaseURL, "/embeddings"), bytes.NewReader(body))
+			if err != nil {
+				return nil, err
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+up.APIKey)
+			return e.client.Do(req)
+		})
+		if lastErr != nil {
+			log.Printf("gateway: embed model %s provider %q failed: %v", safeModelForLog(model), ups[i].Name, lastErr)
 			continue
 		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+ups[i].APIKey)
-		resp, err := e.client.Do(req)
-		if err != nil {
-			lastErr = err
-			log.Printf("gateway: embed model %s provider %q failed: %v", safeModelForLog(model), ups[i].Name, err)
-			continue
-		}
-		raw, err := io.ReadAll(io.LimitReader(resp.Body, int64(maxUpstreamBody)))
+		var raw []byte
+		raw, lastErr = io.ReadAll(io.LimitReader(resp.Body, int64(maxUpstreamBody)))
 		resp.Body.Close()
-		if err != nil {
-			lastErr = err
+		if lastErr != nil {
 			continue
 		}
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {

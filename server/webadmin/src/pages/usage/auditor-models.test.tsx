@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { request } from '../../api'
 import { setCurrentAdmin } from '../../lib/rbac'
@@ -78,6 +78,12 @@ describe('审计员访问模型分析(R7-RV-1 residual)', () => {
     expect(paths.some((p) => p === '/api/server/admin/models')).toBe(false)
     // 并给出解释(而不是静默显示 "—")。
     expect(screen.getAllByText(/gateway:read/).length).toBeGreaterThan(0)
+    // §6 回归守卫:该角色看不到模型目录,也就不得看到任何单价/金额文案,
+    // 且有权读的用量行改成 Token 口径(100 + 50 = 150 总 Token)。
+    expect(screen.queryByText('2.00 / 8.00')).toBeNull()
+    expect(screen.queryByText(/¥/)).toBeNull()
+    const gptRow = screen.getByText('gpt-4o').closest('tr')!
+    expect(within(gptRow).getByText('150')).toBeInTheDocument()
   })
 
   it('keeps the 模型分析 tab visible for an auditor (usage:read is enough for this page)', () => {
@@ -88,10 +94,16 @@ describe('审计员访问模型分析(R7-RV-1 residual)', () => {
 
   // 第三十二轮 FIX-47 子泳道 B：上面那条是**负例**（没有 gateway:read ⇒ 不请求、
   // 给说明）。负例对"权限点写错"不敏感 —— `hasPermission` 恒 false 时它照样通过。
-  // 这一条是它的另一半：**显式授予 gateway:read** 时请求必须真的发出、单价必须
-  // 真的渲染（目录与用量 join 得出来）。实参写成匹配不上的任何值（含行内字面量
-  // `'gateway:raed'`）⇒ 本用例当场红。
-  it('持有 gateway:read 时必须请求模型目录并渲染单价(正向夹具)', async () => {
+  // 这一条是它的另一半：**显式授予 gateway:read** 时请求必须真的发出、模型明细
+  // 必须真的按 Token 口径渲染（用量行 → 总 Token 单元格）。实参写成匹配不上的
+  // 任何值（含行内字面量 `'gateway:raed'`）⇒ 本用例当场红。
+  //
+  // 2026-10 内网交付 §6(金额 → Token)：原先断言的是「单价(¥/1M)」列里的
+  // 「2.00 / 8.00」——该列已随"管理端不得展示单价"整列删除，断言在旧口径下必红。
+  // 现在拆成两侧(既有风格：新行为 + 旧行为回归守卫)：
+  //   ✅ 新行为：模型明细行渲染 输入/输出/总 Token（gpt-4o 100 + 50 = 150）；
+  //   ✅ 旧行为已消失：表头不得再有「单价」，单价文本不得出现在任何单元格里。
+  it('持有 gateway:read 时必须请求模型目录并渲染 Token 口径(正向夹具)', async () => {
     setCurrentAdmin({ role: 'super_admin', permissions: ['usage:read', 'gateway:read'] })
     mockRequest.mockImplementation(async (path: string) => {
       if (path.startsWith('/api/server/admin/usage?group=model')) {
@@ -110,9 +122,21 @@ describe('审计员访问模型分析(R7-RV-1 residual)', () => {
     })
     render(<MemoryRouter future={ROUTER_FUTURE} initialEntries={['/usage/models']}><UsageModels /></MemoryRouter>)
 
-    // 单价来自 `/models`（gateway:read）与用量行的 join：没有权限时这一格是 "—"。
-    expect(await screen.findByText('2.00 / 8.00')).toBeInTheDocument()
+    // 模型目录仍要请求(它有 gateway:read)：行 `gpt-4o` 与用量行 join 出 150 总 Token。
     expect(mockRequest.mock.calls.map(([p]) => String(p))).toContain('/api/server/admin/models')
+    const row = (await screen.findByText('gpt-4o')).closest('tr')!
+    expect(within(row).getByText('100')).toBeInTheDocument() // 输入 Token
+    expect(within(row).getByText('50')).toBeInTheDocument()  // 输出 Token
+    expect(within(row).getByText('150')).toBeInTheDocument() // 总 Token(100 + 50)
+
+    // §6 回归守卫：单价列已被整列删除，不得以任何形式（表头或单元格）回流。
+    // 断言表头集合非空 ⇒ 上面的 join 不是"空列表碰巧不含单价"的空守卫。
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent)
+    expect(headers.length).toBeGreaterThan(0)
+    expect(headers.join('|')).not.toContain('单价')
+    expect(screen.queryByText('2.00 / 8.00')).toBeNull()
+    expect(screen.queryByText(/¥/)).toBeNull()
+    // 有 gateway:read ⇒ 不再出现"没有权限"的解释条。
     expect(screen.queryByText(/gateway:read/)).toBeNull()
   })
 })
@@ -122,13 +146,17 @@ describe('用量中心子导航(TABS 表驱动实参 t.perm)', () => {
   // 权限点来自同文件 `TABS` 常量表）。它被
   // `lib/nav.test.ts` 的调用点守卫**显式登记**放行，登记的前提是"表取值仍来自
   // rbac.ts 的 PERM_*"（结构判据）。本条是它的**行为**另一半：显式授予 TABS 里
-  // 出现的全部权限点 ⇒ 7 个标签一个都不能少。
-  it('持有全部权限点时 7 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', () => {
+  // 出现的全部权限点 ⇒ 每个标签都不能少。
+  //
+  // 「余额」项已随内网交付口径下线（2026-10：管理端不展示金额/充值），故列表
+  // 从 7 项变 6 项 —— 该标签**不得**再出现，这条同时是下线的回归守卫。
+  it('持有全部权限点时 6 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', () => {
     setCurrentAdmin({ role: 'super_admin', permissions: ['usage:read', 'dept:read', 'user:read', 'report:read'] })
     render(<MemoryRouter future={ROUTER_FUTURE} initialEntries={['/usage']}><UsageLayout /></MemoryRouter>)
-    for (const label of ['总览', '部门用量', '成员用量', '模型分析', '请求日志', '余额', '报表订阅']) {
+    for (const label of ['总览', '部门用量', '成员用量', '模型分析', '请求日志', '报表订阅']) {
       expect(screen.getByRole('link', { name: new RegExp(label) })).toBeInTheDocument()
     }
+    expect(screen.queryByRole('link', { name: /余额/ }), '「余额」已下线，不得再出现在子导航').toBeNull()
   })
 })
 

@@ -75,6 +75,7 @@ var sweepParamValues = map[string]string{
 	"name":      "x",
 	"kind":      "x",
 	"file_id":   "x",
+	"key_id":    "1",
 }
 
 // sweepWildcardValue 是 `*name` 通配段的替换值。
@@ -238,6 +239,10 @@ var sweepPublicAPIRoutes = map[string]sweepExpect{
 	"POST /api/client/v2/auth/login": {
 		statuses: []int{400, 401, 403, 429}, classes: []string{sweepClassJSON},
 		why: "员工账密登录（公开）；空 body ⇒ VALIDATION 信封",
+	},
+	"POST /api/client/v2/auth/register": {
+		statuses: []int{400, 404, 409, 429}, classes: []string{sweepClassJSON},
+		why: "员工自助注册入口（公开）；未启用时返回 404，启用后按校验/冲突/限流返回 JSON 信封",
 	},
 	"GET /api/client/v2/auth/methods": {
 		statuses: []int{200}, classes: []string{sweepClassJSON},
@@ -404,6 +409,10 @@ func sweepExpectationFor(method, route string) (sweepExpect, bool) {
 // sweepEngine 构造扫描用的完整生产路由树（真实 DB + 与生产同序的 NoRoute 护栏）。
 func sweepEngine(t *testing.T, db *sql.DB) *gin.Engine {
 	t.Helper()
+	// Transcript persistence encrypts payloads with the configured master key.
+	// API sweep uses a disposable real database, so provide a deterministic test key
+	// instead of making the result depend on the developer's shell environment.
+	t.Setenv("PICOAI_MASTER_KEY", "0123456789abcdef")
 	r := buildRouterWithDB(t, db)
 	dist, _ := fs.Sub(webadmin.FS, "dist")
 	mountAPIGuards(r, db, http.FileServer(http.FS(dist)), dist)

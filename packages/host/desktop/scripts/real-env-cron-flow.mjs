@@ -39,7 +39,10 @@ function reportStep(name, ok, detail = '') {
 const wait = ms => new Promise(r => setTimeout(r, ms))
 
 const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()
-const main = list.find(t => t.type === 'page' && t.url.includes('dsh-desktop-mode')) ?? list.find(t => t.type === 'page')
+const main = list.find(t => t.type === 'page'
+  && !/\/browser-(shell|overlay)(\?|$)/.test(t.url)
+  && t.url.includes('dsh-desktop-mode'))
+  ?? list.find(t => t.type === 'page' && !/\/browser-(shell|overlay)(\?|$)/.test(t.url))
 if (!main) { console.error('no page target'); process.exit(1) }
 const ws = new WebSocket(main.webSocketDebuggerUrl)
 let id = 0
@@ -71,7 +74,11 @@ async function screenshot(name) {
 }
 async function clickLabel(label, waitMs = 2500) {
   const r = await ev(`(() => {
-    const els = [...document.querySelectorAll('button')].filter(b => b.textContent?.trim() === ${esc(label)} && b.offsetParent)
+    const els = [...document.querySelectorAll('button')].filter(b => {
+      if (b.offsetParent === null) return false
+      return (b.textContent ?? '').trim() === ${esc(label)}
+        || (b.getAttribute('aria-label') ?? '').trim() === ${esc(label)}
+    })
     if (!els.length) return 'NOT_FOUND'
     els[0].click()
     return 'CLICKED'
@@ -113,6 +120,19 @@ async function openFootMenu(waitMs = 700) {
  * @returns `'CLICKED'` / `'NOT_FOUND'` / `'OPEN_FAILED'` / `'NOT_ACTIVE'`.
  */
 async function openPanelFromFootMenu(label, panelId, waitMs = 3500) {
+  const direct = await ev(`(() => {
+    const visible = el => { const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && getComputedStyle(el).display !== 'none' }
+    const hit = [...document.querySelectorAll('.pico-foot-nav-row')].filter(visible)
+      .find(b => (b.textContent ?? '').trim() === ${esc(label)} || (b.getAttribute('aria-label') ?? '').trim() === ${esc(label)})
+    if (hit === undefined) return 'NOT_FOUND'
+    hit.click()
+    return 'CLICKED'
+  })()`)
+  if (direct === 'CLICKED') {
+    await wait(waitMs)
+    const active = await ev(`document.documentElement.getAttribute('data-dsh-panel-active')`)
+    return active === panelId ? 'CLICKED' : 'NOT_ACTIVE'
+  }
   const opened = await openFootMenu()
   if (opened !== 'OPENED' && opened !== 'ALREADY_OPEN') return opened === 'NOT_FOUND' ? 'NOT_FOUND' : 'OPEN_FAILED'
   const clicked = await ev(`(() => {
@@ -138,7 +158,9 @@ try {
   await screenshot('f01-cron-center')
 
   // Open the editor and fill the full form.
-  await clickLabel('+ 新建任务', 1500)
+  await clickLabel('取消', 500).catch(() => {})
+  const newJobClick = await clickLabel('新建任务', 1500)
+  if (newJobClick !== 'CLICKED') await clickLabel('+ 新建任务', 1500)
   await wait(800)
   await screenshot('f02-editor-empty')
 
@@ -151,21 +173,12 @@ try {
       s.call(el, v)
       el.dispatchEvent(new Event('input', { bubbles: true }))
     }
-    const labels = [...d.querySelectorAll('span')].map(s => s.textContent?.trim() ?? '')
-    const byLabel = (needle) => {
-      const idx = labels.findIndex(l => l.includes(needle))
-      if (idx < 0) return undefined
-      const field = d.querySelectorAll('div')[idx] // span's parent-ish; locate via span sibling
-      const span = [...d.querySelectorAll('span')].find(s => (s.textContent ?? '').includes(needle))
-      if (!span) return undefined
-      return span.closest('div')?.querySelector('input, textarea, select')
-    }
     // 名称
-    const nameEl = [...d.querySelectorAll('input')].find(i => (i.closest('div')?.querySelector('span')?.textContent ?? '').includes('名称'))
+    const nameEl = d.querySelector('#cron-job-name')
     if (!nameEl) return 'NO_NAME'
     setInput(nameEl, '真实环境-定时任务验证 ' + Date.now())
     // Cron
-    const cronEl = [...d.querySelectorAll('input')].find(i => (i.closest('div')?.querySelector('span')?.textContent ?? '').includes('Cron'))
+    const cronEl = d.querySelector('#cron-job-expr')
     if (!cronEl) return 'NO_CRON'
     setInput(cronEl, '*/30 * * * *')
     // 提示词
@@ -210,9 +223,14 @@ try {
   await wait(6000)
   await screenshot('f06-after-run')
 
-  // Expand execution detail: the "+" toggle of the newest row.
+  // Expand execution detail. Current UI labels the history toggle "执行详情";
+  // older builds used a literal "+" button.
   await ev(`(() => {
-    const rows = [...document.querySelectorAll('[data-dsh-cron-panel] button')].filter(b => (b.textContent ?? '').trim() === '+' && b.offsetParent)
+    const rows = [...document.querySelectorAll('[data-dsh-cron-panel] button')].filter(b => {
+      if (!b.offsetParent) return false
+      const text = (b.textContent ?? '').trim()
+      return text === '执行详情' || text === '+'
+    })
     if (rows.length) rows[rows.length - 1].click()
     return rows.length
   })()`)

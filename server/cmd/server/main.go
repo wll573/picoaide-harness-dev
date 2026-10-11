@@ -28,6 +28,7 @@ import (
 	"github.com/picoaide/picoaide/internal/clientrelease"
 	"github.com/picoaide/picoaide/internal/connectors"
 	"github.com/picoaide/picoaide/internal/llmgateway"
+	"github.com/picoaide/picoaide/internal/managedconfig"
 	"github.com/picoaide/picoaide/internal/marketplace"
 	"github.com/picoaide/picoaide/internal/portal"
 	"github.com/picoaide/picoaide/internal/reports"
@@ -46,14 +47,25 @@ import (
 	"github.com/picoaide/picoaide/webadmin"
 )
 
+// envOr 返回环境变量的非空值，否则回落到默认值。
+func envOr(key, def string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return def
+}
+
 // version is injectable at build time: go build -ldflags "-X main.version=x.y.z"
 var version = "dev"
 
 func main() {
-	addr := flag.String("addr", ":8080", "listen address")
-	dataDir := flag.String("data", "./data", "data directory (app data, not the DB — PG is external)")
+	// 原生（systemd）部署：这四项也可经环境变量提供（命令行显式参数优先）。
+	// 为什么要有：数据库口令放进命令行会出现在 `ps` / /proc/<pid>/cmdline 里，
+	// 任何本机用户都读得到；经 EnvironmentFile 注入则只有进程属主可读。
+	addr := flag.String("addr", envOr("PICOAI_ADDR", ":8080"), "listen address (env PICOAI_ADDR)")
+	dataDir := flag.String("data", envOr("PICOAI_DATA_DIR", "./data"), "data directory (env PICOAI_DATA_DIR; app data, not the DB — PG is external)")
 	dbDriver := flag.String("db-driver", "pg", "database backend: pg (default) or pg-external (alias)")
-	pgDSN := flag.String("pg-dsn", "", "PostgreSQL connection string (required, e.g. postgres://user:pass@host:5432/db)")
+	pgDSN := flag.String("pg-dsn", os.Getenv("PICOAI_PG_DSN"), "PostgreSQL connection string (env PICOAI_PG_DSN; required, e.g. postgres://user:pass@host:5432/db)")
 	bootstrapAdmin := flag.String("bootstrap-admin", "", "username of the initial admin (password from PICOAI_ADMIN_PASSWORD)")
 	resetMFA := flag.String("reset-mfa", "", "clear MFA for an admin username and revoke all their sessions (operation mode, no server started)")
 	opensRepair := flag.String("opens-rollup-repair-plan", "",
@@ -174,6 +186,14 @@ func main() {
 
 	if _, err := util.EnsureMasterKey(*dataDir); err != nil {
 		log.Fatalf("master key: %v", err)
+	}
+	// 旧版本把 llm_transcripts 的 *_enc 列按明文写入，并把完整系统提示词、
+	// 工具 schema 与 reasoning_content 一并保留。启动时在 master key 已就绪后
+	// 一次性升级历史行；新请求则在网关写入前直接走隐私过滤路径。
+	if migrated, merr := serverstore.MigrateLLMTranscriptPrivacy(db); merr != nil {
+		log.Fatalf("llm transcript privacy migration: %v", merr)
+	} else if migrated > 0 {
+		log.Printf("llm transcript privacy migration: upgraded %d legacy rows", migrated)
 	}
 	// P3-5(审计 2026-09-13):客户端下载/门户 URL 的来源判定以管理员配置的
 	// "对外地址"(settings server.base_url)为权威;未配置才回落到请求头。
@@ -599,14 +619,14 @@ func channelLogoDarkURL() string {
 	return "/api/client/v2/channel/logo-dark"
 }
 
-// portalDownloads 组装三平台下载项与下载区说明。
+// portalDownloads 组装 Windows 客户端下载项与下载区说明。
 //
 // 默认地址指向**本服务端的**安装包(随镜像发布,见 internal/clientrelease);
 // 管理员配置了 portal.client_download_* 时以配置为准(可指向自有 CDN)。
 // 两者都没有时该平台显示为不可用(而不是给一个坏链接)。
 //
 // 内置地址与更新清单**同一口径**(clientrelease.RequestOrigin):客户端只从
-// https 来源装包,来源不安全时门户也不显示内置入口,并把原因写进下载区
+// HTTP/HTTPS 来源装包,没有可推导来源时门户也不显示内置入口,并把原因写进下载区
 // (运维据此配置 PICOAI_PUBLIC_BASE_URL),而不是让下载区静默空着。
 // @returns 下载项与补充说明(无补充说明时为空串)。
 func portalDownloads(c *gin.Context, settings map[string]string) ([]portal.Platform, string) {
@@ -646,20 +666,16 @@ func portalDownloads(c *gin.Context, settings map[string]string) ([]portal.Platf
 		return portal.Platform{Name: name, Meta: meta, URL: url}
 	}
 
+	// 门户目前只向员工提供 Windows x64 安装程序。服务端镜像仍可携带
+	// 其他平台资产供内部构建或历史升级使用，但不在网页上展示下载入口。
 	platforms := []portal.Platform{
 		item("Windows", "x64 · .exe 安装程序", settings["portal.client_download_win"], "win-x64"),
-		// macOS 只出 Apple 芯片(arm64)包(见 desktop package.json 的 build.mac.arch):
-		// 文案必须写明,否则 Intel Mac 用户会下到一个装不上的包。
-		item("macOS", "Apple 芯片 (M 系列) · .dmg 磁盘映像", settings["portal.client_download_mac"], "mac-universal"),
-		item("Linux", "x64 · .AppImage / .deb", settings["portal.client_download_linux"], "linux-x64"),
 	}
 
-	// 有平台因来源不安全而失去内置入口(且管理员没配自有地址)→ 说明原因。
+	// 有平台因来源不可访问而失去内置入口(且管理员没配自有地址)→ 说明原因。
 	note := ""
-	if !origin.OK() && (pick(settings["portal.client_download_win"]) == "" ||
-		pick(settings["portal.client_download_mac"]) == "" ||
-		pick(settings["portal.client_download_linux"]) == "") {
-		note = "本服务端当前无法提供安全(https)的安装包地址:" + origin.Reason + "。"
+	if !origin.OK() && pick(settings["portal.client_download_win"]) == "" {
+		note = "本服务端当前无法提供可访问的安装包地址:" + origin.Reason + "。"
 	}
 	return platforms, note
 }
@@ -772,6 +788,7 @@ func registerProductionRoutes(r *gin.Engine, d productionDeps) {
 		Telemetry:   telemetry.NewHandlers(d.DB),
 		Gateway:     llmgateway.NewHandlers(d.DB),
 		Reports:     reports.NewHandlers(d.DB),
+		Managed:     managedconfig.NewHandlers(d.DB),
 		// WASM 应用平台操作面（§8）。
 		Wasm: d.Wasm,
 	})

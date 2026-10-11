@@ -182,9 +182,9 @@ func TestRetrySurvivesAcrossSchedulerRoundsUntilSuccess(t *testing.T) {
 
 	clock := bjAt(2026, 9, 20, 10)
 	// created_at 与注入时钟同月（游标下界 = CurrentPeriod(created_at)，见 reports_test.go）。
-	createSubscriptionAt(t, db, "ops", srv.URL, clock)
+	id := createSubscriptionAt(t, db, "ops", srv.URL, clock)
 	sched := NewScheduler(db, time.Hour, func() time.Time { return clock })
-	subID := int64(0)
+	subID := id
 	for round := 1; round <= 4; round++ {
 		err := sched.tryRun()
 		if round <= 3 && err == nil {

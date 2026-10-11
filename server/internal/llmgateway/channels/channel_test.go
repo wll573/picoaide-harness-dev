@@ -15,12 +15,16 @@ func (s stubChannel) FetchModels(ctx context.Context, apiKey string, fetchFn fun
 func (s stubChannel) RequestOverrides(modelID string) (map[string]any, []string) {
 	return map[string]any{"thinking": map[string]any{"type": "enabled"}}, []string{"temperature"}
 }
-func (s stubChannel) DefaultModelCaps() (int64, int64) { return 1048576, 393216 }
+func (s stubChannel) DefaultModelCaps() (int64, int64)              { return 1048576, 393216 }
+func (s stubChannel) TransformRequestBody(body map[string]any) bool { return false }
 
 func TestRegistryLookup(t *testing.T) {
 	Register(stubChannel{name: "stub", base: "http://stub"})
 	if _, ok := Get("stub"); !ok {
 		t.Fatal("Get(stub) not found")
+	}
+	if _, ok := Get("  STUB "); !ok {
+		t.Fatal("channel lookup should ignore import whitespace and case")
 	}
 	if _, ok := Get("nope"); ok {
 		t.Fatal("Get(nope) should be missing")

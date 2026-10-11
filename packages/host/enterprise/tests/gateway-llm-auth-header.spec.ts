@@ -12,7 +12,7 @@
  *    provider 路由 `deepseek-official` 由**我们的 `gateway-llm` 插件**注册，走的就是
  *    上游 `registerDeepSeekProvider` → 上游 `DeepSeekAdapter` → 真 `fetch`。
  *  · 上游是本进程内的**真 HTTP 服务器**（`node:http`，记录收到的请求头与路径，回一段
- *    合法的 Messages SSE），不是替换过的 `fetch`。
+ *    合法的 Chat Completions SSE），不是替换过的 `fetch`。
  *  · 令牌来自 `credentials` 服务的桩（真实现要落盘/keyring，与"头里有没有它"无关）。
  *
  * 反向对照与变异见 `gateway-llm-reverse.spec.ts`：把 `Authorization` 换成 `x-api-key`
@@ -33,15 +33,11 @@ import * as gatewayLlm from '../src/gateway-llm.ts'
 /** 网关令牌的假值（公开仓纪律：绝不使用真实凭据）。 */
 const TOKEN = 'gw-token-not-a-real-credential'
 
-/** 一段最小但合法的 Messages SSE（`translate()` 的完整生命周期）。 */
-const MESSAGES_SSE = [
-  ['message_start', { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model: 'smoke', content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0 } } }],
-  ['content_block_start', { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }],
-  ['content_block_delta', { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'pong' } }],
-  ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-  ['message_delta', { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } }],
-  ['message_stop', { type: 'message_stop' }],
-].map(([event, payload]) => `event: ${String(event)}\ndata: ${JSON.stringify(payload)}\n\n`).join('')
+/** 一段最小但合法的 OpenAI Chat Completions SSE。 */
+const CHAT_COMPLETIONS_SSE = [
+  { choices: [{ delta: { content: 'pong' }, finish_reason: null }] },
+  { choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } },
+].map(payload => `data: ${JSON.stringify(payload)}\n\n`).concat('data: [DONE]\n\n').join('')
 
 interface Recorded {
   method: string | undefined
@@ -50,7 +46,7 @@ interface Recorded {
   body: string
 }
 
-/** 真 HTTP 上游：记录每个请求的头与正文，回 Messages SSE。 */
+/** 真 HTTP 上游：记录每个请求的头与正文，回 Chat Completions SSE。 */
 async function recordingUpstream(): Promise<{ origin: string, requests: Recorded[], close: () => Promise<void> }> {
   const requests: Recorded[] = []
   const server: Server = createServer((request, response) => {
@@ -64,7 +60,7 @@ async function recordingUpstream(): Promise<{ origin: string, requests: Recorded
         body: Buffer.concat(chunks).toString('utf8'),
       })
       response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(MESSAGES_SSE)
+      response.end(CHAT_COMPLETIONS_SSE)
     })
   })
   await new Promise<void>((resolve) => { server.listen(0, '127.0.0.1', resolve) })
@@ -138,13 +134,13 @@ describe('gateway-llm: 网关令牌真的以 Authorization: Bearer 上了模型�
 
     expect(upstream.requests).toHaveLength(1)
     const request = upstream.requests[0]
-    // 端点就是网关的 Messages 路径（`baseURL` + `/messages`），不是别的协议路径。
-    expect(request.url).toBe('/v1/messages')
+    // 模型请求必须走 OpenAI Chat Completions，而不是 Anthropic Messages。
+    expect(request.url).toBe('/v1/chat/completions')
     expect(request.method).toBe('POST')
     // 判据本体：令牌在 Authorization 上，且**不再**出现在 x-api-key 上。
     expect(request.headers.authorization).toBe(`Bearer ${TOKEN}`)
     expect(request.headers['x-api-key']).toBeUndefined()
-    // 请求确实是一次完整的 Messages 调用（而不是中途失败的半截请求）。
+    // 请求确实是一次完整的 Chat Completions 调用（而不是中途失败的半截请求）。
     expect(request.body).toContain('"messages"')
     expect(chunks.at(-1)).toMatchObject({ type: 'finish', reason: { kind: 'stop' } })
   })

@@ -1,6 +1,58 @@
-import { realpathSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, resolve, win32 } from "node:path";
+import { homedir } from "node:os";
+//#region src/account-data.ts
+/** Account-owned conversation data; credentials and installation settings stay in the installation home. */
+const ACCOUNT_DATA_SCOPE_SERVICE = "desktopAccountData";
+function accountDataIdentity(account) {
+	if (!account.username) throw new Error("account data requires a username");
+	const url = new URL(account.serverURL.trim());
+	url.hash = "";
+	return JSON.stringify([url.toString().replace(/\/+$/u, ""), account.username]);
+}
+function accountDataRoot(home, account) {
+	return rootForIdentity(home, accountDataIdentity(account));
+}
+function rootForIdentity(home, identity) {
+	return join(home, "accounts", identity === "" ? "signed-out" : createHash("sha256").update(identity).digest("hex"));
+}
+function selectedIdentity(home) {
+	try {
+		const value = JSON.parse(readFileSync(join(home, "account-data.json"), "utf8"));
+		if (typeof value.serverURL !== "string" || typeof value.username !== "string" || !value.username) return "";
+		return accountDataIdentity(value);
+	} catch {
+		return "";
+	}
+}
+/** Never adopt the old shared sessions/storages automatically: their owner is unknown. */
+function createAccountDataScope(home, restart) {
+	const identity = selectedIdentity(home);
+	return {
+		root: rootForIdentity(home, identity),
+		matches: (account) => identity === accountDataIdentity(account),
+		activate: async (account) => {
+			accountDataIdentity(account);
+			mkdirSync(home, {
+				recursive: true,
+				mode: 448
+			});
+			const temporary = join(home, `.account-data-${randomUUID()}.tmp`);
+			try {
+				writeFileSync(temporary, JSON.stringify({
+					serverURL: account.serverURL,
+					username: account.username
+				}), { mode: 384 });
+				renameSync(temporary, join(home, "account-data.json"));
+			} finally {
+				rmSync(temporary, { force: true });
+			}
+			await restart();
+		}
+	};
+}
+//#endregion
 //#region src/index.ts
 /**
 * Product home resolution for PicoAide Harness.
@@ -348,6 +400,6 @@ function dshHome() {
 	return resolveDshHome();
 }
 //#endregion
-export { DEFAULT_DSH_HOME_DISPLAY, DSH_HOME_ENV, OFFICIAL_CHANNEL_ID, PRODUCT_DSH_HOME_DIR, applyInstallDshHome, channelDshHomeDir, dshHome, dshHomePath, dshHomeSafe, expandHomePath, isSafeDshHome, isSafeDshHomeDirName, isSystemWorkingDirectory, resolveDshHome };
+export { ACCOUNT_DATA_SCOPE_SERVICE, DEFAULT_DSH_HOME_DISPLAY, DSH_HOME_ENV, OFFICIAL_CHANNEL_ID, PRODUCT_DSH_HOME_DIR, accountDataIdentity, accountDataRoot, applyInstallDshHome, channelDshHomeDir, createAccountDataScope, dshHome, dshHomePath, dshHomeSafe, expandHomePath, isSafeDshHome, isSafeDshHomeDirName, isSystemWorkingDirectory, resolveDshHome };
 
 //# sourceMappingURL=index.js.map

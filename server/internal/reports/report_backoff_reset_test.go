@@ -121,6 +121,7 @@ func TestRenamingWithoutURLChangeKeepsBackoff(t *testing.T) {
 
 	badURL, badHits := countingWebhook(t, http.StatusInternalServerError)
 	base := bjAt(2026, 9, 15, 0)
+	// created_at 与注入时钟同月（游标下界 = CurrentPeriod(created_at)，见 reports_test.go）。
 	id := createSubscriptionAt(t, db, "ops", badURL, base)
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base }).tryRun()
 	_ = NewScheduler(db, time.Hour, func() time.Time { return base.Add(time.Hour) }).tryRun()

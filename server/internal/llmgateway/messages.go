@@ -134,6 +134,7 @@ func (a *API) serveAnthropicJSON(c *gin.Context, resp *http.Response, userID, pr
 		var completionEstimated bool
 		ct, completionEstimated = estimateCompletionFallback(pt, ct, int64(len(body)))
 		estimated = estimated || completionEstimated
+		mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: pt, OutputTokens: ct})
 		usageID, err := serverstore.RecordUsageKindCachedEstimatedForProvider(a.DB, userID, providerID, model, pt, ct, cache, billingKindSearch, estimated)
 		if err != nil {
 			// FIX-05 + G5b:与 /v1/chat/completions 同源 —— **任何**结算失败都
@@ -190,6 +191,8 @@ func (a *API) serveAnthropicStream(c *gin.Context, resp *http.Response, usageID 
 	}
 	c.Writer.Header().Set("Content-Type", "text/event-stream")
 	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
+	c.Writer.Header().Set("Connection", "keep-alive")
 	c.Writer.WriteHeader(resp.StatusCode)
 	fl, _ := c.Writer.(http.Flusher)
 	br := bufio.NewReader(resp.Body)
@@ -344,6 +347,17 @@ func (a *API) serveAnthropicStream(c *gin.Context, resp *http.Response, usageID 
 			}
 		}
 	}
+	auditPT, auditCT := pt, ct
+	if auditPT <= 0 || auditCT <= 0 {
+		billable := deliveredContentChunks > 0 || deliveredContentBytes > 0 || auditCT > 0 || cache > 0
+		if billable {
+			auditPT, _ = estimatePromptFallback(auditPT, ptSeen, requestBody, promptTokenCap)
+			auditCT, _ = estimateCompletionFallback(auditPT, auditCT, deliveredContentBytes)
+		} else {
+			auditPT, auditCT = 0, 0
+		}
+	}
+	mergeTranscriptOutcome(c, TranscriptOutcome{InputTokens: auditPT, OutputTokens: auditCT})
 }
 
 // handleMessages proxies /v1/messages (Anthropic-compatible) to the matching
@@ -420,13 +434,17 @@ func (a *API) handleMessages(c *gin.Context) {
 	var respSecrets []string   // 成功 provider 的官方 key(响应脱敏用)
 	var chosenProviderID int64 // 实际命中的 provider(计费取价用,P1-6)
 	for i := range ups {
-		resp, err = a.forwardAnthropic(c, &ups[i], outbound, req.Stream)
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardAnthropic(c, up, outbound, req.Stream)
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {
 					log.Printf("gateway: bind usage %d to provider %d failed: %v", usageID, ups[i].ID, serr)

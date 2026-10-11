@@ -99,6 +99,13 @@ So "what we add" and "what upstream provides" live on the same assembly surface 
 | **Bundle layers we add** | Nine owned packages: `@picoaide/dsh-enterprise`, `-account-card`, `-wasm-apps`, `-foot-menu`, `-wasm-apps-host`, `-connectors`, `-browser`, `-cron` and `dsh-memory-evolve`; plus upstream's experimental voice-input bundle | Each owned package carries one composition patch layer; together with the desktop package's own `cordis.patch.yml` (carried as the first entry of `@picoaide/dsh-enterprise`'s bundle list) that is ten layers, entering the profile as bundle layers in a fixed order |
 | **Upstream rows we disable** | see the next section | Each has a concrete reason; these are not "we don't need it, so off" |
 
+The server-side data foundation is the other half of the same chain as the assembly surface above, and is listed here alongside it:
+
+- PostgreSQL only (PG-only; the deployment form is the container built into compose, and the binary also accepts an external instance via `-pg-dsn`),
+  with migrations under `migrations-pg/` (numbered 0001–0091; some numbers were dropped historically, hence the gaps);
+- usage details are natively partitioned by month (retention configurable in months, default 6), while the daily/monthly ledgers are kept forever (10 years of historical statistics never lost);
+- Shared skill / agent archives are stored directly in the DB; audit hash chain (tamper-evident), RBAC roles, balance-grant idempotency anchor.
+
 ### Upstream rows we explicitly disable
 
 | Row | Reason (summary) |
@@ -200,7 +207,7 @@ Failure always **keeps the current version**: no install, no downgrade, no switc
 | Item | Fact |
 |---|---|
 | Database | PostgreSQL only. Containerized delivery embeds PG 18; the server binary also accepts an external instance (`-pg-dsn` is a required flag) |
-| Migrations | `server/internal/serverstore/migrations-pg/`, file names shaped `NNNN_<description>.sql` (four-digit number + underscore), applied automatically at server start; the range is `0001–0084` (some numbers were dropped historically, hence contiguous gaps). **Migrations are one-way**: rolling back the image cannot roll the database back to the old structure, so back up before upgrading |
+| Migrations | `server/internal/serverstore/migrations-pg/`, file names shaped `NNNN_<description>.sql` (four-digit number + underscore), applied automatically at server start; the range is `0001–0091` (some numbers were dropped historically, hence contiguous gaps). **Migrations are one-way**: rolling back the image cannot roll the database back to the old structure, so back up before upgrading |
 | Usage detail | Natively **partitioned by month** on `created_at` (`usage_YYYYMM`), retention configurable in months (default 6), expired partitions dropped with `DROP PARTITION`; deleting detail does not affect the ledgers |
 | Usage ledgers | `usage_daily` (partitioned by year) and `usage_monthly` are **kept forever** and rebuilt idempotently from the detail, so expired detail never loses historical statistics |
 | Audit | `audit_logs` carries a **hash chain**: each row's `hash = sha256(prev_hash \| username \| action \| detail \| created_at)` and `prev_hash` points at the previous row; writes are serialized with an advisory lock so concurrent inserts cannot read the same `prev_hash` and fork the chain. Retention is configurable, and pruning keeps the newest row of a deleted batch as an anchor so the chain still proves itself |

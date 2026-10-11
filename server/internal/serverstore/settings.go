@@ -57,6 +57,40 @@ func AuditRetentionDays(db *sql.DB) int {
 	return n
 }
 
+// LLMTranscriptRetentionSetting controls encrypted prompt/response retention.
+// It is deliberately separate from audit.retention_days because transcript
+// bodies are substantially larger and have a different access risk.
+const LLMTranscriptRetentionSetting = "llm.transcript_retention_days"
+
+// DefaultLLMTranscriptRetentionDays is the default encrypted transcript
+// retention window.
+//
+// 30 天（内网交付口径，2026-10）：需求要求"审计记录默认保留 1 个月，超过期限
+// 自动清理"。此前的 180 天是通用部署的折中，对"请求/响应全文"这类大体积、
+// 含用户原文的数据而言保留过久——单条 transcript 可达数百 KB 量级，180 天的
+// 驻留既推高库体积，也扩大原文的暴露窗口。
+//
+// 与 audit.retention_days 分开的理由见上；**只改这一个**，交互审计的留存策略
+// 不受影响。管理员仍可在审计页把两者分别调回更大的值（1~3650）。
+const DefaultLLMTranscriptRetentionDays = 30
+
+// LLMTranscriptRetentionDays reads the transcript retention window and falls
+// back to the safe default for missing or invalid values.
+func LLMTranscriptRetentionDays(db *sql.DB) int {
+	if db == nil {
+		return DefaultLLMTranscriptRetentionDays
+	}
+	v, ok, err := GetSetting(db, LLMTranscriptRetentionSetting)
+	if err != nil || !ok || v == "" {
+		return DefaultLLMTranscriptRetentionDays
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return DefaultLLMTranscriptRetentionDays
+	}
+	return n
+}
+
 // settingsTTL settings 缓存时长:kv 表低频变更(webadmin 配置),而热路径
 // 每请求读多键(quota/rate_limit/peak_windows)。30s TTL,SetSetting 主动失效。
 const settingsTTL = 30 * time.Second

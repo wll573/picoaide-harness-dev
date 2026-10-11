@@ -4,7 +4,7 @@
  * 背景：设置弹窗的整视口蒙版是 `rgba(0,0,0,.24)` + `backdrop-filter: blur(2px)`
  * （上游 `SettingsRoot.module.css` 的 `.mask`，token `--dsw-mask-blur`），而
  * `backdrop-filter` 只采样**页面自身**的绘制结果。左栏 `.dshDesktopSidebarSurface`
- * 平时刻意 `background: transparent`（为的是透出 macOS vibrancy / Windows mica 原生材质），
+ * 在 macOS 上刻意 `background: transparent`（为的是透出 sidebar vibrancy 原生材质），
  * 于是蒙版在左栏没有可模糊的底：左侧 = 0.24 黑直接压在未模糊的原生材质上，右侧 =
  * 0.24 黑 + 模糊后的页面，分界线正好落在 `border-right` 上（半糊重影 = 用户说的扫描感）。
  *
@@ -194,11 +194,23 @@ describe('modal-open sidebar fill (issue #128 D2)', () => {
   })
 
   it('keeps the open window transparent when no modal is on screen (vibrancy stays)', () => {
-    const base = declarationBlock(css, '.dshDesktopSidebarSurface')
+    const base = declarationBlock(css, '.dshDesktopFrame[data-desktop-platform="darwin"] .dshDesktopSidebarSurface')
     expect(alpha(resolveValue(light, declaration(base, 'background')))).toBe(0)
     expect(declaration(base, '--dsw-specific-sidebar-fill')).toBe('transparent')
     // 变量与 background 都必须回到透明：常量不透明就是"把原生材质永久关掉"。
     expect(resolveValue(dark, declaration(base, 'background'))).toBe('transparent')
+  })
+
+  it('paints the default sidebar in the resolved theme even without native material', () => {
+    const base = declarationBlock(css, '.dshDesktopSidebarSurface')
+    for (const theme of [light, dark]) {
+      const background = resolveValue(theme, declaration(base, 'background'))
+      expect(alpha(background)).toBe(1)
+      expect(background).toBe(resolveValue(theme, 'var(--dsw-alias-bg-base)'))
+      expect(resolveValue(theme, declaration(base, '--dsw-specific-sidebar-fill'))).toBe(background)
+    }
+    expect(resolveValue(light, declaration(base, 'background')))
+      .not.toBe(resolveValue(dark, declaration(base, 'background')))
   })
 
   it('paints the open column with the same token as the conversation column, not merely an opaque one', () => {

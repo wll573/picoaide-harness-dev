@@ -101,11 +101,18 @@ func (a *API) handleCompletions(c *gin.Context) {
 		if ups[i].Channel != "" {
 			if ch, ok := channels.Get(ups[i].Channel); ok {
 				ov, rm := ch.RequestOverrides(req.Model)
-				if raw2, err := a.applyChannelOverrides(body, ov, rm); err == nil {
+				if raw2, err := a.applyChannelOverrides(body, ov, rm, ch); err == nil {
 					body = raw2
 				} else if a.rejectBusyBodyEdit(c, usageID, err) {
 					return
 				}
+			}
+		} else if adapter, ok := thinkingAdapterFromDefaultParams(defaultParams); ok {
+			// 手动渠道 + 配置了思考适配器 → 应用参数转换
+			if raw2, err := a.applyThinkingAdapter(body, adapter); err == nil {
+				body = raw2
+			} else if a.rejectBusyBodyEdit(c, usageID, err) {
+				return
 			}
 		}
 		if defaultParams != "" {
@@ -122,13 +129,17 @@ func (a *API) handleCompletions(c *gin.Context) {
 				return
 			}
 		}
-		resp, err = a.forwardEndpoint(c, &ups[i], body, req.Stream, "/completions")
+		var attempt Upstream
+		attempt, _, resp, err = a.forwardWithKeyRetry(c, ups[i], func(up *Upstream) (*http.Response, error) {
+			return a.forwardEndpoint(c, up, body, req.Stream, "/completions")
+		})
 		if a.rejectForwardError(c, usageID, err) {
 			return
 		}
 		if err == nil {
-			respSecrets = []string{ups[i].APIKey}
+			respSecrets = []string{attempt.APIKey}
 			chosenProviderID = ups[i].ID
+			mergeTranscriptOutcome(c, TranscriptOutcome{Provider: ups[i].Name})
 			if usageID > 0 {
 				if serr := serverstore.SetUsageProvider(a.DB, usageID, ups[i].ID); serr != nil {
 					log.Printf("gateway: bind usage %d to provider %d failed: %v", usageID, ups[i].ID, serr)

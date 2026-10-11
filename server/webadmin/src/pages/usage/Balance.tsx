@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { request, ADMIN_API } from '../../api'
 import { Button } from '../../components/ui/button'
@@ -6,64 +6,66 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../..
 import { Badge } from '../../components/ui/badge'
 import { Skeleton } from '../../components/ui/skeleton'
 import { Input } from '../../components/ui/input'
-import { Label } from '../../components/ui/label'
-import { Switch } from '../../components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../../components/ui/dialog'
 import { PageHeader } from '../../components/page-header'
-import { employeeCountText, fmtY, type UserInfo } from './common'
-import { fmtTokens } from '../../lib/format'
-import { PERM_USER_WRITE, hasPermission } from '../../lib/rbac'
-import { cn } from '../../lib/utils'
-import { Coins, Gift, Check, Loader2, Wallet, ScrollText } from 'lucide-react'
+import { employeeCountText, fetchUsageList, type UsageRow, type UsageRequestRow, type UserInfo } from './common'
+import { fmtTokens, fmtFull } from '../../lib/format'
+import { PERM_USAGE_READ, PERM_USER_READ, hasPermission } from '../../lib/rbac'
+import { Activity, CalendarDays, Cpu, ScrollText } from 'lucide-react'
 
 // ---------------------------------------------------------------------------
-// 余额(2026-09-11 收敛)—— 员工"钱"的唯一页面。
+// 成员 Token 用量(2026-10 内网交付需求 §6:管理端不显示金额/余额/充值/付费文案)
 //
-// 模型只剩两个概念:
-//   ① 账户余额:员工账上的钱(存量、消费即减),闸门开启且余额耗尽 → 网关 429;
-//   ② 按月发放:每月自动往余额里发多少(可手动补发,逐人·月幂等)。
-// 部门预算 / token 配额 / 金额配额已全部下线(设计文档
-// docs/planning/2026-09-11-balance-quota-consolidation.md)。
+// 路由 `/usage/balance` 保留 —— 老书签与用量中心子导航不会 404。页面内容从
+// 「余额面」整体改成「Token 用量面」:充值按钮、¥ 快捷金额、金额输入框、
+// 调整后余额预览、余额闸门开关**全部删除**。
+//
+// **接口与数据一个都没删**:`GET/PUT /api/server/admin/balance`、
+// `POST /api/server/admin/balance/grant`、`POST /users/:id/balance`、
+// `GET /users/:id/balance/ledger` 与 `users.balance_money` 全部保留在原处
+// (既有部署的历史账本与对账路径不受影响),只是本页不再调用其中任何一个。
+// 交付需求 §6 原文即「后端保留兼容字段,避免已有数据和接口失效」。
+//
+// 本页使用的三个接口**都是既有的**,不新造:
+//   · GET /api/server/admin/users                        (user:read)
+//   · GET /api/server/admin/usage?group=model&username=… (usage:read)
+//   · GET /api/server/admin/usage/requests?username=…    (usage:read)
+// 两套权限分别判定(见下),任一缺失只降级它自己那部分,不等于"没有数据"。
 // ---------------------------------------------------------------------------
 
-type BalanceMode = 'add' | 'deduct' | 'set' | 'clear'
+// 逐行 Token 合计:输入 + 输出。
+// `UsageRow` / `UsageRequestRow` 都**没有** `tokens` 字段(它们给的是
+// prompt_tokens / completion_tokens),所以在这里自己加,别去读不存在的 `r.tokens`。
+const rowTokens = (r: { prompt_tokens: number; completion_tokens: number }): number =>
+  (r.prompt_tokens ?? 0) + (r.completion_tokens ?? 0)
 
-interface GrantRun {
-  month: string
-  mode: string
-  amount: number
-  granted: number
-  skipped: number
+// 计数是否可用。字段缺失时报 false(空态文案),**不**用 0 冒充"用了 0 个 token"。
+const hasCount = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n)
+
+// 北京日期值 YYYY-MM-DD。与 serverstore.BeijingDay 同口径:
+// 北京日 = 该瞬间 UTC+8 的日历日,与进程 TZ / PG 会话时区无关。
+// 本地实现而**不**引入服务端语义(前端只有浏览器时区),所以显式按 UTC+8 归日。
+function beijingToday(now: Date = new Date()): Date {
+  const bj = new Date(now.getTime() + 8 * 60 * 60 * 1000)
+  return new Date(Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate()))
 }
 
-interface BalanceSummary {
-  settings: { enabled: boolean; monthly_amount: number; monthly_mode: 'add' | 'cover' }
-  last_grant: { month: string; mode: string; amount: number; affected: number } | null
-  month_grant: { month: string; mode: string; amount: number; affected: number } | null
-  status: { month: string; eligible: number; granted: number; pending: number; activated: number }
-  users: number
-  total_balance: number
+function ymd(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
 }
 
-interface LedgerItem {
-  id: number
-  kind: string
-  amount: number
-  balance_after: number
-  reason: string
-  actor: string
-  usage_id: number | null
-  month: string
-  created_at: string
+/** 今日用量窗口:北京日的 [今天, 今天](两端都是北京日期值)。 */
+function todayWindow(): { from: string; to: string } {
+  const d = ymd(beijingToday())
+  return { from: d, to: d }
 }
 
-const KIND_LABEL: Record<string, string> = {
-  grant: '月度发放',
-  reset: '覆盖清零',
-  adjust: '人工调整',
-  consume: '消费扣减',
-  refund: '费用回补',
+/** 月度用量窗口:北京月的 [1 日, 今天]。与 `/users` 的 `monthly_usage`
+ *  (UserMonthlyUsage 的北京月界)是同一口径 —— 同一个数字,不是两套算法。 */
+function monthWindow(): { from: string; to: string } {
+  const d = beijingToday()
+  return { from: `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-01`, to: ymd(d) }
 }
 
 function fmtTime(s: string): string {
@@ -74,82 +76,52 @@ function fmtTime(s: string): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
+interface DetailState {
+  today: { input: number; output: number; total: number; requests: number } | null
+  models: UsageRow[]
+  requests: UsageRequestRow[]
+}
+
 export default function UsageBalance() {
   const [users, setUsers] = useState<UserInfo[]>([])
   const [rawCount, setRawCount] = useState(0)
   const [total, setTotal] = useState(0)
   const [q, setQ] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [notice, setNotice] = useState('')
-  const [summary, setSummary] = useState<BalanceSummary | null>(null)
-  const [saving, setSaving] = useState(false)
-  const loadSeq = useRef(0)
+  const [listError, setListError] = useState('')
 
-  // 发放策略草稿
-  const [draftEnabled, setDraftEnabled] = useState(false)
-  const [draftMode, setDraftMode] = useState<'add' | 'cover'>('add')
-  const [draftAmount, setDraftAmount] = useState('')
-
-  // 单人调整
+  // 详情弹窗
   const [target, setTarget] = useState<UserInfo | null>(null)
-  const [mode, setMode] = useState<BalanceMode>('add')
-  const [amount, setAmount] = useState('')
-  const [reason, setReason] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [dialogErr, setDialogErr] = useState('')
+  const [detail, setDetail] = useState<DetailState | null>(null)
+  const [detailBusy, setDetailBusy] = useState(false)
+  const [detailError, setDetailError] = useState('')
 
-  // 流水
-  const [ledgerUser, setLedgerUser] = useState<UserInfo | null>(null)
-  const [ledger, setLedger] = useState<LedgerItem[]>([])
-  const [ledgerSum, setLedgerSum] = useState<number | null>(null)
-  const [ledgerBusy, setLedgerBusy] = useState(false)
-  /**
-   * 流水弹窗**自己的**失败态(R15C-W-05,审计 2026-09-25,P2):此前失败写进
-   * `dialogErr`,而它只在"单人调整"弹窗里渲染 ⇒ 流水弹窗内 100% 不可见,且错误
-   * 文本会**残留**到之后打开的调整弹窗。资金审计面里"没有流水"与"流水没读出来"
-   * 被渲染成同一屏,管理员会据此下"没有异常变动"的结论。
-   */
-  const [ledgerError, setLedgerError] = useState('')
+  const loadSeq = useRef(0)
+  const detailSeq = useRef(0)
 
   const [searchParams] = useSearchParams()
   const presetUser = searchParams.get('user') ?? ''
 
-  // 体验层能力判定(护栏在服务端 RequirePermission):本页所有写操作 ——
-  // 发放策略 PUT /balance、补发 POST /balance/grant、单人调整
-  // POST /users/:id/balance —— 都要 user:write;读取(user:read)与流水
-  // (user:read)对 auditor 仍然开放。只读角色不再看到注定 403 的按钮/输入框
-  // (R7-RV-2 残留:此前 auditor 能看到"立即补发本月/保存/调整"并点进金额对话框,
-  // 每次点击都是 403,与 App 的"所有修改已禁用"横幅直接矛盾)。
-  const canWrite = hasPermission(PERM_USER_WRITE)
-
-  // 2026-09-17 审计 F1：策略卡曾经用**员工列表**的 `loading` 当写面闸门，而
-  // `loadSummary` 既没有自己的 loading、catch 又是静默的 ⇒ `/users` 先回来、
-  // `/balance` 还在飞（或失败）时写面就解锁，草稿还是空串，点保存会把
-  // `monthly_amount` 写成 0（误清空）。闸门必须挂在"策略已落地"上。
-  const [summaryLoaded, setSummaryLoaded] = useState(false)
-  const [summaryError, setSummaryError] = useState('')
-
-  const loadSummary = useCallback(async () => {
-    setSummaryError('')
-    try {
-      const s: BalanceSummary = await request(`${ADMIN_API}/balance`)
-      setSummary(s)
-      setDraftEnabled(s.settings.enabled)
-      setDraftMode(s.settings.monthly_mode)
-      setDraftAmount(s.settings.monthly_amount > 0 ? String(s.settings.monthly_amount) : '')
-      setSummaryLoaded(true)
-    } catch (e: any) {
-      // 不再静默吞错：策略没落地就保持写面锁死，并把原因显示出来。
-      setSummaryLoaded(false)
-      setSummaryError(e?.message || '发放策略加载失败')
-    }
-  }, [])
+  // 体验层能力判定(护栏在服务端 RequirePermission):
+  //   · 成员列表 —— GET /users 要 user:read;
+  //   · 用量明细 —— GET /usage 与 GET /usage/requests 要 usage:read。
+  // 两者是**独立**权限点(auditor 两个都有;user:read-only 的角色只有前者)。
+  // 缺哪一项就只说明那一项,不把"没有权限"渲染成"没有数据"。
+  const canReadUsers = hasPermission(PERM_USER_READ)
+  const canReadUsage = hasPermission(PERM_USAGE_READ)
 
   const load = useCallback(async (query: string) => {
     const current = ++loadSeq.current
     setLoading(true)
-    setError('')
+    setListError('')
+    if (!canReadUsers) {
+      // 不请求注定 403 的接口(服务端 RequirePermission 仍是唯一护栏)。
+      setUsers([])
+      setRawCount(0)
+      setTotal(0)
+      setLoading(false)
+      return
+    }
     try {
       const ul = await request<{ users: UserInfo[]; total: number }>(
         `${ADMIN_API}/users?size=200${query ? `&q=${encodeURIComponent(query)}` : ''}`)
@@ -159,14 +131,19 @@ export default function UsageBalance() {
       setRawCount(all.length)
       setTotal(ul.total ?? 0)
     } catch (e: any) {
-      if (current === loadSeq.current) setError(e.message || '查询失败')
+      if (current === loadSeq.current) {
+        // P3(与 R15C-W-07 同族):失败清空列表 —— 旧行不能继续冒充本次查询结果。
+        setUsers([])
+        setRawCount(0)
+        setTotal(0)
+        setListError(e?.message || '查询失败')
+      }
     } finally {
       if (current === loadSeq.current) setLoading(false)
     }
-  }, [])
+  }, [canReadUsers])
 
   useEffect(() => {
-    void loadSummary()
     if (presetUser) {
       setQ(presetUser)
       void load(presetUser)
@@ -175,245 +152,65 @@ export default function UsageBalance() {
     }
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ?user= 预填后自动打开该用户的调整弹窗(用户管理页「余额」按钮跳转入口)。
-  // 无 user:write 时不开:那个弹窗整体是写入口。
+  // `?user=` 深链(老书签/外部跳转)自动打开该成员的用量明细。
+  // 没有 usage:read 时**不打开**:那个弹窗整体是用量读入口,打开只会是空的。
   useEffect(() => {
-    if (!canWrite || !presetUser || target || users.length === 0) return
+    if (!canReadUsage || !presetUser || target || users.length === 0) return
     const hit = users.find((u) => u.username.toLowerCase() === presetUser.toLowerCase())
-    if (hit) openAdjust(hit)
+    if (hit) void openDetail(hit)
   }, [users]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function saveSettings() {
-    if (!canWrite) return
-    if (saving) return
-    const n = draftAmount.trim() === '' ? 0 : Number(draftAmount)
-    if (!Number.isFinite(n) || n < 0) { setError('每人每月额度必须是不小于 0 的数字'); return }
-    setSaving(true)
-    setError('')
-    setNotice('')
-    try {
-      const r = await request<any>(`${ADMIN_API}/balance`, {
-        method: 'PUT',
-        body: JSON.stringify({ enabled: draftEnabled, monthly_amount: n, monthly_mode: draftMode }),
-      })
-      const run: GrantRun | null = r?.run ?? null
-      setNotice(run && run.granted > 0
-        ? `已保存,并补发本月 ${run.granted} 人 × ¥${Number(run.amount).toFixed(2)}`
-        : '发放策略已保存')
-      await loadSummary()
-      await load(q)
-    } catch (e: any) {
-      setError(e.message || '保存失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function grantNow() {
-    if (!canWrite) return
-    if (saving) return
-    setSaving(true)
-    setError('')
-    setNotice('')
-    try {
-      const r = await request<any>(`${ADMIN_API}/balance/grant`, { method: 'POST' })
-      const run: GrantRun | null = r?.run ?? null
-      setNotice(run && run.granted > 0
-        ? `已发放 ${run.granted} 人 × ¥${Number(run.amount).toFixed(2)}${run.skipped ? `(另有 ${run.skipped} 人本月已发)` : ''}`
-        : '本月所有员工都已发放过,无需重复发放')
-      await loadSummary()
-      await load(q)
-    } catch (e: any) {
-      setError(e.message || '发放失败')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  function openAdjust(u: UserInfo) {
-    if (!canWrite) return
+  async function openDetail(u: UserInfo) {
     setTarget(u)
-    setMode('add')
-    setAmount('')
-    setReason('')
-    setDialogErr('')
-  }
-
-  const parsed = (() => {
-    const n = Number(amount)
-    return amount.trim() !== '' && Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN
-  })()
-  const preview = useMemo(() => {
-    if (!target) return null
-    const cur = target.balance_money ?? 0
-    if (mode === 'clear') return 0
-    if (Number.isNaN(parsed)) return null
-    if (mode === 'add') return cur + parsed
-    if (mode === 'deduct') return cur - parsed
-    return parsed
-  }, [target, mode, parsed])
-  const previewNegative = preview !== null && preview < 0
-  const valid = mode === 'clear'
-    ? true
-    : !Number.isNaN(parsed) && (mode === 'set' ? parsed >= 0 : parsed > 0) && (mode !== 'deduct' || (preview ?? -1) >= 0)
-
-  async function saveAdjust() {
-    if (!canWrite) return
-    if (!target || busy) return
-    if (!valid) { setDialogErr(mode === 'deduct' ? '扣减金额不能超过当前余额' : '请输入有效金额'); return }
-    setBusy(true)
-    setDialogErr('')
+    setDetail(null)
+    setDetailError('')
+    setDetailBusy(true)
+    const current = ++detailSeq.current
     try {
-      await request(`${ADMIN_API}/users/${target.id}/balance`, {
-        method: 'POST',
-        body: JSON.stringify({ mode, amount: mode === 'clear' ? 0 : parsed, reason: reason.trim() }),
+      const tw = todayWindow()
+      const mw = monthWindow()
+      const [todayRows, modelRows, rq] = await Promise.all([
+        // 「今日用量」= 一个北京日窗口的聚合。逐成员的历史总量**没有**管理端接口
+        // (`total_usage/input_tokens/output_tokens` 只在员工侧 /api/client/v2/auth/usage),
+        // 所以这里不渲染「总 Token」的这一档 —— 宁缺勿造,不拿区间合计冒充历史总量。
+        fetchUsageList({ group: 'day', username: u.username, from: tw.from, to: tw.to }),
+        fetchUsageList({ group: 'model', username: u.username, from: mw.from, to: mw.to }),
+        request<{ rows: UsageRequestRow[] }>(
+          `${ADMIN_API}/usage/requests?username=${encodeURIComponent(u.username)}&size=5`),
+      ])
+      if (current !== detailSeq.current) return // 过期响应丢弃(切换成员时)
+      setDetail({
+        today: sumWindow(todayRows),
+        models: modelRows,
+        requests: rq.rows ?? [],
       })
-      const label = mode === 'add' ? '充值' : mode === 'deduct' ? '扣减' : mode === 'clear' ? '清零' : '设为'
-      setNotice(`已为 ${target.username} ${label}${mode === 'clear' ? '' : ` ¥${parsed.toFixed(2)}`}`)
-      setTarget(null)
-      await load(q)
-      await loadSummary()
     } catch (e: any) {
-      setDialogErr(e.message || '调整失败')
+      if (current !== detailSeq.current) return
+      // 失败 ≠ 空态:清空并显示原因,不渲染「暂无用量」。
+      setDetail(null)
+      setDetailError(e?.message || '用量加载失败')
     } finally {
-      setBusy(false)
+      if (current === detailSeq.current) setDetailBusy(false)
     }
   }
-
-  async function openLedger(u: UserInfo) {
-    setLedgerUser(u)
-    setLedgerBusy(true)
-    setLedger([])
-    setLedgerSum(null)
-    setLedgerError('')
-    try {
-      const r = await request<any>(`${ADMIN_API}/users/${u.id}/balance/ledger?size=50`)
-      setLedger(r.items ?? [])
-      setLedgerSum(typeof r.ledger_sum === 'number' ? r.ledger_sum : null)
-    } catch (e: any) {
-      // 只写本弹窗自己的失败态(不回写 dialogErr:那是调整弹窗的状态)。
-      setLedger([])
-      setLedgerError(e.message || '流水加载失败')
-    } finally {
-      setLedgerBusy(false)
-    }
-  }
-
-  const st = summary?.status
-  const monthly = summary?.settings.monthly_amount ?? 0
-  // 2026-09-17 审计（P3 升级为真缺陷）：策略卡在 summary 落地前就渲染出可写控件，
-  // 而 draft* 是**空初值**；此时点「保存」会把空额度当成 0 提交（PUT /balance
-  // monthly_amount=0），等于一次误清空。加载期间一律禁用写面。
-  const writeLocked = !canWrite || !summaryLoaded
 
   return (
     <div className="space-y-6">
-      <PageHeader title="余额" desc="员工的账户余额与按月发放:余额是唯一的消费闸门,花完即停" />
-      {error && <div className="text-sm text-destructive">{error}</div>}
-      {notice && <div className="text-sm text-emerald-600">{notice}</div>}
-      {!canWrite && (
-        // 服务端:GET /balance 与 GET /users/:id/balance/ledger 只需 user:read,
-        // 写操作需 user:write。只读角色要看到"能看什么、不能做什么",而不是
-        // 一排点下去报 403 的写控件。
+      <PageHeader title="成员用量" desc="按成员查看 Token 用量:今日与月度用量、按模型明细、最近请求" />
+
+      {!canReadUsers && (
         <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          当前账号为只读视图(无 user:write 权限):可查看发放策略、员工余额与余额流水,不能修改发放策略、补发本月或调整任何员工的余额。
+          当前账号没有员工读取权限(user:read):成员列表不可见。用量明细需要 usage:read,与列表是两套独立权限点。
         </div>
       )}
 
-      {/* 发放策略:启用闸门 / 发放方式 / 每人额度 / 立即发放 */}
-      <Card>
-        <CardHeader className="flex-row items-start justify-between space-y-0">
-          <div className="flex items-start gap-3">
-            <div className="rounded-lg bg-emerald-50 p-2 text-emerald-700"><Coins className="h-5 w-5" /></div>
-            <div>
-              <CardTitle className="text-base">按月发放余额</CardTitle>
-              <CardDescription>
-                每月自动向全部启用员工发放一次(每人 ¥{monthly > 0 ? monthly.toFixed(2) : '—'});
-                新入职员工当天补发。发放与闸门独立:可以先只发钱不拦人。
-              </CardDescription>
-            </div>
-          </div>
-          {canWrite && (
-            <div className="flex items-center gap-2">
-              <Button variant="outline" onClick={grantNow} disabled={saving || writeLocked || monthly <= 0}>
-                <Gift className="mr-1 h-4 w-4" />立即补发本月
-              </Button>
-              <Button onClick={saveSettings} disabled={saving || writeLocked}>
-                {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Check className="mr-1 h-4 w-4" />}保存
-              </Button>
-            </div>
-          )}
-        </CardHeader>
-        <CardContent className="grid gap-4 md:grid-cols-3">
-          {/* 写面为什么锁着必须说清楚（审计 F1）：否则管理员只看到一排点不动的控件。 */}
-          {canWrite && (summaryError !== '' || !summaryLoaded) && (
-            <div className={`md:col-span-3 text-xs ${summaryError ? 'text-destructive' : 'text-muted-foreground'}`}>
-              {summaryError
-                ? `发放策略加载失败:${summaryError}（写面已锁定 —— 未拿到当前额度时保存会把空值当成 0 提交）`
-                : '发放策略加载中…（加载完成前写面锁定）'}
-            </div>
-          )}
-          <div className="rounded-md border p-3">
-            <div className="flex items-center justify-between">
-              <Label htmlFor="bal-enabled" className="text-sm font-medium">余额闸门</Label>
-              <Switch id="bal-enabled" checked={draftEnabled} disabled={writeLocked} onCheckedChange={setDraftEnabled} />
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {draftEnabled
-                ? '开启:余额耗尽的员工调用 AI 时被拦截(未开通余额的员工不受影响)。'
-                : '关闭:只记账不拦截 —— 余额照样随消费扣减,便于先观察再启用。'}
-            </p>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-sm font-medium">发放方式</div>
-            <div className="mt-2 grid grid-cols-2 gap-2">
-              <button type="button" disabled={writeLocked} onClick={() => setDraftMode('add')}
-                className={cn('rounded-md border p-2 text-left text-xs', draftMode === 'add' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50', writeLocked && 'cursor-not-allowed opacity-60')}>
-                <div className="text-sm font-medium">累加</div>
-                <div className="text-muted-foreground">余额 + 月额度</div>
-              </button>
-              <button type="button" disabled={writeLocked} onClick={() => setDraftMode('cover')}
-                className={cn('rounded-md border p-2 text-left text-xs', draftMode === 'cover' ? 'border-primary bg-primary/5' : 'hover:bg-muted/50', writeLocked && 'cursor-not-allowed opacity-60')}>
-                <div className="text-sm font-medium">覆盖</div>
-                <div className="text-muted-foreground">清零后重置为月额度</div>
-              </button>
-            </div>
-            {draftMode === 'cover' && (
-              <p className="mt-1 text-xs text-amber-600">覆盖会清零全部结余与手工充值(清零金额会记入流水,可追溯)。</p>
-            )}
-          </div>
-          <div className="rounded-md border p-3">
-            <Label htmlFor="bal-amount" className="text-sm font-medium">每人每月额度(元)</Label>
-            <Input id="bal-amount" className="mt-2" inputMode="decimal" placeholder="例如 100"
-              value={draftAmount} readOnly={writeLocked} disabled={writeLocked}
-              onChange={(e) => setDraftAmount(e.target.value)} />
-            {canWrite && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {[50, 100, 200, 500].map((v) => (
-                  <Button key={v} type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-                    onClick={() => setDraftAmount(String(v))}>¥{v}</Button>
-                ))}
-              </div>
-            )}
-          </div>
-        </CardContent>
-        {st && (
-          <div className="border-t px-6 py-3 text-xs text-muted-foreground">
-            本月({st.month}):已发 <span className="font-medium text-foreground">{st.granted}</span> / {st.eligible} 人
-            {st.pending > 0 && <span className="ml-2 text-amber-600">待发 {st.pending} 人</span>}
-            <span className="ml-4">已开通余额 {st.activated} 人</span>
-            <span className="ml-4">余额合计 ¥{(summary?.total_balance ?? 0).toFixed(2)}</span>
-          </div>
-        )}
-      </Card>
-
-      {/* 员工余额表 */}
+      {/* 成员列表:本月 Token 用量(自然月口径)。金额/余额列已整体删除。 */}
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <div>
-            <CardTitle className="text-base">员工余额</CardTitle>
+            <CardTitle className="text-base">成员列表</CardTitle>
             <CardDescription>
-              未开通 = 从未入账(不受余额闸门约束,也不随消费扣减);开通后消费即扣、余额耗尽即停
+              月度用量为本自然月口径;点击成员查看其今日用量与按模型明细
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">
@@ -423,18 +220,17 @@ export default function UsageBalance() {
           </div>
         </CardHeader>
         <CardContent>
+          {listError && <div className="mb-2 text-sm text-destructive">{listError}</div>}
           {loading ? <Skeleton className="h-72 w-full" /> : (
             <>
               <div className="mb-2 text-xs text-muted-foreground">{employeeCountText(users, rawCount, total)}</div>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>员工</TableHead>
+                    <TableHead>成员</TableHead>
                     <TableHead>部门</TableHead>
-                    <TableHead className="text-right">账户余额</TableHead>
-                    <TableHead className="text-right">本月消费</TableHead>
-                    <TableHead className="text-right">本月 tokens</TableHead>
-                    <TableHead className="w-56">操作</TableHead>
+                    <TableHead className="text-right">月度用量</TableHead>
+                    <TableHead className="w-40">操作</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -448,30 +244,23 @@ export default function UsageBalance() {
                         {(u.groups ?? []).filter((g) => g !== '全员').join(', ') || '—'}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {u.balance_activated ? (
-                          <span className={cn('font-medium', (u.balance_money ?? 0) <= 0 ? 'text-destructive' : 'text-emerald-600')}>
-                            {fmtY(u.balance_money ?? 0)}
-                          </span>
-                        ) : <span className="text-xs text-muted-foreground">未开通</span>}
+                        {hasCount(u.monthly_usage)
+                          ? <span title={fmtFull(u.monthly_usage)}>{fmtTokens(u.monthly_usage)}</span>
+                          : <span className="text-muted-foreground">暂无用量</span>}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtY(u.monthly_cost ?? 0)}</TableCell>
-                      <TableCell className="text-right tabular-nums text-muted-foreground">{fmtTokens(u.monthly_usage ?? 0)}</TableCell>
                       <TableCell>
-                        <div className="flex gap-2">
-                          {canWrite && (
-                            <Button size="sm" variant="outline" onClick={() => openAdjust(u)}>
-                              <Wallet className="mr-1 h-3.5 w-3.5" />调整
+                        {canReadUsage
+                          ? (
+                            <Button size="sm" variant="outline" onClick={() => void openDetail(u)}>
+                              <ScrollText className="mr-1 h-3.5 w-3.5" />用量明细
                             </Button>
-                          )}
-                          <Button size="sm" variant="ghost" onClick={() => void openLedger(u)}>
-                            <ScrollText className="mr-1 h-3.5 w-3.5" />流水
-                          </Button>
-                        </div>
+                          )
+                          : <span className="text-xs text-muted-foreground">需要 usage:read</span>}
                       </TableCell>
                     </TableRow>
                   ))}
-                  {users.length === 0 && (
-                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">暂无数据</TableCell></TableRow>
+                  {users.length === 0 && !listError && (
+                    <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>
                   )}
                 </TableBody>
               </Table>
@@ -480,123 +269,164 @@ export default function UsageBalance() {
         </CardContent>
       </Card>
 
-      {/* 单人调整:充值 / 扣减 / 设为 / 清零 —— 无 user:write 时整个写入口不可达 */}
-      <Dialog open={canWrite && !!target} onOpenChange={(o) => { if (!o) setTarget(null) }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>调整余额 · {target?.username}</DialogTitle>
-            <DialogDescription>
-              当前余额 {target?.balance_activated ? fmtY(target?.balance_money ?? 0) : '未开通(首次入账即开通)'}。调整立即生效并写入流水与审计。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>操作</Label>
-              <div className="mt-2 grid grid-cols-4 gap-2">
-                {([['add', '充值', '加到余额'], ['deduct', '扣减', '从余额扣除'],
-                   ['set', '设为', '重置为指定值'], ['clear', '清零', '余额归零']] as const).map(([m, label, hint]) => (
-                  <button key={m} type="button" onClick={() => { setMode(m as BalanceMode); setDialogErr('') }}
-                    className={cn('rounded-md border p-2 text-left text-xs', mode === m ? 'border-primary bg-primary/5' : 'hover:bg-muted/50')}>
-                    <div className="text-sm font-medium">{label}</div>
-                    <div className="text-muted-foreground">{hint}</div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            {mode !== 'clear' && (
-              <div>
-                <Label htmlFor="bal-dialog-amount">金额(元)</Label>
-                <Input id="bal-dialog-amount" autoFocus inputMode="decimal" className="mt-2 text-base"
-                  placeholder={mode === 'set' ? '例如 0' : '例如 100'} value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && valid && !busy) void saveAdjust() }} />
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {[10, 50, 100, 500].map((v) => (
-                    <Button key={v} type="button" size="sm" variant="outline" className="h-7 px-2 text-xs"
-                      onClick={() => setAmount(String(v))}>
-                      {mode === 'deduct' ? '-' : mode === 'set' ? '设为 ' : '+'}¥{v}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className={cn('flex items-center justify-between rounded-md px-3 py-2 text-sm',
-              previewNegative ? 'bg-destructive/10 text-destructive' : 'bg-muted/50')}>
-              <span>调整后余额</span>
-              <span className="font-mono font-medium">
-                {preview === null ? '—' : preview < 0 ? `-¥${Math.abs(preview).toFixed(2)}` : `¥${preview.toFixed(2)}`}
-                {previewNegative && ' (扣减超过当前余额)'}
-              </span>
-            </div>
-            <div>
-              <Label htmlFor="bal-reason">备注(可选,写入流水与审计)</Label>
-              <Input id="bal-reason" className="mt-2" maxLength={200} placeholder="例如:9 月充值 / 项目冲刺追加"
-                value={reason} onChange={(e) => setReason(e.target.value)} />
-            </div>
-            {dialogErr && <div className="text-sm text-destructive">{dialogErr}</div>}
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setTarget(null)}>取消</Button>
-              <Button disabled={!valid || busy} onClick={() => void saveAdjust()}>
-                {busy ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Wallet className="mr-1 h-4 w-4" />}确认
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* 余额流水 */}
-      <Dialog open={!!ledgerUser} onOpenChange={(o) => { if (!o) setLedgerUser(null) }}>
+      {/* 成员用量明细:今日用量 / 月度用量 / 输入+输出 / 按模型 / 最近请求 */}
+      <Dialog open={canReadUsage && !!target} onOpenChange={(o) => { if (!o) setTarget(null) }}>
         <DialogContent className="max-w-2xl">
           <DialogHeader>
-            <DialogTitle>余额流水 · {ledgerUser?.username}</DialogTitle>
+            <DialogTitle>用量明细 · {target?.username}</DialogTitle>
             <DialogDescription>
-              每一笔余额变动都可追溯(发放 / 清零 / 人工调整 / 消费 / 回补)。
-              {ledgerSum !== null && <> 流水合计 <span className="font-mono">{fmtY(ledgerSum)}</span>,应等于当前余额。</>}
+              今日用量与月度用量均为 Token 口径;模型明细与最近请求取自请求级计量记录(不含对话内容)。
             </DialogDescription>
           </DialogHeader>
-          {ledgerBusy ? <Skeleton className="h-64 w-full" /> : ledgerError ? (
-            // 失败 ≠ 空态:明说没读到 + 就地重试(修前这里渲染的是「暂无流水」)。
+
+          {detailBusy ? <Skeleton className="h-64 w-full" /> : detailError ? (
+            // 失败 ≠ 空态:明说没读到 + 就地重试(修前这里会渲染成「暂无用量」)。
             <div className="space-y-3">
-              <div className="text-sm text-destructive">流水读取失败：{ledgerError}</div>
-              <Button size="sm" variant="outline" onClick={() => { if (ledgerUser) void openLedger(ledgerUser) }}>重试</Button>
+              <div className="text-sm text-destructive">用量读取失败:{detailError}</div>
+              <Button size="sm" variant="outline" onClick={() => { if (target) void openDetail(target) }}>重试</Button>
             </div>
+          ) : !detail ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">暂无用量</div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>时间</TableHead>
-                  <TableHead>类型</TableHead>
-                  <TableHead className="text-right">变动</TableHead>
-                  <TableHead className="text-right">余额</TableHead>
-                  <TableHead>说明</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {ledger.map((e) => (
-                  <TableRow key={e.id}>
-                    <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtTime(e.created_at)}</TableCell>
-                    <TableCell><Badge variant="outline">{KIND_LABEL[e.kind] ?? e.kind}</Badge></TableCell>
-                    <TableCell className={cn('text-right font-mono tabular-nums', e.amount < 0 ? 'text-destructive' : 'text-emerald-600')}>
-                      {e.amount >= 0 ? '+' : ''}{e.amount.toFixed(2)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono tabular-nums">{e.balance_after.toFixed(2)}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {e.reason || '—'}{e.actor ? ` · ${e.actor}` : ''}{e.month ? ` · ${e.month}` : ''}
-                      {e.usage_id ? ` · usage#${e.usage_id}` : ''}
-                    </TableCell>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md border p-3">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <Activity className="h-3.5 w-3.5" />今日用量
+                  </div>
+                  <div className="mt-1 font-mono text-lg font-medium tabular-nums">
+                    {detail.today ? fmtTokens(detail.today.total) : <span className="text-sm text-muted-foreground">暂无用量</span>}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <CalendarDays className="h-3.5 w-3.5" />月度用量
+                  </div>
+                  <div className="mt-1 font-mono text-lg font-medium tabular-nums">
+                    {hasCount(target?.monthly_usage) ? fmtTokens(target!.monthly_usage) : <span className="text-sm text-muted-foreground">暂无用量</span>}
+                  </div>
+                </div>
+              </div>
+
+              {/* 今日按方向拆分:输入 + 输出 = 总 Token(同一份日聚合行)。 */}
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>今日用量拆分</TableHead>
+                    <TableHead className="text-right">输入 Token</TableHead>
+                    <TableHead className="text-right">输出 Token</TableHead>
+                    <TableHead className="text-right">总 Token</TableHead>
                   </TableRow>
-                ))}
-                {ledger.length === 0 && (
-                  <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">暂无流水</TableCell></TableRow>
-                )}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {detail.today ? (
+                    <TableRow>
+                      <TableCell className="text-muted-foreground">今日({todayWindow().from})</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(detail.today.input)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(detail.today.output)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{fmtTokens(detail.today.total)}</TableCell>
+                    </TableRow>
+                  ) : (
+                    <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>
+                  )}
+                </TableBody>
+              </Table>
+
+              <div>
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-medium">
+                  <Cpu className="h-3.5 w-3.5" />按模型用量(本月)
+                </div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>模型</TableHead>
+                      <TableHead className="text-right">请求数</TableHead>
+                      <TableHead className="text-right">输入 Token</TableHead>
+                      <TableHead className="text-right">输出 Token</TableHead>
+                      <TableHead className="text-right">总 Token</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {detail.models.map((r) => (
+                      <TableRow key={r.label}>
+                        <TableCell>{r.label}</TableCell>
+                        <TableCell className="text-right tabular-nums">{r.requests}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(rowTokens(r))}</TableCell>
+                      </TableRow>
+                    ))}
+                    {detail.models.length === 0 && (
+                      <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+              <div>
+                <div className="mb-2 text-sm font-medium">最近请求</div>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>时间</TableHead>
+                      <TableHead>模型</TableHead>
+                      <TableHead className="text-right">输入 Token</TableHead>
+                      <TableHead className="text-right">输出 Token</TableHead>
+                      <TableHead className="text-right">总 Token</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {detail.requests.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{fmtTime(r.time)}</TableCell>
+                        <TableCell>{r.model}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{fmtTokens(rowTokens(r))}</TableCell>
+                      </TableRow>
+                    ))}
+                    {detail.requests.length === 0 && (
+                      <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+            {/* 需求 §6:没有数据时显示「暂无用量」,不编造数字、不折算。 */}
+            {!detail.today && detail.models.length === 0 && detail.requests.length === 0 && (
+              <div className="text-xs text-muted-foreground">
+                该成员在当前窗口内没有用量记录:显示「暂无用量」,不估算、不填 0。
+              </div>
+            )}
+
+              {/* 本页只展示 Token 用量:整个页面没有任何写入路径。 */}
+              <div className="text-[11px] text-muted-foreground">
+                本页只展示 Token 用量与请求计量,数据源为用量接口;服务端保留的兼容字段不在此页展示。
+              </div>
+            </div>
           )}
+
           <div className="flex justify-end">
-            <Button variant="outline" onClick={() => setLedgerUser(null)}>关闭</Button>
+            <Button variant="outline" onClick={() => setTarget(null)}>关闭</Button>
           </div>
         </DialogContent>
       </Dialog>
     </div>
   )
+}
+
+/** 把 `GET /usage?group=day` 的行合成本窗口的输入/输出合计。
+ *
+ *  `sumRows` 的 `tokens` 是 chat 口径(扣掉 embedding),这里要的是
+ *  「总 Token = 输入 + 输出」的直白口径 —— 与按钮上那三个词逐一对应,
+ *  所以自己按 prompt + completion 求和,不用 chatTokens。 */
+function sumWindow(rows: UsageRow[]): DetailState['today'] {
+  if (rows.length === 0) return null
+  let input = 0, output = 0, requests = 0
+  for (const r of rows) {
+    input += r.prompt_tokens ?? 0
+    output += r.completion_tokens ?? 0
+    requests += r.requests ?? 0
+  }
+  return { input, output, total: input + output, requests }
 }

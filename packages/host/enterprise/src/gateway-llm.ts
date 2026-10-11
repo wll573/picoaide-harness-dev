@@ -7,17 +7,22 @@
  *    下（只认 `Authorization: Bearer`）⇒ 每个模型请求 401「缺少认证令牌」（2026-09-22 现场
  *    事故）。当时的修法是在组装期钉死 `protocol: chat-completions`。
  *  · **0.1.7-rc.2 引入、0.2.0-rc.2 复核仍成立**：`protocol` **被删除**
- *    （`llm-deepseek/src/config.ts:207`，配了直接抛错），适配器只剩 Messages 一条路径
- *    （端点固定 `<baseURL>/messages` → 网关 `/v1/messages`）。鉴权搬到**注册 provider 的一方**：
- *    `registerDeepSeekProvider(ctx, provider, { resolveAuth })` 返回的 `headers` 会被原样加到
+ *    （`llm-deepseek/src/config.ts:207`，配了直接抛错），上游适配器只剩 Messages 一条路径。
+ *    鉴权因此搬到**注册 provider 的一方**：上游是
+ *    `registerDeepSeekProvider(ctx, provider, { resolveAuth })` 返回的 `headers` 被原样加到
  *    Messages 请求上（`adapter.ts:82` 每次请求调一次，契约见 `DeepSeekRequestAuth`，
  *    `types.ts:105`）。
- *    ⚠️ 这两条 claim 的锚点是**行为**不是版本号：升级上游时按"守卫是否仍在 / 请求头是否仍由
- *    `resolveAuth` 决定"复核（当前 pin `dsh-v0.2.0-rc.2` = 639ed0153，三条都还在原位）。
+ *  · **内网网关（`d4e6704d72`）**：本仓网关除 `/v1/messages` 外还提供 `/v1/chat/completions`，
+ *    而内网部署的渠道适配层按 OpenAI 兼容口径实现。因此这里**不使用上游 Messages provider**，
+ *    改用本插件自己的 `GatewayChatCompletionsAdapter`，直接请求 `/v1/chat/completions`，
+ *    仍以同一份 Config 形状注册同一个 provider 路由 `deepseek-official`，
+ *    把**会话令牌作为 Bearer** 交给请求。
+ *    ⚠️ 上面两条 claim 的锚点是**行为**不是版本号：升级上游时按"守卫是否仍在 / 请求头是否仍由
+ *    `resolveAuth` 决定 / 内网渠道是否仍按 OpenAI 兼容口径应答"复核
+ *    （当前 pin `dsh-v0.2.0-rc.2` = 639ed0153，上游侧三条都还在原位）。
  *
- * 所以本插件取代上游的 `@deepseek-ai/dsh-llm-deepseek-api-key`（它的 `resolveAuth` 硬编码
- * `x-api-key`，对只认 Bearer 的网关必然 401，且没有任何换头的接缝），用同一份 Config 形状
- * 注册同一个 provider 路由 `deepseek-official`，把**会话令牌作为 Bearer** 交给请求。
+ * 所以本插件不使用上游的 Messages provider（也不使用它的 x-api-key 鉴权），用同一份
+ * Config 形状注册同一个 provider 路由 `deepseek-official`，把**会话令牌作为 Bearer** 交给请求。
  * 组装期 `cordis.patch.yml` 把上游那一行 `disabled` 掉并插入本行（id `picoaide-gateway-llm`）。
  *
  * 令牌来源是 `credentials` 服务（`gateway-model.ts` 在会话变化时写入 `TOKEN_ENV`），
@@ -28,9 +33,19 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/cordis-plugin-loader'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
-import { assertUsableApiKey, LlmError } from '@deepseek-ai/dsh-llm'
+import {
+  assertUsableApiKey,
+  attributionHeaders,
+  LlmAdapter,
+  LlmError,
+  ReasoningEffortId,
+  type GenerateOptions,
+  type LlmModelInfo,
+  type LlmResolvedModelInfo,
+  type StreamChunk,
+} from '@deepseek-ai/dsh-llm'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import { catalogModelInfo, Config, plainOptions, registerDeepSeekProvider, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
+import { catalogModelInfo, Config, plainOptions, resolveAdapterOptions } from '@deepseek-ai/dsh-llm-deepseek'
 import { GATEWAY_LLM_ROW_ID, TOKEN_ENV } from './gateway-contract.ts'
 
 export { Config, GATEWAY_LLM_ROW_ID, TOKEN_ENV }
@@ -135,11 +150,10 @@ export function rowIdFailure(entryId: string | undefined): string | undefined {
 }
 
 /**
- * Register the gateway as the `deepseek-official` Messages provider.
+ * Register the gateway as the `deepseek-official` OpenAI Chat Completions provider.
  *
- * `baseURL`/`models`/`reasoningEffort` stay exactly where 0.1.6 put them — the
- * row's own settings section, written by `gateway-model.ts` (login) and
- * `bootstrap.ts` (catalog). Only the credential plane changed.
+ * `baseURL`/`models`/`reasoningEffort` stay in the row's settings section,
+ * written by `gateway-model.ts` (login) and `bootstrap.ts` (catalog).
  */
 export function apply(ctx: Context, config: Config): void {
   const rowFailure = rowIdFailure(ctx.fiber.entry?.options.id)
@@ -167,14 +181,283 @@ export function apply(ctx: Context, config: Config): void {
     const token = assertUsableApiKey(hit.value, 'gateway-llm', ref)
     return { headers: { Authorization: `Bearer ${token}` } }
   }
-  registerDeepSeekProvider(ctx, PROVIDER, {
+  const adapter = new GatewayChatCompletionsAdapter({
     options,
     providerName: 'DeepSeek',
     resolveAuth,
     discoverModels: provider => Promise.resolve(options().models.map(model => catalogModelInfo(provider, model))),
   })
+  ctx.llm.registerAdapter([PROVIDER], adapter)
   // 与上游 api-key 行同面：把 provider 关联到**本行**的设置表单（表单值就是行 config）。
   ctx.llm.registerConfigurableProviders([
     { provider: PROVIDER, displayName: 'DeepSeek', settingsNs: ctx.fiber.entry?.options.id ?? GATEWAY_LLM_ROW_ID, settingsPath: [] },
   ])
+}
+
+type GatewayOptions = ReturnType<typeof resolveAdapterOptions>
+type ResolveAuth = (connection: { baseURL?: string }) => Promise<{ headers: Record<string, string> }>
+
+const OFF_REASONING_EFFORT = ReasoningEffortId('off')
+const LOW_REASONING_EFFORT = ReasoningEffortId('low')
+const HIGH_REASONING_EFFORT = ReasoningEffortId('high')
+const MAX_REASONING_EFFORT = ReasoningEffortId('max')
+
+const ALL_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+  { id: LOW_REASONING_EFFORT, name: 'Low', description: 'Prefer for routine or latency-sensitive tasks.' },
+  { id: HIGH_REASONING_EFFORT, name: 'High', description: 'The default balance for most tasks.' },
+  { id: MAX_REASONING_EFFORT, name: 'Max', description: 'Reserve for the hardest quality-first tasks.' },
+] as const
+
+const OFF_ONLY_REASONING_EFFORTS = [
+  { id: OFF_REASONING_EFFORT, name: 'Off', description: 'Use for simple tasks that do not need reasoning.' },
+] as const
+
+/**
+ * Build reasoning capability info from connection defaults.
+ *
+ * When thinking is disabled, only "off" is offered. When enabled, all four
+ * levels are exposed and the configured default (or high as fallback) becomes
+ * the default effort. The per-model bootstrap patch overrides this further for
+ * models that have an explicit `_thinking_adapter`.
+ */
+function resolveReasoningInfo(
+  thinking: 'enabled' | 'disabled' | undefined,
+  defaultEffort: 'off' | 'low' | 'high' | 'max' | undefined,
+) {
+  if (thinking === 'disabled') {
+    return { efforts: OFF_ONLY_REASONING_EFFORTS, defaultEffort: OFF_REASONING_EFFORT }
+  }
+  const resolvedDefault = defaultEffort === 'off'
+    ? OFF_REASONING_EFFORT
+    : defaultEffort === 'low'
+      ? LOW_REASONING_EFFORT
+      : defaultEffort === 'max'
+        ? MAX_REASONING_EFFORT
+        : HIGH_REASONING_EFFORT
+  return { efforts: ALL_REASONING_EFFORTS, defaultEffort: resolvedDefault }
+}
+
+/**
+ * Small provider adapter for the server's `/v1/chat/completions` endpoint.
+ *
+ * DSH 0.1.7's bundled DeepSeek adapter is Messages-only. Keeping this adapter
+ * local lets the enterprise gateway use the server's OpenAI-compatible route
+ * without downgrading the whole DSH dependency graph or sending Anthropic
+ * headers/payloads.
+ */
+class GatewayChatCompletionsAdapter extends LlmAdapter {
+  private readonly options: () => GatewayOptions
+  private readonly providerName: string
+  private readonly resolveAuth: ResolveAuth
+  private readonly discoverModels: (provider: string) => Promise<readonly LlmModelInfo[]>
+
+  constructor(dependencies: {
+    options: () => GatewayOptions
+    providerName: string
+    resolveAuth: ResolveAuth
+    discoverModels: (provider: string) => Promise<readonly LlmModelInfo[]>
+  }) {
+    super()
+    this.options = dependencies.options
+    this.providerName = dependencies.providerName
+    this.resolveAuth = dependencies.resolveAuth
+    this.discoverModels = dependencies.discoverModels
+  }
+
+  providerInfo(provider: string) {
+    return { id: provider, name: this.providerName }
+  }
+
+  async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    return this.discoverModels(provider)
+  }
+
+  async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    const opts = this.options()
+    const match = opts.models.find(item => item.id === model)
+    return {
+      provider,
+      id: model,
+      name: match?.name ?? model,
+      ...(match?.description === undefined ? {} : { description: match.description }),
+      ...(match?.inputModalities === undefined ? {} : { inputModalities: match.inputModalities }),
+      context: { contextWindow: match?.contextWindow ?? opts.defaultContextWindow },
+      defaultMaxTokens: opts.maxTokens,
+      reasoning: resolveReasoningInfo(opts.defaults.thinking, opts.defaults.reasoningEffort),
+    }
+  }
+
+  async prepareCall(provider: string, model: string): Promise<{ model: LlmResolvedModelInfo, stream: (options: GenerateOptions) => AsyncIterable<StreamChunk> }> {
+    const resolved = await this.resolveModel(provider, model)
+    return { model: resolved, stream: options => this.stream(options) }
+  }
+
+  async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
+    const config = this.options()
+    const baseURL = config.baseURL?.replace(/\/+$/u, '')
+    const auth = await this.resolveAuth({ baseURL })
+    const messages = options.messages.map(message => projectMessage(message))
+    if (options.system !== undefined && !messages.some(message => message.role === 'system')) {
+      messages.unshift({ role: 'system', content: options.system })
+    }
+    const body: Record<string, unknown> = {
+      model: options.model,
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+    }
+    if (options.tools?.length) body.tools = options.tools.map(tool => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.parameters } }))
+    if (options.temperature !== undefined) body.temperature = options.temperature
+    if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens
+    else if (config.maxTokens !== undefined) body.max_tokens = config.maxTokens
+    if (options.stop?.length) body.stop = options.stop
+    if (options.reasoningEffort !== undefined && options.reasoningEffort !== 'off') body.reasoning_effort = options.reasoningEffort
+
+    const response = await fetch(`${baseURL}/chat/completions`, {
+      method: 'POST',
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      redirect: 'error',
+      body: JSON.stringify(body),
+      headers: {
+        ...attributionHeaders(),
+        'content-type': 'application/json',
+        accept: 'text/event-stream',
+        ...auth.headers,
+        ...(options.sessionId === undefined ? {} : { 'x-deepseek-harness-session-id': String(options.sessionId) }),
+        ...(options.purpose === 'compaction' ? { 'x-deepseek-harness-compact': '1' } : {}),
+      },
+    })
+    if (!response.ok) {
+      const text = await response.text()
+      let detail = text
+      try { detail = JSON.stringify(JSON.parse(text)) } catch { /* keep text */ }
+      throw new LlmError(`Gateway Chat Completions request failed (${response.status}): ${detail}`, `HTTP_${response.status}`, { status: response.status })
+    }
+    if (response.body === null) throw new LlmError('Gateway Chat Completions returned no response body', 'EMPTY_RESPONSE')
+
+    let text = ''
+    let reasoning = ''
+    let finishReason: 'stop' | 'tool-calls' | 'max-tokens' = 'stop'
+    // 块索引必须单调分配且互不相同。曾经的硬编码（reasoning=1 / text=0 / tool_call=call.index+1）
+    // 会让第一个工具调用与 reasoning 撞成同一个 index，而 BlockAssembler 的 block-start
+    // 是「首次占位即拥有」（assembler.ts:51-60），撞号时工具调用块被静默丢弃 ⇒ 思考已产出、
+    // 工具调用却从未执行、turn 直接结束（用户侧表现为「Let me do ... first」之后卡死）。
+    let nextIndex = 0
+    const blockKinds = new Map<number, 'text' | 'reasoning'>()
+    let textIndex: number | undefined
+    let reasoningIndex: number | undefined
+    const toolState = new Map<number, { id: string, name: string, arguments: string }>()
+    /** 上游 tool_call.index → 本地块索引；同一路工具调用的多个 delta 必须复用同一个块。 */
+    const toolIndexByWire = new Map<number, number>()
+    for await (const data of readSseData(response.body)) {
+      if (data === '[DONE]') break
+      let chunk: any
+      try { chunk = JSON.parse(data) } catch { continue }
+      const usage = chunk.usage
+      if (usage && typeof usage === 'object') {
+        yield { type: 'usage', usage: { inputTokens: Number(usage.prompt_tokens ?? 0), outputTokens: Number(usage.completion_tokens ?? 0), totalTokens: Number(usage.total_tokens ?? 0) } }
+      }
+      const choice = chunk.choices?.[0]
+      const delta = choice?.delta
+      if (typeof delta?.reasoning_content === 'string' && delta.reasoning_content.length > 0) {
+        if (reasoningIndex === undefined) {
+          reasoningIndex = nextIndex++
+          blockKinds.set(reasoningIndex, 'reasoning')
+          yield { type: 'block-start', index: reasoningIndex, blockType: 'reasoning' }
+        }
+        reasoning += delta.reasoning_content
+        yield { type: 'reasoning-delta', index: reasoningIndex, text: delta.reasoning_content }
+      }
+      if (typeof delta?.content === 'string' && delta.content.length > 0) {
+        if (textIndex === undefined) {
+          textIndex = nextIndex++
+          blockKinds.set(textIndex, 'text')
+          yield { type: 'block-start', index: textIndex, blockType: 'text' }
+        }
+        text += delta.content
+        yield { type: 'text-delta', index: textIndex, text: delta.content }
+      }
+      for (const [offset, call] of (delta?.tool_calls ?? []).entries()) {
+        const wireIndex = Number(call.index ?? offset)
+        let index = toolIndexByWire.get(wireIndex)
+        if (index === undefined) {
+          index = nextIndex++
+          toolIndexByWire.set(wireIndex, index)
+          yield { type: 'block-start', index, blockType: 'tool-call' }
+        }
+        const current = toolState.get(index) ?? { id: String(call.id ?? ''), name: '', arguments: '' }
+        if (call.id) current.id = String(call.id)
+        // 覆盖而非累加：OpenAI 兼容协议允许每个 delta 重复下发同一个完整工具名，
+        // 累加会把 `dtodo` 拼成 `dtododtodo`，执行时直接 unknown tool。
+        if (call.function?.name) current.name = String(call.function.name)
+        const argumentsDelta = String(call.function?.arguments ?? '')
+        toolState.set(index, current)
+        if (argumentsDelta) { current.arguments += argumentsDelta; yield { type: 'tool-call-delta', index, id: current.id as never, name: current.name, argumentsDelta } }
+      }
+      const reason = choice?.finish_reason
+      if (reason === 'tool_calls') finishReason = 'tool-calls'
+      else if (reason === 'length') finishReason = 'max-tokens'
+    }
+    for (const [index, kind] of blockKinds) {
+      if (kind === 'text') yield { type: 'block-end', index, block: { type: 'text', text } }
+      else yield { type: 'block-end', index, block: { type: 'reasoning', text: reasoning } }
+    }
+    for (const [index, call] of toolState) yield { type: 'block-end', index, block: { type: 'tool-call', id: call.id as never, name: call.name, arguments: call.arguments } }
+    yield { type: 'finish', reason: { kind: finishReason } } as StreamChunk
+  }
+}
+
+function projectMessage(message: GenerateOptions['messages'][number]): Record<string, unknown> {
+  const role = message.role === 'developer' ? 'developer' : message.role
+  const result: Record<string, unknown> = { role }
+  if (message.role === 'assistant') {
+    // thinking 模式下 DeepSeek 要求逐轮回传 reasoning_content，缺失即 400
+    // （"The `reasoning_content` in the thinking mode must be passed back to the API."）。
+    // 思考文本必须走独立字段：拼进 content 会被当作模型可见输出，既丢语义又触发上面那条 400。
+    const reasoning = message.content
+      .filter(block => block.type === 'reasoning')
+      .map(block => block.text)
+      .join('')
+    const content = message.content
+      .filter(block => block.type === 'text')
+      .map(block => block.text)
+      .join('')
+    result.content = content
+    // 空字符串也要带上：DeepSeek 校验的是字段存在性，不是非空。
+    result.reasoning_content = reasoning
+    const calls = message.content.filter(block => block.type === 'tool-call')
+    if (calls.length) result.tool_calls = calls.map(call => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.arguments } }))
+    return result
+  }
+  const content = message.content.map(block => {
+    if (block.type === 'text' || block.type === 'reasoning') return block.text
+    if (block.type === 'tool-call') return ''
+    if (block.type === 'file') return `[file: ${block.attachment.name}]`
+    if (block.type === 'image') return block.offloaded ? '[image omitted]' : '[image]'
+    return ''
+  }).join('')
+  result.content = content
+  if (message.role === 'tool') result.tool_call_id = message.toolCallId
+  return result
+}
+
+async function* readSseData(body: ReadableStream<Uint8Array>): AsyncIterable<string> {
+  const reader = body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  try {
+    while (true) {
+      const next = await reader.read()
+      if (next.done) break
+      buffer += decoder.decode(next.value, { stream: true })
+      const lines = buffer.split(/\r?\n/u)
+      buffer = lines.pop() ?? ''
+      for (const line of lines) if (line.startsWith('data:')) yield line.slice(5).trim()
+    }
+    buffer += decoder.decode()
+    if (buffer.startsWith('data:')) yield buffer.slice(5).trim()
+  } finally {
+    reader.releaseLock()
+  }
 }

@@ -1531,15 +1531,29 @@ describe('应用中心 · F16 打开次数列与降级', () => {
     expect(screen.queryByTestId('app-ai-calls')).toBeNull()
   })
 
-  it('详情抽屉：AI 用量有数据时显示次数 / tokens / 费用', async () => {
+  it('详情抽屉：AI 用量有数据时显示次数 / Token（且不再渲染金额）', async () => {
     aiUsageMode = 'data'
     await renderList()
     fireEvent.click(within(rowOf('share-note')).getByRole('button', { name: '详情' }))
     expect(await screen.findByTestId('app-ai-calls')).toHaveTextContent('3')
-    // 服务端只给分项 ⇒ 总 token = 输入 900 + 输出 300 = 1200（headline 用千分位）。
-    expect(screen.getByTestId('app-ai-tokens')).toHaveTextContent('1,200')
-    expect(screen.getByTestId('app-ai-cost').textContent).toContain('1.50')
+    // 服务端只给分项 ⇒ 总 token = 输入 900 + 输出 300 = 1200；§6 后 headline 用 Token 紧凑格式
+    // （`fmtTokens`：1200 → 1.2K），不再是千分位金额。
+    expect(screen.getByTestId('app-ai-tokens')).toHaveTextContent('1.2K')
+    // `app-ai-cost` 是改造前"费用"那一位（旧 id 原值保留、只改展示）：现在它渲染的仍是
+    // **同一个总 Token 读数**。所以这里两种断言都要 —— 先认新口径（总 Token 1.2K），
+    // 再守住旧行为确实消失（没有 `1.50` 这个金额、也没有 ¥）。
+    const headlineCost = screen.getByTestId('app-ai-cost')
+    expect(headlineCost.textContent).toContain('总 Token')
+    expect(headlineCost.textContent).toContain('1.2K')
+    expect(headlineCost.textContent).not.toContain('1.50')
+    expect(headlineCost.textContent).not.toContain('¥')
     expect(screen.getByTestId('app-ai-days').textContent).toContain('2026-09-19')
+    // 按日行上的同一处迁移：旧的 `app-ai-day-cost-*` 单元格现在渲染**该日总 Token**
+    // （输入 900 + 输出 300），同样既认新口径、又守住旧金额文本已消失。
+    const dayCost = screen.getByTestId('app-ai-day-cost-2026-09-19')
+    expect(dayCost.textContent).toContain('1.2K')
+    expect(dayCost.textContent).not.toContain('1.50')
+    expect(dayCost.textContent).not.toContain('¥')
     // 生效窗口由服务端回显（R2-L6-3 同款纪律）。
     expect(screen.getByTestId('app-ai-effective-window').textContent).toContain('2026-08-21 ~ 2026-09-19')
   })

@@ -59,14 +59,10 @@ const APPS: ReactNode = (
   </>
 )
 
-/** 「更多」行自己的图标：三个点（⋯，与文案同级）。 */
-export const MORE_GLYPH: ReactNode = (
-  <>
-    <circle cx="3.4" cy="8" r="1.3" fill="currentColor" />
-    <circle cx="8" cy="8" r="1.3" fill="currentColor" />
-    <circle cx="12.6" cy="8" r="1.3" fill="currentColor" />
-  </>
-)
+/**
+ * 「更多」行的图标（⋯）与尾部 chevron 已随浮层一并删除（2026-10 改回逐行直显）。
+ * 「更多」行与浮层都不再存在，故不再导出它们 —— 留着会变成"看起来还能用"的死代码。
+ */
 
 /** 未登记 id 的兜底图形（通用面板标记，不是"无图标"）。 */
 export const FALLBACK_GLYPH: ReactNode = (
@@ -85,14 +81,9 @@ const GLYPHS: Record<string, ReactNode> = {
   apps: APPS,
 }
 
-/** 浮层条目里的 ✓（当前激活项）。 */
+/** 激活行的 ✓（当前打开的面板）。 */
 export const CHECK_GLYPH: ReactNode = (
   <path d="M3.5 8.6 6.4 11.5 12.5 5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-)
-
-/** 「更多」行的尾部 chevron（展开时朝上 = 旋转 180°）。 */
-export const CHEVRON_GLYPH: ReactNode = (
-  <path d="M4 6.5 8 10.5 12 6.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
 )
 
 /**

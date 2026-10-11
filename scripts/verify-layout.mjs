@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
 const root = resolve(import.meta.dirname, '..')
@@ -174,16 +174,6 @@ for (const dir of packageNameTable.keys()) {
 }
 for (const [name, manifest] of workspaceManifests) {
   if (manifest.packageManager !== undefined) fail(`${name} must inherit the root Yarn release`)
-}
-const claudePath = resolve(root, 'CLAUDE.md')
-const claudeStat = lstatSync(claudePath)
-// Windows checkouts materialize the symlink as a regular file holding the
-// target name; accept both forms so the pointer stays verified on every host.
-const claudeTarget = claudeStat.isSymbolicLink()
-  ? readlinkSync(claudePath)
-  : readFileSync(claudePath, 'utf8').trim()
-if (claudeTarget !== 'AGENTS.md') {
-  fail('CLAUDE.md must link to the outer repository AGENTS.md')
 }
 for (const legacyFile of [
   'pnpm-lock.yaml',

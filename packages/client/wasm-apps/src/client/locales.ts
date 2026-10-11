@@ -310,7 +310,7 @@ export const zh = {
   // §19 Q4 / §7.6：未登录时**记住这次打开**，登录完成后自动继续（不用再点一次）。
   'appCenter.openPendingLogin': '已记住这次打开：登录完成后会自动继续，不用再点一次',
   // ---- 异渠道深链的一次性 toast（§5.3/§19 Q5 **逐字**冻结）----
-  'appCenter.toast.foreignDeepLink': '这个链接属于另一家企业的客户端，请让对方用你们客户端的『复制链接』重发',
+  'appCenter.toast.foreignDeepLink': '这个链接属于另一个部署的客户端，请让对方用你们客户端的『复制链接』重发',
   'appCenter.toast.dismiss': '关闭提示',
   // §5.2 的 `window` 字段：新开 vs 聚焦（拿到才说，拿不到不编）。
   'appCenter.openOpening': '正在打开…',
@@ -636,7 +636,7 @@ export const en: Record<keyof typeof zh, string> = {
   'appCenter.openNotSignedIn': 'Could not open: you are not signed in — sign in first',
   'appCenter.openNotSignedInHint': 'Sign in and retry; apps are available in a signed-in client only (there is no browser access any more)',
   'appCenter.openPendingLogin': 'This open was remembered: it continues automatically once you sign in — no need to click again',
-  'appCenter.toast.foreignDeepLink': 'This link belongs to another company\'s client — ask the sender to use "Copy link" in your client and send it again',
+  'appCenter.toast.foreignDeepLink': 'This link belongs to another deployment\'s client — ask the sender to use "Copy link" in your client and send it again',
   'appCenter.toast.dismiss': 'Dismiss',
   'appCenter.openOpening': 'Opening…',
   'appCenter.openWindowOpened': 'Opened',

@@ -103,7 +103,7 @@ jobs:
           # 都红**):
           #   docs/**、site/**            → 文档面
           #   任何**含 `/` 的其它路径**   → 代码(含 server/skills/**/*.md 这类随包文档)
-          #   仓库根的 markdown           → 文档面(README/CONTRIBUTING/AGENTS… 没有
+          #   仓库根的 markdown           → 文档面(README/AGENTS… 没有
           #                                 包级/Go 判据;铁律 0 等根守卫另由
           #                                 `Gate (root guards, every change)` 兜住)
           #   其余                        → 代码

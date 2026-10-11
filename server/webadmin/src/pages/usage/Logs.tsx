@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../../components/ui/table'
 import { PageHeader } from '../../components/page-header'
 import { rangePreset, fmtTokens } from '../../lib/format'
-import { fetchUsageList, sumRows, downloadCsv, fmtY, type UsageRequestRow } from './common'
+import { fetchUsageList, sumRows, downloadCsv, type UsageRequestRow } from './common'
 
 const SIZE = 20
 const KINDS = [
@@ -85,8 +85,8 @@ export default function UsageLogs() {
       if ((d.rows ?? []).length < 100) break
     }
     downloadCsv(`usage_logs_${from}_${to}.csv`,
-      ['时间', '用户', '模型', '类型', '输入tokens', '输出tokens', '缓存tokens', '费用(¥)'],
-      all.map((r) => [r.time, r.username, r.model, r.kind, r.prompt_tokens, r.completion_tokens, r.cache_tokens, (r.cost ?? 0).toFixed(4)]))
+      ['时间', '用户', '模型', '类型', '输入tokens', '输出tokens', '缓存tokens'],
+      all.map((r) => [r.time, r.username, r.model, r.kind, r.prompt_tokens, r.completion_tokens, r.cache_tokens]))
   }
 
   return (
@@ -96,9 +96,8 @@ export default function UsageLogs() {
       {/* 统计徽标(new-api CommonLogsStats 式) */}
       <div className="flex flex-wrap items-center gap-3">
         <Badge variant="secondary">区间请求 {stats ? stats.requests.toLocaleString() : '…'}</Badge>
-        <Badge variant="secondary">区间消耗 {stats ? fmtY(stats.cost) : '…'}</Badge>
-        <Badge variant="outline">平均每请求 {stats && stats.requests > 0 ? fmtY(stats.cost / stats.requests) : '—'}</Badge>
-        <Badge variant="outline">区间 tokens {stats ? fmtTokens(stats.tokens) : '…'}</Badge>
+        <Badge variant="secondary">区间 总 Token {stats ? fmtTokens(stats.tokens) : '…'}</Badge>
+        <Badge variant="outline">平均每请求 tokens {stats ? (stats.requests > 0 ? fmtTokens(stats.tokens / stats.requests) : '暂无用量') : '…'}</Badge>
       </div>
 
       <Card>
@@ -154,7 +153,6 @@ export default function UsageLogs() {
                     <TableHead className="text-right">输入</TableHead>
                     <TableHead className="text-right">输出</TableHead>
                     <TableHead className="text-right">缓存</TableHead>
-                    <TableHead className="text-right">费用</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -167,11 +165,10 @@ export default function UsageLogs() {
                       <TableCell className="text-right tabular-nums">{fmtTokens(r.prompt_tokens)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtTokens(r.completion_tokens)}</TableCell>
                       <TableCell className="text-right tabular-nums">{fmtTokens(r.cache_tokens)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{fmtY(r.cost)}</TableCell>
                     </TableRow>
                   ))}
-                  {/* R15C-W-07：失败 ≠ 空态 —— error 在场时不渲染「暂无数据」(那是"已确认没有记录"的语义)。 */}
-                  {rows.length === 0 && !error && <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">暂无数据</TableCell></TableRow>}
+                  {/* R15C-W-07：失败 ≠ 空态 —— error 在场时不渲染「暂无用量」(那是"已确认没有记录"的语义)。 */}
+                  {rows.length === 0 && !error && <TableRow><TableCell colSpan={7} className="text-center text-muted-foreground">暂无用量</TableCell></TableRow>}
                 </TableBody>
               </Table>
               {/* 分页 */}

@@ -18,7 +18,7 @@ import UsageBalance from './usage/Balance'
 // 同一族形态在本轮出现 7 次（每一处都是"失败的读 → 旧数据/空态/确定结论"）：
 //   - 切 tab / 刷新 / 筛选的 GET 失败后，**上一份数据继续冒充本次结果**，行内的
 //     破坏性写（删除/通过/拒绝/下发开关）照常可点（W-02/W-03/W-06/W-07）；
-//   - 读取失败被渲染成**空态**（「暂无部门」「暂无流水」「暂无审计记录」），即把
+//   - 读取失败被渲染成**空态**（「暂无部门」「暂无用量」「暂无审计记录」），即把
 //     "没读到"说成"已确认没有"（W-04/W-05）；
 //   - 读取失败后仍对服务端状态给出**确定结论**（「关闭:更新即生效」）（W-08）。
 //
@@ -142,46 +142,66 @@ describe('R15C-W-04 Departments：读取失败不得渲染空态「暂无部门�
   })
 })
 
-// ---------------------------------------------------------------- W-05 余额流水
-describe('R15C-W-05 usage/Balance：流水读取失败不得渲染成「暂无流水」', () => {
+// ---------------------------------------------------------------- W-05 成员用量明细
+// 2026-10(内网交付需求 §6):本页已从「余额面」重写为「Token 用量面」——
+// `pages/usage/Balance.tsx` 不再调用任何 `/balance*` 接口,入口按钮由「流水」
+// 改为「用量明细」,弹窗标题由「余额流水 · X」改为「用量明细 · X」,空态由
+// 「暂无流水」改为「暂无用量」。主题不变:读取失败**不得**渲染成那个空态。
+describe('R15C-W-05 usage/Balance：用量明细读取失败不得渲染成「暂无用量」', () => {
+  // 载荷里**故意**保留旧金额字段(`balance_money`/`monthly_cost`):页面必须只按
+  // Token 口径渲染,旧字段在场也不得漏出金额文案(迁移回归守卫的一半)。
   const USERS = [{
     id: 1, username: 'alice', display_name: 'Alice', status: 1, groups: ['研发部'],
     balance_money: 50, balance_activated: true, monthly_cost: 1.5, monthly_usage: 100,
   }]
-  const SUMMARY = {
-    settings: { enabled: true, monthly_amount: 100, monthly_mode: 'add' as const },
-    last_grant: null, month_grant: null,
-    status: { month: '2026-09', eligible: 1, granted: 1, pending: 0, activated: 1 },
-    users: 1, total_balance: 50,
-  }
 
-  it('流水请求失败 ⇒ 弹窗内明说失败 + 可重试，不显示「暂无流水」', async () => {
+  it('用量明细请求失败 ⇒ 弹窗内明说失败 + 可重试，不显示「暂无用量」', async () => {
     mockRequest.mockImplementation(async (p: string) => {
-      if (p.startsWith(`${API}/balance`)) return SUMMARY as any
       if (p.startsWith(`${API}/users?`)) return { users: USERS, total: 1 } as any
-      if (p.includes('/balance/ledger')) throw new Error('流水加载失败: 500')
+      // 弹窗内的三路读(Promise.all)任一路失败都必须落到同一个失败态;
+      // 这里让请求明细那一路失败(与页面的 catch 分支对应)。
+      if (p.includes('/usage/requests')) throw new Error('用量加载失败: 500')
+      if (p.includes('/usage?')) return { rows: [] } as any
       return {} as any
     })
     renderInRouter(<UsageBalance />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /流水/ }))
-    await waitFor(() => expect(screen.getByText(/余额流水 · alice/)).toBeInTheDocument())
+    // 新行为存在:成员行的「月度用量」列按 Token 口径渲染(monthly_usage=100 ⇒ "100")。
+    // 载荷里**仍带着**旧金额字段(`balance_money`/`monthly_cost`),不得漏出金额文案。
+    expect(await screen.findByText('100')).toBeInTheDocument()
+    expect(screen.queryByText('¥50.00')).toBeNull()
 
-    expect(screen.queryByText('暂无流水')).toBeNull()
-    expect(screen.getByText(/流水加载失败/)).toBeInTheDocument()
+    // 入口已是「用量明细」(旧的「流水」入口随页面重写删除)。
+    fireEvent.click(screen.getByRole('button', { name: /用量明细/ }))
+    await waitFor(() => expect(screen.getByText(/用量明细 · alice/)).toBeInTheDocument())
+
+    // 失败 ≠ 空态。
+    expect(screen.queryByText('暂无用量')).toBeNull()
+    expect(screen.getByText(/用量加载失败/)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '重试' })).toBeInTheDocument()
+
+    // 迁移回归守卫:旧「流水」入口与整条余额读路径都已从本页撤除,金额/余额/充值
+    // 文案不出现在任何一格。
+    const paths = mockRequest.mock.calls.map(([p]) => String(p))
+    expect(paths.some((p) => p.includes('/balance'))).toBe(false)
+    expect(screen.queryByRole('button', { name: /流水/ })).toBeNull()
+    expect(screen.queryByText(/¥/)).toBeNull()
+    expect(screen.queryByText(/余额|充值/)).toBeNull()
   })
 
-  it('对照：读取成功且确实无流水 ⇒ 「暂无流水」照常渲染', async () => {
+  it('对照：读取成功且确实无用量 ⇒ 「暂无用量」照常渲染', async () => {
     mockRequest.mockImplementation(async (p: string) => {
-      if (p.startsWith(`${API}/balance`)) return SUMMARY as any
       if (p.startsWith(`${API}/users?`)) return { users: USERS, total: 1 } as any
-      if (p.includes('/balance/ledger')) return { items: [], ledger_sum: 0 } as any
+      if (p.includes('/usage')) return { rows: [] } as any
       return {} as any
     })
     renderInRouter(<UsageBalance />)
-    fireEvent.click(await screen.findByRole('button', { name: /流水/ }))
-    expect(await screen.findByText('暂无流水')).toBeInTheDocument()
+    fireEvent.click(await screen.findByRole('button', { name: /用量明细/ }))
+    // 弹窗内多处空位(今日/月度卡片、今日拆分、按模型、最近请求)都渲染「暂无用量」
+    // ——是"确实没有"的空态,而不是"没读到"的失败态。
+    // 用 AllBy:同一条文案在弹窗内有多处,`findByText` 会因多匹配而拒答。
+    expect((await screen.findAllByText('暂无用量')).length).toBeGreaterThan(0)
+    expect(screen.queryByText(/用量加载失败/)).toBeNull()
   })
 })
 

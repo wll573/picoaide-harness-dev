@@ -6,41 +6,39 @@
  */
 export const zh = {
   'account.title': '账户',
-  // 收起后的账户行只剩用户名 + 金额，说不清的状态（未开通 / 取数失败 / 加载中）
+  // 收起后的账户行只剩用户名 + Token 用量，说不清的状态（取数失败 / 加载中 / 无数据）
   // 以及用户名都进 aria-label / title（用户可见的新文案仅这两条 + 标题）。
   'account.rowLabel': '账户 {username}：{balance}',
-  'account.rowLabelLow': '账户 {username}：{balance}（余额不足）',
-  'account.usedThisMonth': '本月已用',
+  'account.usedThisMonth': '本月',
   'account.today': '今日',
   'account.admin': '管理员',
-  'account.notActivated': '余额未开通',
-  'account.monthlyGrant': '每月发放',
+  'account.noUsage': '暂无用量',
   'account.logout': '退出登录',
   'account.loggingOut': '退出中…',
   'account.logoutFailed': '退出失败：{error}',
   'account.refresh': '刷新',
-  'account.balance': '账户余额',
-  'account.lowBalance': '余额不足',
-  'account.stale': '余额获取失败',
+  'account.tokens': 'Token 用量',
+  'account.inputTokens': '输入',
+  'account.outputTokens': '输出',
+  'account.stale': '用量获取失败',
   'account.loading': '加载中…',
 }
 
 export const en: Record<keyof typeof zh, string> = {
   'account.title': 'Account',
   'account.rowLabel': 'Account {username}: {balance}',
-  'account.rowLabelLow': 'Account {username}: {balance} (low balance)',
-  'account.usedThisMonth': 'Used this month',
+  'account.usedThisMonth': 'This month',
   'account.today': 'Today',
   'account.admin': 'Admin',
-  'account.notActivated': 'Balance not set up',
-  'account.monthlyGrant': 'Monthly grant',
+  'account.noUsage': 'No usage yet',
   'account.logout': 'Log out',
   'account.loggingOut': 'Logging out…',
   'account.logoutFailed': 'Log out failed: {error}',
   'account.refresh': 'Refresh',
-  'account.balance': 'Balance',
-  'account.lowBalance': 'Low balance',
-  'account.stale': 'Balance unavailable',
+  'account.tokens': 'Token usage',
+  'account.inputTokens': 'Input',
+  'account.outputTokens': 'Output',
+  'account.stale': 'Usage unavailable',
   'account.loading': 'Loading…',
 }
 

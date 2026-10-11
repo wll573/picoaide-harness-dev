@@ -184,13 +184,23 @@ describe('Gateway 网关配置页', () => {
     expect(dialog.getByDisplayValue('deepseek')).toBeInTheDocument()
     fireEvent.change(dialog.getByDisplayValue('deepseek'), { target: { value: 'deepseek-v2' } })
     fireEvent.click(dialog.getByRole('button', { name: '保存' }))
+    // 0089（需求 §7）：对话框现在固定提交两个端点开关；超时/换 Key 次数留空时
+    // **不放进请求体**（服务端按"不修改"处理）—— 下面精确匹配同时守住这两条。
     expect(mockRequest).toHaveBeenCalledWith(
       '/api/server/admin/providers/1',
       expect.objectContaining({
         method: 'PUT',
-        body: JSON.stringify({ name: 'deepseek-v2', channel: 'deepseek', base_url: 'https://api.deepseek.com', enabled: true, protocol: 'openai' }),
+        body: JSON.stringify({
+          name: 'deepseek-v2', channel: 'deepseek', base_url: 'https://api.deepseek.com',
+          enabled: true, protocol: 'openai',
+          responses_enabled: true, chat_enabled: true,
+        }),
       }),
     )
+    // 反向：留空的数值项不得出现在请求体里（出现就等于把 0 写进库，把"默认"改成"0"）。
+    const body = JSON.parse(String((mockRequest.mock.calls.find(([p]) => String(p).includes('/providers/1'))?.[1] as { body: string })?.body ?? '{}'))
+    expect(body).not.toHaveProperty('timeout_seconds')
+    expect(body).not.toHaveProperty('max_key_attempts')
   })
 
   it('上游编辑:模型清单未变时不提交 models(原样保存不得重建模型行、清空价格)', async () => {

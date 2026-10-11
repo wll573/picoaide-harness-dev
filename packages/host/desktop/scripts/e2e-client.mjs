@@ -194,13 +194,36 @@ async function evalSafe(cdp, expression) {
 
 async function clickLabel(cdp, label, waitMs = 2500) {
   const r = await evalSafe(cdp, `(() => {
-    const els = [...document.querySelectorAll('button')].filter(b => b.textContent?.trim() === ${JSON.stringify(label)} && b.offsetParent)
+    const els = [...document.querySelectorAll('button')].filter(b => {
+      if (b.offsetParent === null) return false
+      const text = (b.textContent ?? '').trim()
+      const aria = (b.getAttribute('aria-label') ?? '').trim()
+      return text === ${JSON.stringify(label)} || aria === ${JSON.stringify(label)}
+    })
     if (!els.length) return 'NOT_FOUND'
     els[0].click()
     return 'CLICKED'
   })()`)
   await wait(waitMs)
   return r
+}
+
+/** Click the current workspace chip even after a workspace has been selected. */
+async function clickWorkspacePicker(cdp, waitMs = 2500) {
+  const clicked = await evalSafe(cdp, `(() => {
+    const visible = ${VISIBLE_BOX}
+    const buttons = [...document.querySelectorAll('.dshDesktopConversationSurface button')].filter(visible)
+    const hit = buttons.find(button => {
+      const label = (button.getAttribute('aria-label') ?? '').trim()
+      return label === '选择工作区' || label === 'Choose workspace'
+    }) ?? buttons.find(button => button.getAttribute('aria-haspopup') === 'menu'
+      && /workspace|工作区/i.test(button.className))
+    if (hit === undefined) return 'NOT_FOUND'
+    hit.click()
+    return 'CLICKED'
+  })()`)
+  await wait(waitMs)
+  return clicked
 }
 
 /**
@@ -215,15 +238,9 @@ async function clickLabel(cdp, label, waitMs = 2500) {
 const VISIBLE_BOX = `((el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).display !== 'none' })`
 
 /**
- * 打开侧边栏底部的「更多」浮层（2026-09-21 并道改造）。
- *
- * 五个面板入口（定时任务 / 能力中心 / 连接器 / 浏览器 / 应用中心）不再是常显行，
- * 都住在 `.pico-foot-menu-trigger` 点开的上浮层里 —— 点它们之前必须先开这一层，
- * 否则 `clickLabel` 会以 NOT_FOUND 静默失败（浮层关闭时条目 `display:none`，
- * `offsetParent` 为 null，本来也点不到）。
- * @param cdp - CDP session.
- * @param waitMs - settle time after the click.
- * @returns `'OPENED'` / `'ALREADY_OPEN'` / `'NOT_FOUND'` / `'NOT_OPEN'`.
+ * Legacy helper retained for old packaged builds. The current delivery renders
+ * the five panel entries as visible sibling rows, so callers should use
+ * `clickFootMenuItem` directly.
  */
 async function openFootMenu(cdp, waitMs = 700) {
   const clicked = await evalSafe(cdp, `(() => {
@@ -247,13 +264,27 @@ async function openFootMenu(cdp, waitMs = 700) {
 }
 
 /**
- * 点开「更多」浮层里的一个条目，并断言点完浮层关掉了。
+ * 点开一个面板入口。当前交付入口是 `.pico-foot-nav-row` 直显；
+ * 对旧构建保留 `.pico-foot-menu-item` 浮层回退路径。
  * @param cdp - CDP session.
- * @param label - 条目文案（`.pico-foot-menu-item` 的可见文本）。
+ * @param label - 条目文案。
  * @param waitMs - settle time after the click.
  * @returns `'CLICKED'`（且浮层已收起）/ `'NOT_FOUND'` / `'OPEN_FAILED'` / `'STILL_OPEN'`.
  */
 async function clickFootMenuItem(cdp, label, waitMs = 2500) {
+  const direct = await evalSafe(cdp, `(() => {
+    const visible = ${VISIBLE_BOX}
+    const rows = [...document.querySelectorAll('.pico-foot-nav-row')].filter(visible)
+    const hit = rows.find(b => ((b.textContent ?? '').trim() || (b.getAttribute('aria-label') ?? '').trim()) === ${JSON.stringify(label)})
+    if (hit === undefined) return 'NOT_FOUND'
+    hit.click()
+    return 'CLICKED'
+  })()`)
+  if (direct === 'CLICKED') {
+    await wait(waitMs)
+    return 'CLICKED'
+  }
+
   const opened = await openFootMenu(cdp)
   if (opened !== 'OPENED' && opened !== 'ALREADY_OPEN') return opened === 'NOT_FOUND' ? 'NOT_FOUND' : 'OPEN_FAILED'
   const clicked = await evalSafe(cdp, `(() => {
@@ -516,70 +547,26 @@ async function main() {
   )
 
   // 5. Main surface assertions.
-  //
-  // 2026-09-21 并道改造：底部不再常显五行，只剩「更多」一行（+ 设置座位 + 账户行），
-  // 五个面板入口搬进上浮层。这条断言因此改成**量"折叠态"**：更多行在、是收起的、
-  // 文案是「更多」，设置仍在，而且五个旧行**不许**再直接可见（漏改一个就是"两套入口
-  // 并存"，比"少一个入口"更难发现）。
-  //
-  // **判据必须看可见性，不能只看存在**：浮层收起时条目仍然挂在 DOM 里
-  //（`display:none` 是"关闭 ≠ 卸载"的要求），而 `textContent` 不分可见性 —— 只按
-  // textContent 收集按钮，"泄漏"会恒等于五项、这条永远红（2026-09-21 对抗审计 P0）。
-  // 同时把浮层自己的条目排除掉：这样无论浮层当前开着还是关着，判据量的都是"浮层之外
-  // 还有没有那五个入口"，既不会假红也不会假绿。
-  //
-  // 前置：先把它收起来（这个脚本会复用已在运行的 app，上一轮探针可能把它留在展开态）。
-  await evalSafe(cdp, `(() => {
-    const row = document.querySelector('.pico-foot-menu-trigger')
-    if (row !== null && row.getAttribute('aria-expanded') === 'true') row.click()
-    return true
-  })()`)
-  await wait(400)
+  // 内网交付口径：五个面板入口与设置同级直显，不再存在「更多」浮层。
+  const expectedFootEntries = ['定时任务', '能力中心', '连接器', '浏览器', '应用中心']
   const lane = await evalSafe(cdp, `(() => {
     const visible = ${VISIBLE_BOX}
-    const row = document.querySelector('.pico-foot-menu-trigger')
-    const menu = row === null ? null : document.getElementById(row.getAttribute('aria-controls') ?? '')
-    const inPopover = (el) => menu !== null && menu.contains(el)
-    const rowButtons = [...document.querySelectorAll('button')].filter(b => visible(b) && !inPopover(b))
-    const names = rowButtons.map(b => (b.textContent ?? '').trim()).filter(Boolean)
-    // 账户行按它自己的类名取（pico-account-row）：设置触发器同样带 aria-haspopup=dialog，
-    // 用属性选会把它当成账户行（2026-09-21 真机 e2e 实测）。
-    // ⚠️ 注入到页面里的这段代码是**宿主模板串的文本**：这里不许出现反引号（那会提前
-    // 结束模板串，语法错误只会在很远处报出来 —— 2026-09-21 踩过）。
+    const rows = [...document.querySelectorAll('.pico-foot-nav-row')].filter(visible)
+    const labels = rows.map(b => (b.textContent ?? '').trim()).filter(Boolean)
     const accountRow = [...document.querySelectorAll('button.pico-account-row')].find(visible) ?? null
-    return {
-      row: row === null ? null : {
-        label: (row.textContent ?? '').trim(),
-        expanded: row.getAttribute('aria-expanded'),
-        visible: visible(row),
-      },
-      popoverHidden: menu === null || getComputedStyle(menu).display === 'none',
-      hasSettings: names.includes('设置'),
-      hasAccountRow: accountRow !== null,
-      leaked: ['定时任务', '能力中心', '连接器', '浏览器', '应用中心'].filter(t => names.includes(t)),
-      visibleButtons: names.length,
-    }
+    const hasSettings = [...document.querySelectorAll('button')].some(b => visible(b) && (b.textContent ?? '').trim() === '设置')
+    const more = [...document.querySelectorAll('button')].filter(visible)
+      .some(b => (b.textContent ?? '').trim() === '更多' || b.classList.contains('pico-foot-menu-trigger'))
+    return { labels, rows: rows.length, hasSettings, hasAccountRow: accountRow !== null, hasMore: more }
   })()`)
-  const laneOk = lane?.row?.visible === true
-    && lane.row.expanded === 'false'
-    && lane.row.label === '更多'
-    && lane.popoverHidden === true
+  const laneOk = lane?.rows === expectedFootEntries.length
+    && expectedFootEntries.every(label => lane.labels.includes(label))
     && lane.hasSettings === true
     && lane.hasAccountRow === true
-    && (lane.leaked?.length ?? 1) === 0
-    && (lane.visibleButtons ?? 0) > 0
-  reportStep('侧边栏底部只剩「更多」一行（+ 设置 + 账户行），五个面板入口已并道',
+    && lane.hasMore === false
+  reportStep('侧边栏底部五个面板入口与设置同级直显（无「更多」）',
     laneOk, `lane=${JSON.stringify(lane)}`)
-  // 展开一次、合上一次：浮层真的能开，「更多」行是"点得到的那一行"。
-  const laneOpened = await openFootMenu(cdp)
-  const laneItems = await evalSafe(cdp, `[...document.querySelectorAll('.pico-foot-menu-item')].filter(b => b.offsetParent).map(b => (b.textContent ?? '').trim())`)
-  reportStep('「更多」浮层可展开且列出五个面板入口',
-    laneOpened === 'OPENED' && Array.isArray(laneItems)
-      && ['定时任务', '能力中心', '连接器', '浏览器', '应用中心'].every(t => laneItems.includes(t)),
-    `open=${laneOpened} items=${JSON.stringify(laneItems)}`)
   await screenshot(cdp, '05c-foot-menu')
-  await evalSafe(cdp, `(() => { const row = document.querySelector('.pico-foot-menu-trigger'); if (row !== null) row.click(); return true })()`)
-  await wait(500)
 
   // 5.5 暗色模式（2026-09-16 真机事故的回归点）：
   //   ① 主题真的切到暗色（body[data-ds-dark-theme]）；
@@ -879,9 +866,13 @@ async function main() {
   // undefined），所以这里直接走 CDP 的 awaitPromise:true。
   const servedBrandResult = await cdp.send('Runtime.evaluate', {
     expression: `(async () => {
-      const favicon = await fetch('/favicon.svg').then(r => r.ok ? r.text() : '').catch(() => '')
-      const manifest = await fetch('/manifest.webmanifest').then(r => r.ok ? r.json() : null).catch(() => null)
+      const faviconResponse = await fetch('/favicon.svg').catch(() => null)
+      const favicon = faviconResponse?.ok ? await faviconResponse.text() : ''
+      const manifestResponse = await fetch('/manifest.webmanifest').catch(() => null)
+      const manifest = manifestResponse?.ok ? await manifestResponse.json().catch(() => null) : null
       return {
+        faviconStatus: faviconResponse?.status ?? null,
+        manifestStatus: manifestResponse?.status ?? null,
         faviconIsSvg: favicon.trimStart().startsWith('<svg'),
         faviconUpstream: /48\\.8354|DeepSeek|deepseek-harness|FISH_LOGO/i.test(favicon),
         manifestName: manifest === null ? null : manifest.name,
@@ -898,41 +889,57 @@ async function main() {
       && servedBrand?.manifestName === PRODUCT_NAME
       && String(servedBrand?.manifestShort ?? '') !== 'DSH',
     `faviconSvg=${servedBrand?.faviconIsSvg} upstream=${servedBrand?.faviconUpstream} `
-      + `manifest=${JSON.stringify(servedBrand?.manifestName)}/${JSON.stringify(servedBrand?.manifestShort)}`,
+      + `manifest=${JSON.stringify(servedBrand?.manifestName)}/${JSON.stringify(servedBrand?.manifestShort)} `
+      + `status=${servedBrand?.faviconStatus}/${servedBrand?.manifestStatus}`,
   )
 
   // 10. Workspace picker (native dialog path).
-  const wsClicked = await clickLabel(cdp, '选择工作区', 2500)
-  const wsOpen = await evalSafe(cdp, `document.body.textContent?.includes('Selection') || document.body.textContent?.includes('选择工作区')`).catch(() => false)
+  const wsClicked = await clickWorkspacePicker(cdp, 2500)
+  const wsOpen = await evalSafe(cdp, `(() => {
+    const visible = ${VISIBLE_BOX}
+    return [...document.querySelectorAll('[role="menu"], [aria-haspopup="menu"][aria-expanded="true"]')].some(visible)
+  })()`).catch(() => false)
   reportStep('工作区选择器可打开', wsClicked === 'CLICKED' && !!wsOpen, `click=${wsClicked}`)
   await screenshot(cdp, '09-workspace')
   // Native dialog may block; press Escape via CDP if the renderer still responds.
   await evalSafe(cdp, `document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`).catch(() => {})
   await wait(1000)
 
+  // The blank hero keeps the composer inert until a session exists. Create a
+  // fresh session through the real sidebar action before testing text input.
+  const newSessionClicked = await clickLabel(cdp, '新建会话', 1800)
+  const sessionReady = await waitFor(cdp, `(() => {
+    const input = document.querySelector('.dshDesktopConversationSurface [contenteditable="true"]')
+    return input !== null && input.getAttribute('contenteditable') === 'true'
+  })()`, 8000, 250)
+  reportStep('当前工作区可创建会话且编辑器进入可编辑态',
+    newSessionClicked === 'CLICKED' && sessionReady === true,
+    `click=${newSessionClicked} ready=${sessionReady}`)
+
   // 11. Account page (settings -> 账号).
   await clickLabel(cdp, '设置', 2000).catch(() => {})
   await clickLabel(cdp, '账号', 2000).catch(() => {})
   const account = await bodyText(cdp)
   reportStep('账号页可打开（设置内）', account.includes('账号') || account.includes('user'), `len=${account.length}`)
-  // 0061 余额:mock gateway 返回 balance_enabled=true + 88.5,侧边栏账户卡的
-  // 主数字应显示余额,防止 account-card 余额渲染回归(等一拍轮询/刷新完成)。
+  // 账户卡只显示 Token 用量，不显示金额/余额字段。
   await wait(600)
-  // 0061:先验证数据链路(mock gateway → enterprise session → account-card host
-  // service → 本地端点),两个字段必须完整透传。
+  // 先验证数据链路(mock gateway → enterprise session → account-card host
+  // service → 本地端点)的 Token 字段。
   let usageProbe = null
   try {
     const probe = await cdp.send('Runtime.evaluate', {
-      expression: `fetch('/api/pico/account/usage').then(r=>r.json()).then(j=>({balance:j?.data?.balance_money ?? null, activated:j?.data?.balance_activated === true, enabled:j?.data?.balance_enabled === true}))`,
+      expression: `fetch('/api/pico/account/usage').then(r=>r.json()).then(j=>({input:j?.data?.input_tokens ?? null, output:j?.data?.output_tokens ?? null, total:j?.data?.total_usage ?? null, monthly:j?.data?.monthly_usage ?? null}))`,
       returnByValue: true,
       awaitPromise: true,
     })
     usageProbe = probe?.result?.value ?? null
   } catch { usageProbe = null }
-  reportStep('账户卡余额数据链路（balance=88.5/activated/enabled）',
-    usageProbe?.enabled === true && usageProbe?.activated === true && usageProbe?.balance === 88.5, JSON.stringify(usageProbe))
-  // 再验证渲染:2026-09-21 起账户卡是"一行 + 向上浮层"（宽布局）——
-  //   ① 折叠行里是用户名 + 金额；② 「账户余额」标签与「退出登录」在浮层里。
+  reportStep('账户卡 Token 数据链路（input/output/total/monthly）',
+    typeof usageProbe?.input === 'number' && typeof usageProbe?.output === 'number'
+      && typeof usageProbe?.total === 'number' && typeof usageProbe?.monthly === 'number',
+    JSON.stringify(usageProbe))
+  // 再验证渲染：账户卡是"一行 + 向上浮层"（宽布局），浮层显示 Token 字段，
+  // 且产品文案中不得出现金额、余额、充值或付费。
   // 所以断言必须**先点开行、再量浮层文本**：只量整页文本会假绿（浮层 `display:none`
   // 时 textContent 仍在），只量行文本又会假红（标签确实不在行里）。
   //
@@ -970,13 +977,6 @@ async function main() {
       expanded: row === undefined ? null : row.getAttribute('aria-expanded'),
     }
   })()`)
-  // 精确断言格式化结果(¥88.50):includes('88.5') 对 ¥88.5 / 88.5 / ¥88.500 都成立,
-  // 对"小数位回归"不敏感(2026-09-11 加固)。
-  //
-  // **只量账户行自己的文本**：整页 `document.body.textContent` 里任何一处 ¥88.50 都能
-  // 让这条成立（几步之前的「设置 → 账号」页带着同一个数字），那样断言的就不是"折叠行
-  // 显示了余额"（2026-09-21 二轮对抗审计 P2）。
-  const balanceInRow = typeof accountRowProbe?.text === 'string' && accountRowProbe.text.includes('¥88.50')
   const accountRowClicked = await evalSafe(cdp, `(() => {
     const visible = ${VISIBLE_BOX}
     const row = [...document.querySelectorAll(${JSON.stringify(ACCOUNT_ROW_SELECTOR)})].find(visible)
@@ -991,7 +991,9 @@ async function main() {
     const dialog = [...document.querySelectorAll(${JSON.stringify(ACCOUNT_DIALOG_SELECTOR)})].find(visible)
     if (dialog === undefined) return false
     const text = dialog.textContent ?? ''
-    return text.includes('账户余额') && text.includes('¥88.50') && text.includes('退出登录')
+    return text.includes('Token 用量') && text.includes('输入') && text.includes('输出')
+      && text.includes('退出登录')
+      && !/[¥￥]|余额|充值|付费/.test(text)
   })()`, 8000, 200)
   // 失败时要能一眼看出"现场到底有哪些 dialog"（aria-label + 尺寸 + 首段文本）。
   const accountDialogProbe = await evalSafe(cdp, `(() => {
@@ -1007,10 +1009,13 @@ async function main() {
       }
     })
   })()`)
-  reportStep('账户卡折叠行显示余额主数字（宽布局）',
-    balanceInRow && (accountRowClicked === 'CLICKED' || accountRowClicked === 'ALREADY_OPEN'),
-    `rowHasAmount=${balanceInRow} click=${accountRowClicked} rows=${accountRowProbe?.count} rowText=${JSON.stringify(accountRowProbe?.text)}`)
-  reportStep('账户浮层含余额标签 / 金额 / 退出登录（宽布局）', accountDialogOpen === true,
+  const accountRowText = accountRowProbe?.text ?? ''
+  const rowHasTokenState = accountRowText.includes('暂无用量') || /\d/.test(accountRowText)
+  reportStep('账户卡折叠行显示 Token 状态（宽布局）',
+    rowHasTokenState && !/[¥￥]|余额|充值|付费/.test(accountRowText)
+      && (accountRowClicked === 'CLICKED' || accountRowClicked === 'ALREADY_OPEN'),
+    `rowHasTokenState=${rowHasTokenState} click=${accountRowClicked} rows=${accountRowProbe?.count} rowText=${JSON.stringify(accountRowText)}`)
+  reportStep('账户浮层含 Token 标签 / 输入输出 / 退出登录', accountDialogOpen === true,
     `dialogs=${JSON.stringify(accountDialogProbe)}`)
   await screenshot(cdp, '10-account')
   // 真键盘事件（不是合成 Event）：Esc 关闭浮层并把焦点还回账户行 —— 合成事件绕过
@@ -1036,20 +1041,23 @@ async function main() {
   // reading the value back: "an element was found" is exactly the false green
   // this step used to report.
   const PROBE_TEXT = 'e2e 消息'
+  const composerFocused = await evalSafe(cdp, `(() => {
+    const ta = document.querySelector(${JSON.stringify(composerSelector)})
+    if (!ta) return false
+    ta.focus()
+    return document.activeElement === ta
+  })()`)
+  if (composerFocused) {
+    await cdp.send('Input.insertText', { text: PROBE_TEXT }).catch(() => {})
+    await wait(300)
+  }
   const typed = await evalSafe(cdp, `(() => {
     const ta = document.querySelector(${JSON.stringify(composerSelector)})
     if (!ta) return { ok: false, reason: 'composer not found in the conversation column' }
-    if (ta.tagName === 'TEXTAREA' || ta.tagName === 'INPUT') {
-      const proto = ta.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype
-      Object.getOwnPropertyDescriptor(proto, 'value').set.call(ta, ${JSON.stringify(PROBE_TEXT)})
-      ta.dispatchEvent(new Event('input', { bubbles: true }))
-      return { ok: ta.value === ${JSON.stringify(PROBE_TEXT)}, reason: 'value=' + JSON.stringify(ta.value) }
-    }
-    ta.textContent = ${JSON.stringify(PROBE_TEXT)}
-    ta.dispatchEvent(new Event('input', { bubbles: true }))
-    return { ok: (ta.textContent ?? '').includes(${JSON.stringify(PROBE_TEXT)}), reason: 'text=' + JSON.stringify(ta.textContent) }
+    const value = 'value' in ta ? ta.value : (ta.innerText ?? ta.textContent ?? '')
+    return { ok: value.includes(${JSON.stringify(PROBE_TEXT)}), reason: 'text=' + JSON.stringify(value) }
   })()`)
-  reportStep('会话输入区可输入消息（限会话列，回读校验）', !!typed?.ok, `${typed?.reason ?? 'no result'}`)
+  reportStep('会话输入区可输入消息（限会话列，回读校验）', !!typed?.ok, `${typed?.reason ?? 'no result'} focused=${composerFocused}`)
   await screenshot(cdp, '11-input')
 
   cdp.ws.close()

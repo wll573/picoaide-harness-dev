@@ -195,6 +195,10 @@ describe('channel build context', () => {
     expect(config.appId).toBe('com.acme.ai')
     expect(config.nsis.shortcutName).toBe('Acme AI 助手')
     expect(config.nsis.artifactName).toBe('Acme-AI-${version}-${arch}-Setup.${ext}')
+    expect(config.win.executableName).toBe('Acme-AI')
+    expect(config.nsis.include).toBeTruthy()
+    expect(readFileSync(config.nsis.include, 'utf8')).toContain('!define PRODUCT_NAME "Acme AI 助手"')
+    expect(readFileSync(config.nsis.include, 'utf8')).toContain('!define SHORTCUT_NAME "Acme AI 助手"')
     expect(config.linux.maintainer).toBe('acme')
     // OS 级协议注册必须跟着渠道:浏览器回调靠它跳回客户端,
     // 确认框里的 scheme 就是渠道客户会看到的东西。
@@ -292,6 +296,13 @@ describe('packagedAppId：产物身份判据的真源（B1-02）', () => {
 })
 
 describe('channel build validation (fail loud)', () => {
+  it('uses the local default unless an explicit channel overrides it', () => {
+    expect(resolveBuildChannelId({}, 'acme')).toBe('acme')
+    expect(resolveBuildChannelId({ [CHANNEL_ENV]: 'beta' }, 'acme')).toBe('beta')
+    expect(resolveBuildChannelId({})).toBe('official')
+    expect(() => resolveBuildChannelId({}, 'invalid channel')).toThrow(/不是合法渠道 id/u)
+  })
+
   it('rejects a malformed channel id', () => {
     expect(() => resolveBuildChannelId({ [CHANNEL_ENV]: 'Acme Corp' })).toThrow(/不是合法渠道 id/u)
   })
@@ -543,4 +554,3 @@ describe('channel builder overrides never enter the packaged app root', () => {
     expect(existsSync(join(paths.configDir!, CHANNEL_BUILDER_CONFIG_FILENAME))).toBe(true)
   })
 })
-

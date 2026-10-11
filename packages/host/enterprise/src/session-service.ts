@@ -6,7 +6,7 @@ import { subscribeSessionChanges } from '@picoaide/dsh-host-locale/session-event
 import { SESSION_CHANGED_EVENT } from '@picoaide/dsh-host-locale/session-events'
 import type { Session } from './server-connector/config.ts'
 import { loadElectronModule } from './server-connector/electron.ts'
-import { dshHomeSafe } from 'dsh-plugin-desktop/desktop-home'
+import { ACCOUNT_DATA_SCOPE_SERVICE, type AccountDataScope, dshHomeSafe } from 'dsh-plugin-desktop/desktop-home'
 import { installDeepLinkListener } from './deep-link.ts'
 
 /** Session token file permissions: owner read/write only. */
@@ -25,6 +25,16 @@ const TOKEN_FILE_MODE = 0o600
  */
 export function defaultTokenFile(env: NodeJS.ProcessEnv = process.env): string {
   return join(dshHomeSafe({ env }), 'session.json')
+}
+
+/**
+ * Resolve the last-server file: `$DSH_HOME/last-server.json`.
+ * Stores the most recently used server URL so users don't have to re-enter
+ * it after logging out. The URL itself is not a secret, but the file is
+ * still 0600 for consistency with other data-root files.
+ */
+export function defaultLastServerFile(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dshHomeSafe({ env }), 'last-server.json')
 }
 
 /** Cordis event emitted whenever the session is set, restored, or cleared. */
@@ -78,15 +88,18 @@ declare module '@deepseek-ai/cordis' {
  *
  * `tokenFile` defaults to `$DSH_HOME/session.json`. `deepLinkScheme` 由桌面壳在
  * 组装期注入（渠道构建是客户自己的 scheme，如 `acmeai`）；缺省官方值。
+ * `lastServerFile` defaults to `$DSH_HOME/last-server.json`.
  */
 export interface Config {
   tokenFile?: string
   deepLinkScheme?: string
+  lastServerFile?: string
 }
 
 export const Config: z<Config> = z.object({
   tokenFile: z.string(),
   deepLinkScheme: z.string(),
+  lastServerFile: z.string(),
 })
 
 /**
@@ -97,24 +110,31 @@ export default class SessionService extends Service {
   static Config = Config
 
   private session: Session | null = null
+  private pendingSession: Session | null = null
   private readonly tokenFile: string
+  private readonly lastServerFile: string
   private restoreDone = false
   // F7(审计 2026-09-11):持久化代际 —— persist 是异步的(先 await 动态
   // import),若期间 clear()/setSession() 已发生,迟到的写入会让已登出的
   // token 在磁盘"复活"。每次会话变化递增,persist 写盘前校验代际。
   private persistEpoch = 0
+  private lastServer: string | null = null
+  private lastServerLoaded = false
 
   constructor(ctx: Context, config: Config) {
     super(ctx, 'picoSession')
     this.tokenFile = config.tokenFile ?? defaultTokenFile()
+    this.lastServerFile = config.lastServerFile ?? defaultLastServerFile()
     // picoaide:// deep-link auth (OIDC/OpenID callback): store the session
     // when a valid link arrives. Emits pico/session-changed → auth-gate
     // reloads into the app (login page poll sees loggedIn).
     // scheme 用桌面壳注入的本安装值（渠道构建是自己的），见 installDeepLinkListener。
     installDeepLinkListener(ctx, (session) => {
-      this.setSession(session)
+      return this.setSession(session)
     }, () => this.getSession(), config.deepLinkScheme)
-    void this.restore().finally(() => { this.restoreDone = true })
+    void this.restore().catch((cause: unknown) => {
+      this.ctx.logger?.warn(`[pico] account data could not be activated: ${String(cause)}`)
+    }).finally(() => { this.restoreDone = true })
   }
 
   isLoggedIn(): boolean {
@@ -135,7 +155,28 @@ export default class SessionService extends Service {
     return this.session
   }
 
-  setSession(session: Session): void {
+  async setSession(session: Session): Promise<void> {
+    if (this.pendingSession !== null) throw new Error('account data switch is already in progress')
+    const accountData = this.ctx.get?.(ACCOUNT_DATA_SCOPE_SERVICE) as AccountDataScope | undefined
+    if (accountData && !accountData.matches(session)) {
+      // Keep the new identity out of this process: its services still hold the
+      // previous account's records and indexes until orderly teardown completes.
+      this.session = null
+      this.pendingSession = session
+      const epoch = ++this.persistEpoch
+      this.ctx.emit(SESSION_CHANGED_EVENT, null)
+      this.saveLastServer(session.serverURL)
+      try {
+        await persist(this.tokenFile, session, () => epoch === this.persistEpoch)
+        if (epoch !== this.persistEpoch) return
+        await accountData.activate(session)
+      } catch (cause) {
+        if (epoch === this.persistEpoch) this.clear()
+        throw cause
+      }
+      return
+    }
+    this.pendingSession = null
     this.session = session
     const epoch = ++this.persistEpoch
     // P1-13: a failed token write ($DSH_HOME read-only / ENOSPC / ROFS / a
@@ -147,7 +188,59 @@ export default class SessionService extends Service {
       const message = cause instanceof Error ? cause.message : String(cause)
       this.ctx.logger?.warn(`[pico] session token could not be persisted (${this.tokenFile}): ${message}`)
     })
+    // Also remember the server URL for the next login (even if token expires
+    // or the user logs out, they don't have to re-type the address).
+    this.saveLastServer(session.serverURL)
     this.ctx.emit(SESSION_CHANGED_EVENT, session)
+  }
+
+  /**
+   * Get the most recently used server URL.
+   * Returns null if no server has been used yet or the stored file is invalid.
+   */
+  getLastServer(): string | null {
+    if (!this.lastServerLoaded) {
+      this.lastServer = this.loadLastServerSync()
+      this.lastServerLoaded = true
+    }
+    return this.lastServer
+  }
+
+  /**
+   * Save the given server URL as the most recently used one.
+   * Called on successful login and on logout (to preserve the address across
+   * sign-out so the user lands directly on the username/password step).
+   */
+  saveLastServer(serverURL: string): void {
+    this.lastServer = serverURL
+    this.lastServerLoaded = true
+    try {
+      writeFileSync(this.lastServerFile, JSON.stringify({ serverURL }), { mode: TOKEN_FILE_MODE })
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause)
+      this.ctx.logger?.warn(`[pico] last-server could not be persisted (${this.lastServerFile}): ${message}`)
+    }
+  }
+
+  /**
+   * Clear the remembered server address (e.g. when the user explicitly
+   * switches to a different server from the login page).
+   */
+  clearLastServer(): void {
+    this.lastServer = null
+    this.lastServerLoaded = true
+    try { unlinkSync(this.lastServerFile) } catch { /* absent is fine */ }
+  }
+
+  private loadLastServerSync(): string | null {
+    try {
+      if (!existsSync(this.lastServerFile)) return null
+      const raw = readFileSync(this.lastServerFile, 'utf8')
+      const data = JSON.parse(raw) as { serverURL?: string }
+      return typeof data.serverURL === 'string' && data.serverURL.length > 0 ? data.serverURL : null
+    } catch {
+      return null
+    }
   }
 
   /**
@@ -168,8 +261,16 @@ export default class SessionService extends Service {
    * 登出**的三类动作：用户主动登出、改密（服务端已吊销全部令牌）、切换账号/重置。
    */
   clear(): void {
-    const hadSession = this.session !== null
+    const hadSession = this.session !== null || this.pendingSession !== null
+    // 保留服务端地址再清会话：登录页据此跳过"输入服务端地址"这一步，直接进
+    // 账号密码页。内存里的那份足够这一次渲染，同时也落盘，下次启动仍记得。
+    // 注意顺序：必须在 `this.session = null` **之前**读它。
+    const lastSession = this.session ?? this.pendingSession
+    if (lastSession?.serverURL) {
+      this.saveLastServer(lastSession.serverURL)
+    }
     this.session = null
+    this.pendingSession = null
     this.persistEpoch++ // F7: 使所有在途 persist 失效,不再复活旧 token
     if (hadSession) {
       try { unlinkSync(this.tokenFile) } catch { /* absent is fine */ }
@@ -207,7 +308,12 @@ export default class SessionService extends Service {
 
   private async restore(): Promise<void> {
     const restored = await loadPersisted(this.tokenFile)
-    if (this.session !== null) return
+    if (this.session !== null || this.pendingSession !== null) return
+    const accountData = this.ctx.get?.(ACCOUNT_DATA_SCOPE_SERVICE) as AccountDataScope | undefined
+    if (restored && accountData && !accountData.matches(restored)) {
+      await this.setSession(restored)
+      return
+    }
     this.session = restored
     this.ctx.emit(SESSION_CHANGED_EVENT, restored)
   }
