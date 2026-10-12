@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Native Ubuntu install for PicoAide server (binary + systemd).
+# Native Ubuntu install for Intranet AI server (binary + systemd).
 # Neutral packaging: set CHANNEL / CHANNEL_DIR via env; do not hardcode channel ids.
 set -euo pipefail
 

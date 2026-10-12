@@ -1,5 +1,5 @@
 [Unit]
-Description=PicoAide Harness server (native)
+Description=Intranet AI server (native)
 Documentation=file:///opt/picoaide/README.md
 After=network-online.target postgresql.service
 Wants=network-online.target

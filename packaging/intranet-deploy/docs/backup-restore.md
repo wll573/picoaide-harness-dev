@@ -23,10 +23,10 @@ Replace placeholders; do not embed real passwords in scripts checked into git.
 
 ```bash
 # PostgreSQL (example — supply credentials via ~/.pgpass or env, not argv if possible)
-pg_dump --format=custom --file=/secure/backup/picoaide-$(date +%Y%m%d).dump "$PICOAI_PG_DSN"
+pg_dump --format=custom --file=/secure/backup/intranet-ai-$(date +%Y%m%d).dump "$PICOAI_PG_DSN"
 
 # Data directory
-tar -C /opt/picoaide -czf /secure/backup/picoaide-data-$(date +%Y%m%d).tar.gz data
+tar -C /opt/picoaide -czf /secure/backup/intranet-ai-data-$(date +%Y%m%d).tar.gz data
 ```
 
 Store backups on protected media separate from the app host.

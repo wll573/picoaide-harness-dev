@@ -2,7 +2,7 @@
 
 ## Audience
 
-Operators installing PicoAide on Ubuntu with systemd (not Docker Compose). For the Docker/AI playbook see repository `docs/deploy/AI-DEPLOY.md` — that document remains Docker-oriented; native steps live only under `packaging/intranet-deploy/`.
+Operators installing the Intranet AI server on Ubuntu with systemd (not Docker Compose). For the Docker/AI playbook see repository `docs/deploy/AI-DEPLOY.md` — that document remains Docker-oriented; native steps live only under `packaging/intranet-deploy/`.
 
 ## Prerequisites
 

@@ -1,6 +1,6 @@
 # Native Ubuntu deploy (`packaging/intranet-deploy`)
 
-Neutral scripts for running the PicoAide server as a **host binary + systemd** unit on Ubuntu (intranet **HTTP**).
+Neutral scripts for running the **Intranet AI server** as a **host binary + systemd** unit on Ubuntu (intranet **HTTP**).
 
 ## When to use this vs `packaging/offline` (Docker)
 
