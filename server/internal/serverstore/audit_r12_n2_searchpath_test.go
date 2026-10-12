@@ -400,23 +400,41 @@ var r13geSearchPathInventory = map[string]r13gePinMode{
 	"UserMonthlyUsage":                     r13gePinned,    // usage.go
 	"UserMonthlyUsageBatch":                r13gePinned,    // usage.go
 	"UserTotalUsageCost":                   r13gePinned,    // usage.go
-	"gatewayFileReapClaimActive":           r13gePinned,    // gateway_files.go
-	"GrantMonthlyBalance":                  r13gePinned,    // balance.go —— 事务内 pinUsageSearchPath
-	"GetGrantStatus":                       r13gePinned,    // balance.go —— withUsageSearchPathRead
-	"LastBalanceGrant":                     r13gePinned,    // balance.go —— withUsageSearchPathRead
-	"GetBalanceGrant":                      r13gePinned,    // balance.go —— withUsageSearchPathRead
-	"queryBalanceGrant":                    r13geViaCaller, // balance.go —— LastBalanceGrant / GetBalanceGrant（已钉只读事务）
-	"ledgerMonthHasRows":                   r13gePinned,    // usage_ledger.go
-	"listAuditLogsOn":                      r13geViaCaller, // audit.go —— listAuditLogs（withUsageSearchPathRead）
-	"ledgerWindowEmpty":                    r13gePinned,    // usage_ledger.go
-	"moveRowsIntoUsage":                    r13gePinned,    // usage_ledger.go
-	"probeUsagePartitionBudget":            r13gePinned,    // partitions.go
-	"reclaimUsagePartitionAtomically":      r13gePinned,    // usage_ledger.go
-	"recordUsageKindAtCached":              r13gePinned,    // usage.go
-	"updateUsageTokensAtCached":            r13gePinned,    // usage.go
-	"usageMonthHasDetail":                  r13gePinned,    // usage_ledger.go
-	"usageMonthDetailAhead":                r13gePinned,    // usage_ledger.go —— R24-X4 B4：可比事实上界探测（newUsageReadConn）
-	"usageTreeDescendants":                 r13gePinned,    // partitions.go
+	"UserTotalTokenDirections":             r13gePinned,    // usage.go —— newUsageReadConn（Token-only 输入/输出拆分）
+	// —— MultiKey 池（0085）：gateway_provider_api_keys 已入族 ——
+	"AddGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"DeleteGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"GetGatewayProviderAPIKey":    r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"ListGatewayProviderAPIKeys":  r13gePinned, // provider_keys.go —— withUsageSearchPathRead
+	"ResetGatewayProviderAPIKey":  r13gePinned, // provider_keys.go —— withUsageSearchPath
+	"UpdateGatewayProviderAPIKey": r13gePinned, // provider_keys.go —— withUsageSearchPath
+	// —— LLM 审计正文（0090/0091）：llm_transcripts / llm_transcript_chunks 已入族 ——
+	"AppendLLMTranscriptChunk":        r13gePinned,    // transcript.go —— withUsageSearchPath
+	"CreateLLMTranscriptDetailed":     r13gePinned,    // transcript.go —— withUsageSearchPath
+	"FinishLLMTranscriptDetailed":     r13gePinned,    // transcript.go —— withUsageSearchPath
+	"GetLLMTranscript":                r13gePinned,    // transcript.go —— withUsageSearchPathRead
+	"ListLLMTranscriptSessions":       r13gePinned,    // transcript_sessions.go —— withUsageSearchPathRead
+	"MigrateLLMTranscriptPrivacy":     r13gePinned,    // transcript_migration.go —— withUsageSearchPath
+	"PurgeOldLLMTranscripts":          r13gePinned,    // transcript.go —— withUsageSearchPath
+	"ReadLLMTranscriptResponse":       r13gePinned,    // transcript.go —— withUsageSearchPathRead
+	"listLLMTranscriptRows":           r13gePinned,    // transcript.go —— withUsageSearchPathRead（列表唯一实现）
+	"gatewayFileReapClaimActive":      r13gePinned,    // gateway_files.go
+	"GrantMonthlyBalance":             r13gePinned,    // balance.go —— 事务内 pinUsageSearchPath
+	"GetGrantStatus":                  r13gePinned,    // balance.go —— withUsageSearchPathRead
+	"LastBalanceGrant":                r13gePinned,    // balance.go —— withUsageSearchPathRead
+	"GetBalanceGrant":                 r13gePinned,    // balance.go —— withUsageSearchPathRead
+	"queryBalanceGrant":               r13geViaCaller, // balance.go —— LastBalanceGrant / GetBalanceGrant（已钉只读事务）
+	"ledgerMonthHasRows":              r13gePinned,    // usage_ledger.go
+	"listAuditLogsOn":                 r13geViaCaller, // audit.go —— listAuditLogs（withUsageSearchPathRead）
+	"ledgerWindowEmpty":               r13gePinned,    // usage_ledger.go
+	"moveRowsIntoUsage":               r13gePinned,    // usage_ledger.go
+	"probeUsagePartitionBudget":       r13gePinned,    // partitions.go
+	"reclaimUsagePartitionAtomically": r13gePinned,    // usage_ledger.go
+	"recordUsageKindAtCached":         r13gePinned,    // usage.go
+	"updateUsageTokensAtCached":       r13gePinned,    // usage.go
+	"usageMonthHasDetail":             r13gePinned,    // usage_ledger.go
+	"usageMonthDetailAhead":           r13gePinned,    // usage_ledger.go —— R24-X4 B4：可比事实上界探测（newUsageReadConn）
+	"usageTreeDescendants":            r13gePinned,    // partitions.go
 	// —— 由调用方事务钉住（每个都必须在 r13geViaCallerOwners 里有点名）——
 	"AddExcludedModelTx":                r13geViaCaller, // gateway.go
 	"DeleteModelTx":                     r13geViaCaller, // gateway.go
