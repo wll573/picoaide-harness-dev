@@ -28,6 +28,8 @@ export function isAuditor(user: MeUser | null | undefined): boolean {
 // ---------------------------------------------------------------------------
 export const PERM_USER_READ = 'user:read'
 export const PERM_USER_WRITE = 'user:write'
+export const PERM_MANAGED_READ = 'managed:read'
+export const PERM_MANAGED_WRITE = 'managed:write'
 export const PERM_DEPT_READ = 'dept:read'
 export const PERM_DEPT_WRITE = 'dept:write'
 export const PERM_AUTH_READ = 'auth:read'

@@ -634,11 +634,12 @@ function fixtureScopeText(text: string, body: string): string | null {
  * 证明持有点时真的看得见/真的发请求"。
  */
 const PERM_ARG_POSITIVE_FIXTURES: PermArgPositiveFixture[] = [
+  { rel: 'pages/ManagedConfig.tsx', arg: 'PERM_MANAGED_WRITE', testFile: 'pages/ManagedConfig.test.tsx', testName: '用表单管理配置与 Skill，并提交结构化策略', kind: 'behavior' },
   { rel: 'pages/usage/Departments.tsx', arg: 'PERM_DEPT_READ', testFile: 'pages/usage/usage-center.test.tsx', testName: '持有 dept:read 时必须请求组织树并渲染成员列(正向夹具)', kind: 'behavior' },
-  { rel: 'pages/usage/UsageLayout.tsx', arg: 't.perm', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有全部权限点时 7 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', kind: 'behavior' },
-  { rel: 'pages/usage/Models.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求模型目录并渲染单价(正向夹具)', kind: 'behavior' },
-  { rel: 'pages/usage/Overview.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求上游渠道并渲染余额(正向夹具)', kind: 'behavior' },
-  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USER_WRITE', testFile: 'pages/usage/Balance.test.tsx', testName: 'user:write(admin)仍能看到全部写控件', kind: 'behavior' },
+  { rel: 'pages/usage/UsageLayout.tsx', arg: 't.perm', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有全部权限点时 6 个标签全部可见(含 dept:read 的部门用量与 report:read 的报表订阅)', kind: 'behavior' },
+  { rel: 'pages/usage/Models.tsx', arg: 'PERM_GATEWAY_READ', testFile: 'pages/usage/auditor-models.test.tsx', testName: '持有 gateway:read 时必须请求模型目录并渲染 Token 口径(正向夹具)', kind: 'behavior' },
+  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USER_READ', testFile: 'pages/usage/Balance.test.tsx', testName: 'user:write(admin)仍能看到成员列表,但本页已无写控件,明细按 usage:read 降级', kind: 'behavior' },
+  { rel: 'pages/usage/Balance.tsx', arg: 'PERM_USAGE_READ', testFile: 'pages/usage/Balance.test.tsx', testName: '只有 user:read + usage:read 的部分权限集同样是完整读面(等价形态)', kind: 'behavior' },
   { rel: 'pages/Users.tsx', arg: 'PERM_USER_WRITE', testFile: 'pages/Users.test.tsx', testName: '持有 user:write/dept:write 时新建/角色/部门入口可见(正向夹具)', kind: 'behavior' },
   { rel: 'pages/Users.tsx', arg: 'PERM_DEPT_WRITE', testFile: 'pages/Users.test.tsx', testName: '持有 user:write/dept:write 时新建/角色/部门入口可见(正向夹具)', kind: 'behavior' },
   { rel: 'pages/BuiltinSkills.tsx', arg: 'PERM_CAP_READ', testFile: 'pages/BuiltinSkills.test.tsx', testName: '展示资产目录与镜像里那条技能的元数据', kind: 'behavior' },
@@ -663,6 +664,7 @@ const NAV_GATED_PERMISSIONS = [...new Set(NAV_ENTRIES.flatMap((n) => n.perms ?? 
  * 哪一类——这正是"权限点漂移没有任何判据能发现"要补的那道闸。
  */
 const PERM_WITHOUT_NAV_ENTRY: Record<string, string> = {
+  'managed:write': '写面：用户托管页（managed:read 进入）内的动作',
   'user:write': '写面：用户页（user:read 进入）内的动作，页内 hasPermission 收敛',
   'dept:write': '写面：部门页（dept:read 进入）内的动作',
   'auth:write': '写面：认证页（auth:read 进入）内的动作',
