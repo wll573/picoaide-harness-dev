@@ -216,7 +216,7 @@ var searchPathGuardPackages = map[string]searchPathPkgClass{
 	"internal/clientrelease":       searchPathPkgNoFamilySQL,
 	"internal/connectors":          searchPathPkgNoFamilySQL,
 	"internal/llmgateway/channels": searchPathPkgNoFamilySQL,
-	"internal/managedconfig": searchPathPkgNoFamilySQL,
+	"internal/managedconfig":       searchPathPkgNoFamilySQL,
 	"internal/marketplace":         searchPathPkgNoFamilySQL,
 	"internal/portal":              searchPathPkgNoFamilySQL,
 	"internal/reports":             searchPathPkgNoFamilySQL,
