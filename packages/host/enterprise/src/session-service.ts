@@ -27,6 +27,10 @@ export function defaultTokenFile(env: NodeJS.ProcessEnv = process.env): string {
   return join(dshHomeSafe({ env }), 'session.json')
 }
 
+export function defaultLastServerFile(env: NodeJS.ProcessEnv = process.env): string {
+  return join(dshHomeSafe({ env }), 'last-server.json')
+}
+
 /** Cordis event emitted whenever the session is set, restored, or cleared. */
 export { SESSION_CHANGED_EVENT } from '@picoaide/dsh-host-locale/session-events'
 
@@ -82,11 +86,13 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   tokenFile?: string
   deepLinkScheme?: string
+  lastServerFile?: string
 }
 
 export const Config: z<Config> = z.object({
   tokenFile: z.string(),
   deepLinkScheme: z.string(),
+  lastServerFile: z.string(),
 })
 
 /**
@@ -98,6 +104,9 @@ export default class SessionService extends Service {
 
   private session: Session | null = null
   private readonly tokenFile: string
+  private readonly lastServerFile: string
+  private lastServer: string | null = null
+  private lastServerLoaded = false
   private restoreDone = false
   // F7(审计 2026-09-11):持久化代际 —— persist 是异步的(先 await 动态
   // import),若期间 clear()/setSession() 已发生,迟到的写入会让已登出的
@@ -107,6 +116,7 @@ export default class SessionService extends Service {
   constructor(ctx: Context, config: Config) {
     super(ctx, 'picoSession')
     this.tokenFile = config.tokenFile ?? defaultTokenFile()
+    this.lastServerFile = config.lastServerFile ?? defaultLastServerFile()
     // picoaide:// deep-link auth (OIDC/OpenID callback): store the session
     // when a valid link arrives. Emits pico/session-changed → auth-gate
     // reloads into the app (login page poll sees loggedIn).
@@ -137,6 +147,7 @@ export default class SessionService extends Service {
 
   setSession(session: Session): void {
     this.session = session
+    this.saveLastServer(session.serverURL)
     const epoch = ++this.persistEpoch
     // P1-13: a failed token write ($DSH_HOME read-only / ENOSPC / ROFS / a
     // missing parent dir) must never become an unhandled rejection — the
@@ -148,6 +159,35 @@ export default class SessionService extends Service {
       this.ctx.logger?.warn(`[pico] session token could not be persisted (${this.tokenFile}): ${message}`)
     })
     this.ctx.emit(SESSION_CHANGED_EVENT, session)
+  }
+
+  getLastServer(): string | null {
+    if (!this.lastServerLoaded) {
+      this.lastServer = this.loadLastServerSync()
+      this.lastServerLoaded = true
+    }
+    return this.lastServer
+  }
+
+  saveLastServer(serverURL: string): void {
+    this.lastServer = serverURL
+    this.lastServerLoaded = true
+    try { writeFileSync(this.lastServerFile, JSON.stringify({ serverURL }), { mode: TOKEN_FILE_MODE }) }
+    catch (cause) { this.ctx.logger?.warn(`[pico] last-server could not be persisted (${this.lastServerFile}): ${cause instanceof Error ? cause.message : String(cause)}`) }
+  }
+
+  clearLastServer(): void {
+    this.lastServer = null
+    this.lastServerLoaded = true
+    try { unlinkSync(this.lastServerFile) } catch { /* absent is fine */ }
+  }
+
+  private loadLastServerSync(): string | null {
+    try {
+      if (!existsSync(this.lastServerFile)) return null
+      const data = JSON.parse(readFileSync(this.lastServerFile, 'utf8')) as { serverURL?: string }
+      return typeof data.serverURL === 'string' && data.serverURL.length > 0 ? data.serverURL : null
+    } catch { return null }
   }
 
   /**
@@ -169,6 +209,7 @@ export default class SessionService extends Service {
    */
   clear(): void {
     const hadSession = this.session !== null
+    if (this.session?.serverURL) this.saveLastServer(this.session.serverURL)
     this.session = null
     this.persistEpoch++ // F7: 使所有在途 persist 失效,不再复活旧 token
     if (hadSession) {
@@ -209,6 +250,7 @@ export default class SessionService extends Service {
     const restored = await loadPersisted(this.tokenFile)
     if (this.session !== null) return
     this.session = restored
+    if (restored?.serverURL) this.saveLastServer(restored.serverURL)
     this.ctx.emit(SESSION_CHANGED_EVENT, restored)
   }
 }

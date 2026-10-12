@@ -258,7 +258,7 @@ export function renderLoginPage(locale: HostLocale): string {
     <h1>${c.connectTitle}</h1>
     <div class="tagline">${c.connectTagline}</div>
     <form id="f1">
-      <input id="server" type="url" placeholder="http://ai.example.com" value="__DEFAULT_SERVER__" __DEFAULT_SERVER_MARK__ autocomplete="off" spellcheck="false" required>
+      <input id="server" type="url" placeholder="https://ai.example.com" value="__DEFAULT_SERVER__" __DEFAULT_SERVER_MARK__ __LAST_SERVER_MARK__ autocomplete="off" spellcheck="false" required>
       <button type="submit" id="next-btn">${c.next}</button>
       <div class="err" id="err-step1"></div>
     </form>
@@ -383,11 +383,18 @@ export function renderLoginPage(locale: HostLocale): string {
   // 而"脚本能被 new Function 解析"的语法测试**抓不到**(它语法上是合法的)。
   async function autoConnect() {
     var serverInput = document.getElementById('server')
-    if (serverInput.getAttribute('data-default-server') !== '1') return
+    var hasDefault = serverInput.getAttribute('data-default-server') === '1'
+    var hasLast = serverInput.getAttribute('data-last-server') === '1'
+    if (!hasDefault && !hasLast) return
     if (serverInput.value.trim() === '') return
     var ok = await connect(serverInput.value.trim())
     if (!ok) return
     // 只有浏览器方式可用(纯 OIDC/OpenID 部署)时直接发起跳转,员工不必再点一次。
+    if (!hasDefault) {
+      var username = document.getElementById('username')
+      if (username && username.style.display !== 'none') username.focus()
+      return
+    }
     var hasPassword = currentMethods.some(function (m) {
       return m.name === 'local' || m.name === 'ldap'
     })
@@ -1373,15 +1380,21 @@ export function apply(ctx: Context, config: Config): void {
    * @param locale - 本次请求的语言。
    * @returns 可直接写进响应的 HTML。
    */
-  const loginPage = (locale: HostLocale): string => fillPlaceholders(renderLoginPage(locale), {
-    __DEFAULT_SERVER__: () => defaultServer,
+  const loginPage = (locale: HostLocale): string => {
+    const remembered = configuredServer === '' ? ctx.picoSession.getLastServer() ?? '' : ''
+    const effectiveDefault = configuredServer !== '' ? defaultServer : escapeHtmlAttribute(remembered)
+    const hasRemembered = configuredServer === '' && remembered !== ''
+    return fillPlaceholders(renderLoginPage(locale), {
+    __DEFAULT_SERVER__: () => effectiveDefault,
     // 只有**确实配了**域名才打标记 —— 页面脚本据此决定要不要自动连接。
     __DEFAULT_SERVER_MARK__: () => (configuredServer === '' ? '' : 'data-default-server="1"'),
+    __LAST_SERVER_MARK__: () => (hasRemembered ? 'data-last-server="1"' : ''),
     // 内置了地址就不再提供"返回修改服务端地址"（见 backButtonHtml 的说明）。
     __BACK_BUTTON__: () => (configuredServer === '' ? backButtonHtml(locale) : ''),
     __BRAND_NAME__: () => brandTitle,
     __BRAND_JSON__: () => brandScriptLiteral(brand),
-  })
+    })
+  }
 
   /**
    * 组装会话恢复过渡页（`__BRAND_NAME__` 替换同登录页，同样单遍填充）。

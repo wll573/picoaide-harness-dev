@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import SessionService, { Config, SESSION_CHANGED_EVENT } from '../src/session-service.ts'
@@ -166,4 +166,37 @@ describe('session persist 竞态 (F7 复核)', () => {
     expect(existsSync(file)).toBe(false)
     expect(service.isLoggedIn()).toBe(false)
   }, 30000)
+})
+
+describe('Gap-P1A last-server 地址落盘', () => {
+  it('setSession 写入 last-server.json；clear 后仍记住地址', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pico-last-server-'))
+    const tokenFile = join(dir, 'session.json')
+    const lastServerFile = join(dir, 'last-server.json')
+    const { ctx } = stubCtx()
+    const service = new SessionService(ctx, { tokenFile, lastServerFile })
+    expect(service.getLastServer()).toBeNull()
+    service.setSession(SAMPLE_SESSION)
+    expect(service.getLastServer()).toBe(SAMPLE_SESSION.serverURL)
+    expect(existsSync(lastServerFile)).toBe(true)
+    expect(JSON.parse(readFileSync(lastServerFile, 'utf8'))).toEqual({
+      serverURL: SAMPLE_SESSION.serverURL,
+    })
+    service.clear()
+    expect(service.isLoggedIn()).toBe(false)
+    expect(service.getLastServer()).toBe(SAMPLE_SESSION.serverURL)
+    expect(existsSync(lastServerFile)).toBe(true)
+  })
+
+  it('新实例从 last-server.json 恢复记住的地址', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pico-last-server-load-'))
+    const lastServerFile = join(dir, 'last-server.json')
+    writeFileSync(lastServerFile, JSON.stringify({ serverURL: 'https://intranet.example' }), { mode: 0o600 })
+    const { ctx } = stubCtx()
+    const service = new SessionService(ctx, {
+      tokenFile: join(dir, 'session.json'),
+      lastServerFile,
+    })
+    expect(service.getLastServer()).toBe('https://intranet.example')
+  })
 })

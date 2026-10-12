@@ -133,3 +133,12 @@ git diff --cached --check
 脚本默认不签名。企业代码签名证书只通过 Windows Credential Manager 或安全流水线注入，不放入缓存包或 Git。
 
 纯内网目标机没有任何运行环境时，先交付操作系统、Docker Engine/Compose Plugin 和 CA 安装介质；本目录脚本只负责项目源码、依赖缓存、语言工具链、Docker 基础镜像和客户端构建缓存，不负责安装操作系统或 Docker 本身。Ubuntu 部署机不需要 Go/Node，只有离线构建机需要工具链。
+
+## 与 §3.1 `intranet-deploy` 的关系（Gap-P1A 定案 · 2026-10-12）
+
+对话原文曾要求原生 Ubuntu `install/upgrade/rollback/systemd` 脚本目录 `packaging/intranet-deploy/`。
+该目录含私有渠道品牌资料，历史上被 `.gitignore` 排除且**未**进入本 tip（公开仓路线选 A）。
+
+**本批定案**：内网交付以本目录 **Docker offline** 路径为主（`prepare-*` → `build-server-offline.sh` → `export/import-server-image.sh` + `verify-bundle.sh`）。
+原生 `intranet-deploy` 脚本**延后到 P2**（若老板仍要求非 Docker 部署再单独迁入/重做中性版）。
+最终交付 bundle / `SHA256SUMS` 仍属 P2 收口，本批不生成。
