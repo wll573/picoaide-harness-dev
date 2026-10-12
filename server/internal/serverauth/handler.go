@@ -847,6 +847,8 @@ func (a *API) handleUsageSummary(c *gin.Context) {
 		"yesterday_cost":    s.YesterdayCost,
 		"total_usage":       s.TotalUsage,
 		"total_cost":        s.TotalCost,
+		"input_tokens":      s.InputTokens,
+		"output_tokens":     s.OutputTokens,
 	})
 }
 

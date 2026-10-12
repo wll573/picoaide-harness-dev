@@ -75,6 +75,7 @@ var sweepParamValues = map[string]string{
 	"name":      "x",
 	"kind":      "x",
 	"file_id":   "x",
+	"key_id":    "1", // MultiKey: /providers/:id/keys/:key_id
 }
 
 // sweepWildcardValue 是 `*name` 通配段的替换值。

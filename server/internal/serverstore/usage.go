@@ -927,6 +927,18 @@ func UserTotalUsageCost(db *sql.DB, userID int64) (usage int64, cost float64, er
 	return usage, cost, err
 }
 
+// UserTotalTokenDirections 返回用户全历史输入/输出 tokens 拆分（跨端 Token-only 契约）。
+func UserTotalTokenDirections(db *sql.DB, userID int64) (input, output int64, err error) {
+	rd, err := newUsageReadConn(db)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer rd.Close() //nolint:errcheck // 只读事务回滚
+	err = rd.QueryRow(`SELECT COALESCE(SUM(prompt_tokens),0), COALESCE(SUM(completion_tokens),0)
+		FROM usage WHERE user_id = ?`, userID).Scan(&input, &output)
+	return input, output, err
+}
+
 // UsageSummary 员工用量概览(客户端余额/统计展示的数据源)。
 type UsageSummary struct {
 	MonthlyUsage   int64   `json:"monthly_usage"`   // 本月 tokens
@@ -937,6 +949,8 @@ type UsageSummary struct {
 	YesterdayCost  float64 `json:"yesterday_cost"`  // 昨日费用(元)
 	TotalUsage     int64   `json:"total_usage"`     // 历史总 tokens
 	TotalCost      float64 `json:"total_cost"`      // 历史总费用(元)
+	InputTokens    int64   `json:"input_tokens"`    // 历史输入 tokens（prompt 侧）
+	OutputTokens   int64   `json:"output_tokens"`   // 历史输出 tokens（completion 侧）
 }
 
 // UserUsageSummary 一次取齐员工用量概览(月度/今日/昨日/总计)。
@@ -1001,6 +1015,9 @@ func userUsageSummaryAt(db *sql.DB, userID int64, now time.Time) (*UsageSummary,
 		return nil, err
 	}
 	if s.TotalUsage, s.TotalCost, err = UserTotalUsageCost(db, userID); err != nil {
+		return nil, err
+	}
+	if s.InputTokens, s.OutputTokens, err = UserTotalTokenDirections(db, userID); err != nil {
 		return nil, err
 	}
 	return s, nil

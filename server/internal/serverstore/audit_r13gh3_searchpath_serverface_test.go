@@ -144,6 +144,12 @@ var searchPathRelations = map[string]searchPathRelation{
 	"app_sessions":      {searchPathRelNonFamily, "0073 已 DROP（WASM 客户端专属改造的删除波次）"},
 	"employee_sessions": {searchPathRelNonFamily, "0073 已 DROP"},
 
+	// 多 Key 池（0085）：与 gateway_providers 同族 —— shadow 同名表会让网关拿诱饵 Key。
+	"gateway_provider_api_keys": {searchPathRelFamily, "上游多 Key 池密钥表：shadow 同名表 ⇒ 静默改路由/账单记错账号"},
+	// Prompt/Response 审计（0090/0091）：与 audit_logs 同型 —— shadow 吞审计正文。
+	"llm_transcripts":       {searchPathRelFamily, "LLM 审计主表：shadow 同名表 ⇒ 审计事实静默丢失且不可自证"},
+	"llm_transcript_chunks": {searchPathRelFamily, "LLM 审计分片：随主表同面，shadow 吞正文分片"},
+
 	// —— 认账：存在静默后果，本轮未纳入族内集合（属新增面，需独立评审）——
 	"report_subscriptions":    {searchPathRelKnownUncovered, "报表订阅（webhook 目标）：shadow 同名表存在时，订阅的增删改会静默落到 shadow ⇒ 报表静默停发。本轮未纳入：它不在金额/审计链上，纳入需要重排 reports 包的读写面"},
 	"model_concurrency_stats": {searchPathRelKnownUncovered, "模型并发峰值台账（15s 采样）：shadow 同名表存在时峰值统计静默错数字。本轮未纳入：纯观测数据，不参与计费/路由"},
@@ -295,7 +301,9 @@ var searchPathGuardSkippedDirs = map[string]string{
 var searchPathCrossPackageInventory = map[string]r13gePinMode{
 	"internal/llmgateway.ListModels":                  r13gePinned,
 	"internal/llmgateway.loadUpstreamsDB":             r13gePinned,
+	"internal/llmgateway.finish":                      r13gePinned, // keypool：WithUsageSearchPath 写 gateway_provider_api_keys
 	"internal/llmgateway.syncedModelNames":            r13geViaCaller,
+	"internal/llmgateway.hiddenModelNames":            r13geViaCaller,
 	"internal/llmgateway.providerModelConfigSnapshot": r13geViaCaller,
 	// R14-K（D-02）：管理端「服务器信息」页的族内关系行数统计（settings /
 	// gateway_providers / models / usage / audit_logs）。语句是字面量，每条读经
@@ -306,6 +314,7 @@ var searchPathCrossPackageInventory = map[string]r13gePinMode{
 // searchPathCrossPackageOwners 给包外每一个 via-caller 登记"谁钉的"。
 var searchPathCrossPackageOwners = map[string]string{
 	"internal/llmgateway.syncedModelNames":            "loadUpstreamsDB（serverstore.WithUsageSearchPathRead 的已钉只读事务）与 sync.go 的同步基线读（同源已钉事务）",
+	"internal/llmgateway.hiddenModelNames":            "loadUpstreamsDB（serverstore.WithUsageSearchPathRead 的已钉只读事务；签名仅 *sql.Tx）",
 	"internal/llmgateway.providerModelConfigSnapshot": "llmgateway admin 的 provider 创建/更新事务（serverstore.UsageWriteTx 开出的已钉事务，见 admin.go 的 R13-GH3 注释）",
 }
 
