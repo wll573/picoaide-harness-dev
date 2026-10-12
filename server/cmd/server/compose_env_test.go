@@ -110,6 +110,7 @@ func TestComposeWiresNamedGatewayKnobs(t *testing.T) {
 // 或豁免（这里能看见理由）。两边都没有 = 又一个"文档/代码里有、部署里够不到"的旋钮。
 var picoaiEnvExemptions = map[string]string{
 	// 镜像内路径：由 Dockerfile 的 ENV 提供（不是运维旋钮）。
+	"PICOAI_PG_DSN":           "native systemd EnvironmentFile; compose continues to pass the DSN flag",
 	"PICOAI_CHANNEL_DIR":        "镜像内渠道内容目录（Dockerfile ENV PICOAI_CHANNEL_DIR）",
 	"PICOAI_CLIENT_RELEASE_DIR": "镜像内客户端安装包目录（Dockerfile ENV PICOAI_CLIENT_RELEASE_DIR）",
 	"PICOAI_CHANNEL_FILE":       "镜像内渠道声明文件路径（Dockerfile 落盘，见 updatecheck）",

@@ -50,6 +50,15 @@ import (
 // version is injectable at build time: go build -ldflags "-X main.version=x.y.z"
 var version = "dev"
 
+// resolvePgDSN prefers the -pg-dsn flag; when empty, falls back to PICOAI_PG_DSN
+// so systemd EnvironmentFile can supply the DSN without putting secrets on argv (ps).
+func resolvePgDSN(flagValue string) string {
+	if strings.TrimSpace(flagValue) != "" {
+		return flagValue
+	}
+	return strings.TrimSpace(os.Getenv("PICOAI_PG_DSN"))
+}
+
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	dataDir := flag.String("data", "./data", "data directory (app data, not the DB — PG is external)")
@@ -85,8 +94,9 @@ func main() {
 	if *dbDriver != "pg" && *dbDriver != "pg-external" {
 		log.Fatalf("unsupported -db-driver %q (want pg)", *dbDriver)
 	}
+	*pgDSN = resolvePgDSN(*pgDSN)
 	if *pgDSN == "" {
-		log.Fatal("-pg-dsn is required (PostgreSQL only since 2026-08)")
+		log.Fatal("-pg-dsn or PICOAI_PG_DSN is required (PostgreSQL only since 2026-08)")
 	}
 	// server-info 上报与版本检查使用与 --version 同一版本(单一来源)。
 	serverauth.SetBuildVersion(version)

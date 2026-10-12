@@ -152,3 +152,8 @@ channels/*
 # glitchtip-ops-check.mjs 的默认 cookie jar 位置（生产 GlitchTip 管理员会话）。
 # 本仓是公开仓：`git add -A` 绝不能把这个目录提交上去（2026-09-17 审计 S15-3）。
 .glitchtip-recon/
+packaging/intranet-deploy/bundle/
+packaging/intranet-deploy/checksums/
+packaging/intranet-deploy/**/*.tar.gz
+packaging/intranet-deploy/**/picoaide-server
+packaging/intranet-deploy/**/picoaide-app-compile

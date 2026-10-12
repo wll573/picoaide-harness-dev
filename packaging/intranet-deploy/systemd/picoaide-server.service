@@ -1,0 +1,25 @@
+[Unit]
+Description=PicoAide Harness server (native)
+Documentation=file:///opt/picoaide/README.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=picoaide
+Group=picoaide
+WorkingDirectory=/opt/picoaide
+# DSN and secrets come from EnvironmentFile — never from ExecStart argv (visible in ps).
+EnvironmentFile=/opt/picoaide/server.env
+ExecStart=/opt/picoaide/bin/picoaide-server -addr 127.0.0.1:8080 -data /opt/picoaide/data -db-driver pg
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+# Harden lightly; keep writable data dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/picoaide/data /opt/picoaide/backups
+
+[Install]
+WantedBy=multi-user.target
