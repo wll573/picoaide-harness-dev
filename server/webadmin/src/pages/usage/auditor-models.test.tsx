@@ -160,22 +160,23 @@ describe('用量中心子导航(TABS 表驱动实参 t.perm)', () => {
   })
 })
 
-describe('审计员访问用量总览的上游余额区块(R7-RV-1 residual)', () => {
-  it('explains the missing permission instead of silently rendering an empty balance block', async () => {
+describe('用量总览 Token-only（上游余额卡已下线）', () => {
+  // 2026-10 内网交付：主路径不展示上游账户余额 / ¥；本块从「权限解释 + 正向余额夹具」
+  // 改为「Token KPI 仍在 + 余额面永不出现」的回归守卫。
+  it('auditor 仍能看到 Token KPI，且不请求 providers / 不渲染余额文案', async () => {
     setCurrentAdmin(auditor)
     render(<MemoryRouter future={ROUTER_FUTURE} initialEntries={['/usage']}><UsageOverview /></MemoryRouter>)
 
-    // KPI 数据(usage:read)照常渲染。
     expect(await screen.findByTestId('overview-kpis')).toBeInTheDocument()
-    // 上游余额要 gateway:read:不请求、且给出可读解释。
+    expect(await screen.findByText('本月 Token')).toBeInTheDocument()
     const paths = mockRequest.mock.calls.map(([p]) => String(p))
     expect(paths.some((p) => p === '/api/server/admin/providers')).toBe(false)
-    expect(await screen.findByText(/上游账户余额需要/)).toBeInTheDocument()
-    expect(screen.queryByText('未配置上游渠道')).toBeNull()
+    expect(paths.some((p) => p.includes('/balance'))).toBe(false)
+    expect(screen.queryByText(/上游账户余额/)).toBeNull()
+    expect(screen.queryByText(/¥|赠金|充值/)).toBeNull()
   })
 
-  // 第三十二轮 FIX-47 子泳道 B：负例的另一半（同上一条的说明）。
-  it('持有 gateway:read 时必须请求上游渠道并渲染余额(正向夹具)', async () => {
+  it('即使持有 gateway:read 也不再拉上游余额或渲染金额', async () => {
     setCurrentAdmin({ role: 'super_admin', permissions: ['usage:read', 'gateway:read'] })
     mockRequest.mockImplementation(async (path: string) => {
       if (path === '/api/server/admin/providers') {
@@ -195,9 +196,12 @@ describe('审计员访问用量总览的上游余额区块(R7-RV-1 residual)', (
     })
     render(<MemoryRouter future={ROUTER_FUTURE} initialEntries={['/usage']}><UsageOverview /></MemoryRouter>)
 
-    expect(await screen.findByText('110.00')).toBeInTheDocument()
-    expect(screen.getByText('DeepSeek')).toBeInTheDocument()
-    expect(mockRequest.mock.calls.map(([p]) => String(p))).toContain('/api/server/admin/providers')
-    expect(screen.queryByText(/上游账户余额需要/)).toBeNull()
+    expect(await screen.findByTestId('overview-kpis')).toBeInTheDocument()
+    expect(await screen.findByText('本月 Token')).toBeInTheDocument()
+    const paths = mockRequest.mock.calls.map(([p]) => String(p))
+    expect(paths.some((p) => p === '/api/server/admin/providers')).toBe(false)
+    expect(paths.some((p) => p.includes('/balance'))).toBe(false)
+    expect(screen.queryByText('110.00')).toBeNull()
+    expect(screen.queryByText('上游账户余额')).toBeNull()
   })
 })

@@ -221,7 +221,7 @@ describe('审计员访问审计保留策略(R7-RV-2 残留)', () => {
     expect(screen.getByText(/audit:retention:write/)).toBeInTheDocument()
     // 读面不受影响:导出 CSV 与筛选仍在。
     expect(screen.getByRole('button', { name: /导出 CSV/ })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /筛选/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^筛选$/ })).toBeInTheDocument()
     // 且不会去写接口(只读 GET)。
     expect(mockRequest.mock.calls.map(([p]) => String(p)).some((p) => p.includes('/audit/settings'))).toBe(true)
   })
@@ -462,6 +462,8 @@ const LEGACY_ACTIONS: Record<string, string> = {
   // 标签**必须留在 ACTION_LABEL**：存量审计链里仍有这个动作码的行，删标签会让历史
   // 记录回退成裸码 —— 与 mcp_*/kb_* 同一条"已下线动作"的处置口径。
   wasm_apps_base_domain_change: '应用基域配置面已随「客户端专属」改造删除（2026-09-19）',
+  // 用户自助注册写点已从服务端移除；标签保留给存量审计行（Token-only / 内网交付口径）。
+  user_register: '用户自助注册写点已下线（存量行标签）',
 }
 
 /**

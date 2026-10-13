@@ -141,7 +141,7 @@ describe('Users 用户管理页', () => {
     expect(screen.queryByTestId('tokens-truncated-note')).toBeNull()
   })
 
-  it('R15C-01:删除二次确认的承诺必须等于服务端真实动作(抹除用量与余额流水)', async () => {
+  it('R15C-01:删除二次确认的承诺必须等于服务端真实动作(抹除令牌与用量)', async () => {
     mockRequest.mockImplementation(async (path: string, init?: RequestInit) => {
       if (path.startsWith('/api/server/admin/users?page=')) {
         return { users: [{ id: 1, username: 'alice', is_admin: false, status: 1, groups: [] }], total: 1, page: 1, size: 20 }
@@ -157,15 +157,14 @@ describe('Users 用户管理页', () => {
     await waitFor(() => expect(mockRequest).toHaveBeenCalledWith(
       '/api/server/admin/users/1', expect.objectContaining({ method: 'DELETE' }),
     ))
-    // 承诺必须逐项对上服务端在同一事务里的级联：用量（明细与日/月汇总）+ 余额流水。
-    // 文案弱化（例如退回只说"用量记录"）即视为承诺与实现脱钩。
-    // 类型注记：confirmSpy 是 `vi.fn(() => true)`（无参签名 ⇒ mock.calls 的元组类型为空），
-    // 这里按真实运行时形状读回调实参。
+    // Token-only 口径：承诺对上服务端级联抹除 —— API 令牌 + 用量（明细与日/月汇总）+ 组归属。
+    // 不再承诺「余额流水」（金额面已下线）。
     const calls = confirmSpy.mock.calls as unknown as unknown[][]
     const promise = calls.map((c) => String(c[0])).join('\n')
+    expect(promise).toContain('API 令牌')
     expect(promise).toContain('用量记录(明细与日/月汇总)')
-    expect(promise).toContain('余额流水')
-    expect(promise).toContain('审计日志')
+    expect(promise).toContain('组归属')
+    expect(promise).not.toContain('余额流水')
   })
 
   it('新建用户失败:错误显示在对话框内(中3)', async () => {
