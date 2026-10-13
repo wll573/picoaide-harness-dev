@@ -9,7 +9,7 @@ import { CircleDollarSign, Activity, Coins, Landmark } from 'lucide-react'
 import { RangeFilter, defaultRange, sumRows, type OverviewData } from './common'
 import { fmtTokens, fmtFull } from '../../lib/format'
 
-// 总览(主页面):企业整体 Token 用量 + 近30天趋势 + 模型 TOP10
+// 总览(主页面):单位整体 Token 用量 + 近30天趋势 + 模型 TOP10
 // 2026-10 内网交付口径：主路径不展示 ¥ / 花费 / 余额 / 上游账户余额卡。
 // cost 字段仍在 OverviewData 接口里保留（兼容对账），本页不再读取。
 export default function UsageOverview() {

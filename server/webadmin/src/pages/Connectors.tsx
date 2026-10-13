@@ -695,7 +695,7 @@ export default function Connectors() {
             <p className="text-xs text-muted-foreground">
               「自动」= 连接时按端点自述决定:探测 2xx 即公开端点、401 走 MCP 授权规范
               (发现 + 动态注册 + PKCE)、声明了凭据表单则走表单、既无端点又无表单即免凭据。
-              服务端模式由企业网关注入 token,无需在表单填写任何认证字段;两种模式都只需在下方配置 MCP 服务器。
+              服务端模式由单位网关注入 token,无需在表单填写任何认证字段;两种模式都只需在下方配置 MCP 服务器。
             </p>
           </div>
 

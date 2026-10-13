@@ -56,7 +56,7 @@ const REQUIRED: Record<'ldap' | 'oidc' | 'openid', string[]> = {
 
 const METHOD_META: Record<'local' | 'ldap' | 'oidc' | 'openid', { label: string; desc: string }> = {
   local: { label: '本地账号', desc: '后台恒启用; 客户端可隐藏' },
-  ldap: { label: 'LDAP', desc: '企业目录认证(仅员工面)' },
+  ldap: { label: 'LDAP', desc: '单位目录认证(仅员工面)' },
   oidc: { label: 'OIDC', desc: '浏览器跳转登录(仅客户端)' },
   openid: { label: 'OpenID', desc: '浏览器跳转登录(仅客户端)' },
 }

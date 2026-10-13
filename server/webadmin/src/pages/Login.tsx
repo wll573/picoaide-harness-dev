@@ -146,7 +146,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: () => void }) {
           </form>
         )}
 
-        <p className="mt-6 text-center text-[11px] text-muted-foreground">企业内部部署</p>
+        <p className="mt-6 text-center text-[11px] text-muted-foreground">单位内部部署</p>
       </div>
     </div>
   )
