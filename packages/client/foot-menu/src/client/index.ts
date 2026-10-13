@@ -20,7 +20,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import { createFootMenuService, installFootMenu } from './contract.ts'
-import { FootMenuRow } from './FootMenuRow.tsx'
+import { FootNavRows } from './FootNavRows.tsx'
 import { en, setActiveLocale, type FootMenuKey, zh } from './locales.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -89,10 +89,9 @@ export function apply(ctx: ClientContext): void {
     if (typeof document === 'undefined') return () => {}
     const style = document.createElement('style')
     style.textContent = [
-      '.pico-foot-menu-trigger { background: transparent; }',
-      '.pico-foot-menu-trigger:hover { background: var(--dsw-alias-interactive-bg-hover); }',
-      '.pico-foot-menu-item { background: transparent; }',
-      '.pico-foot-menu-item:hover, .pico-foot-menu-item:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }',
+      '.pico-foot-nav-row { background: transparent; }',
+      '.pico-foot-nav-row:hover { background: var(--dsw-alias-interactive-bg-hover); }',
+      '.pico-foot-nav-row:focus-visible { background: var(--dsw-alias-interactive-bg-hover); }',
     ].join('\n')
     document.head.appendChild(style)
     return () => { style.remove() }
@@ -103,13 +102,13 @@ export function apply(ctx: ClientContext): void {
   const service = createFootMenuService()
   ctx.effect(() => installFootMenu(ctx, service), 'foot-menu: menu registry')
 
-  // 唯一占用者：整个底部功能区只剩这一行（账目卡与设置各自在别的座位）。
+  // 唯一占用者：整个底部功能区由本包渲染成若干一级导航行（账目卡与设置各自在别的座位）。
   ctx.effect(
     () => ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
       name: 'sidebar.footer.action',
       id: 'pico-foot-menu',
       order: 10,
-    }, FootMenuRow)),
-    'foot-menu: sidebar row',
+    }, FootNavRows)),
+    'foot-menu: sidebar rows',
   )
 }

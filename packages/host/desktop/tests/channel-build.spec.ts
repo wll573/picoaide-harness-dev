@@ -101,7 +101,7 @@ describe('channel build defaults (drift guard)', () => {
   })
 
   it('official artifact templates mirror the committed package.json build block', () => {
-    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    const context = resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot })
     expect(context.artifactNames.mac).toBe(build.mac.artifactName)
     expect(context.artifactNames.win).toBe(build.win.artifactName)
     expect(context.artifactNames.nsis).toBe(build.nsis.artifactName)
@@ -111,7 +111,7 @@ describe('channel build defaults (drift guard)', () => {
 
 describe('official channel is a no-op', () => {
   it('emits no electron-builder overrides at all', () => {
-    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    const context = resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot })
     expect(context.official).toBe(true)
     expect(context.channelId).toBe('official')
     expect(context.brandDir).toBe(join(repoRoot, 'brands', 'official'))
@@ -122,11 +122,22 @@ describe('official channel is a no-op', () => {
   })
 
   it('expands the official artifact names as before', () => {
-    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    const context = resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot })
     expect(channelArtifactName(context, 'mac', { version: '2.7.0', arch: 'arm64', ext: 'dmg' }))
       .toBe('PicoAide-Harness-2.7.0-mac.dmg')
     expect(channelArtifactName(context, 'nsis', { version: '2.7.0', arch: 'x64', ext: 'exe' }))
       .toBe('PicoAide-Harness-2.7.0-x64-Setup.exe')
+  })
+})
+
+describe('default channel is shenji', () => {
+  it('uses channels/shenji when DSH_BUILD_CHANNEL is unset', () => {
+    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    expect(context.official).toBe(false)
+    expect(context.channelId).toBe('shenji')
+    expect(context.brandDir).toBe(join(repoRoot, 'channels', 'shenji'))
+    expect(context.productName).toBe('shenji')
+    expect(context.homeDir).toBe('.shenji-harness')
   })
 })
 
@@ -166,7 +177,7 @@ describe('channel build context', () => {
     expect(withFlag('false')).toBe(true)
     expect(withFlag(0)).toBe(true)
     // 官方渠道（没有渠道包）同样随包：这是"所有渠道默认打开"的直接含义。
-    expect(resolveChannelBuildContext({ env: {}, repoRoot: channelRepo('acme', acmeChannel()) }).speechBundleModel)
+    expect(resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot: channelRepo('acme', acmeChannel()) }).speechBundleModel)
       .toBe(true)
     expect(readChannelDesktopBranding(channelRepo('acme', acmeChannel())).speechBundleModel).toBeUndefined()
   })
@@ -237,7 +248,7 @@ describe('channel build context', () => {
 
 describe('deep link scheme', () => {
   it('defaults to the official scheme and emits no override at all for official', () => {
-    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    const context = resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot })
     expect(context.deepLinkScheme).toBe('picoaide')
     // 官方渠道连配置文件都不生成 —— 产物与改造前一致。
     expect(prepareChannelBuilderOverrides(context, tempOverridePaths('dsh-none-'))).toEqual([])
@@ -419,7 +430,7 @@ describe('stageChannelProfile', () => {
       identity: { display_name: 'Acme AI', short_name: 'Acme' },
     })
     writeFileSync(join(buildDir, 'channel.json'), JSON.stringify({ channel_id: 'acme' }))
-    const official = resolveChannelBuildContext({ env: {}, repoRoot })
+    const official = resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot })
     expect(stageChannelProfile(official, buildDir)).toBeUndefined()
     expect(existsSync(join(buildDir, 'channel.json'))).toBe(false)
   })
@@ -449,7 +460,7 @@ describe('stageChannelProfile', () => {
 
     const officialCase = channelDir({ channel_id: 'acme', identity: { display_name: 'Acme AI' } })
     writeFileSync(join(officialCase.buildDir, CHANNEL_BUILDER_CONFIG_FILENAME), 'module.exports = {}\n')
-    stageChannelProfile(resolveChannelBuildContext({ env: {}, repoRoot: officialCase.repoRoot }), officialCase.buildDir)
+    stageChannelProfile(resolveChannelBuildContext({ env: { [CHANNEL_ENV]: 'official' }, repoRoot: officialCase.repoRoot }), officialCase.buildDir)
     expect(existsSync(join(officialCase.buildDir, CHANNEL_BUILDER_CONFIG_FILENAME))).toBe(false)
   })
 

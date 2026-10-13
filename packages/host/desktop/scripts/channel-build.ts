@@ -8,7 +8,7 @@
  *
  * 现在：
  *   - 渠道由环境变量 `DSH_BUILD_CHANNEL` 选择（CI 的渠道矩阵注入）；
- *   - 缺省 `official`，此时**全部输出与改造前一致**（官方默认值见下表）。
+ *   - 缺省 `shenji`（内网交付）；显式 `DSH_BUILD_CHANNEL=official` 时输出与改造前官方一致。
  *
  * 为什么用 `--config.*` CLI 覆盖而不是改 package.json：仓库里的一份
  * package.json 要同时服务官方与所有渠道，只有 CLI 覆盖才能让同一个检出
@@ -139,7 +139,7 @@ function record(value: unknown): Record<string, unknown> {
  */
 export function resolveBuildChannelId(env: NodeJS.ProcessEnv = process.env): string {
   const raw = text(env[CHANNEL_ENV])
-  if (raw === undefined) return 'official'
+  if (raw === undefined) return 'shenji'
   if (!CHANNEL_ID_PATTERN.test(raw)) {
     throw new Error(
       `channel-build: ${CHANNEL_ENV}=${JSON.stringify(raw)} 不是合法渠道 id`
@@ -261,7 +261,7 @@ function defaultRepoRoot(): string {
 /**
  * 解析本次构建的渠道上下文。
  *
- * 官方渠道（未设 `DSH_BUILD_CHANNEL`）返回的全是官方默认值，且 `brandDir`
+ * 默认神机渠道（未设 `DSH_BUILD_CHANNEL`）读取 `channels/shenji`；显式 official 才使用官方默认值，且 `brandDir`
  * 指向 `brands/official/` —— 与改造前一致。
  * @param options - 环境与仓库根（测试可覆盖）。
  * @returns 渠道 id、素材目录与 electron-builder 覆盖参数。
@@ -319,7 +319,7 @@ export function resolveChannelBuildContext(
     deepLinkName: branding.deepLinkName ?? `${branding.productName ?? OFFICIAL_BUILD_DEFAULTS.productName} Deep Link`,
     // 数据目录名与运行期**同源**（同一个函数、同一份 channel.json）：
     // 构建期算一遍是为了让验证脚本能断言"这个包的数据根只属于本渠道"。
-    // 官方渠道（`resolveBuildChannelId` 的缺省）直接得到官方目录，行为不变。
+    // 官方渠道（显式 `DSH_BUILD_CHANNEL=official`）直接得到官方目录。
     homeDir: channelDshHomeDir(channelId, {
       homeDir: branding.homeDir,
       // 用**声明值**而不是回落后的 slug：渠道没写 slug 时不能凭官方缺省 slug
