@@ -15,6 +15,7 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
+import { packagedAppId } from '../../scripts/channel-build.ts'
 
 /** 最小 asar 的字节与头部摘要。 */
 export interface MinimalAsar {
@@ -24,8 +25,8 @@ export interface MinimalAsar {
   readonly digest: string
 }
 
-/** 夹具**缺省写入**的 bundle id（= 官方身份，与 `packagedAppId()` 的缺省回落同值）。 */
-export const MAC_BUNDLE_FIXTURE_IDENTIFIER = 'ai.deepseek.dsh.desktop'
+/** 夹具**缺省写入**的 bundle id（与 `packagedAppId()` 同源：随包 channel.json 声明，否则官方）。 */
+export const MAC_BUNDLE_FIXTURE_IDENTIFIER = packagedAppId()
 
 /** `minimalAsar` 的可选项。 */
 export interface MinimalAsarOptions {

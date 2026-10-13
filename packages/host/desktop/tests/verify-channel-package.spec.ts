@@ -131,7 +131,7 @@ describe('verifyChannelPackage', () => {
   it('官方构建残留渠道 channel.json 时失败（会染客户品牌）', async () => {
     const { appDir } = await stagedChannelBuild()
     await expect(
-      verifyChannelPackage({ env: {}, buildDir: appDir }),
+      verifyChannelPackage({ env: { DSH_BUILD_CHANNEL: 'official' }, buildDir: appDir }),
     ).rejects.toThrow(/不该存在/u)
   })
 
@@ -166,8 +166,8 @@ describe('verifyChannelPackage', () => {
 
   it('官方构建的 build/ 干净时通过', async () => {
     const appDir = tempDir('dsh-verify-official-')
-    await prepareChannelPackaging({ env: {}, appDir, speechModel: speechModelStub(), runtimes: runtimesStub() })
-    const result = await verifyChannelPackage({ env: {}, buildDir: appDir })
+    await prepareChannelPackaging({ env: { DSH_BUILD_CHANNEL: 'official' }, appDir, speechModel: speechModelStub(), runtimes: runtimesStub() })
+    const result = await verifyChannelPackage({ env: { DSH_BUILD_CHANNEL: 'official' }, buildDir: appDir })
     expect(result.channelId).toBe('official')
   })
 

@@ -318,18 +318,19 @@ describe('desktop profile composition', {
     }))
     // 三个值同源注入（§10/§16.1）：官方构建 = 产品缺省；渠道构建 = 渠道包字段。
     // 插件侧与渲染层都不得自己读随包 channel.json（tsdown 内联后那条路径不成立）。
+    // 内网默认渠道：随包 build/channel.json 为 shenji，注入值跟渠道包字段对齐。
     expect(patches).toContainEqual(expect.objectContaining({
       id: 'pico-wasm-apps-host',
       config: {
-        deepLinkScheme: 'picoaide',
-        appOriginScheme: 'picoaide-app',
-        productName: 'PicoAide Harness',
+        deepLinkScheme: 'shenji',
+        appOriginScheme: 'shenji-app',
+        productName: 'shenji',
       },
     }))
     // 浏览器面也要拿到应用源 scheme（导航闸门按 surface 分流要用它）。
     expect(patches).toContainEqual(expect.objectContaining({
       id: 'pico-browser',
-      config: expect.objectContaining({ appOriginScheme: 'picoaide-app' }),
+      config: expect.objectContaining({ appOriginScheme: 'shenji-app' }),
     }))
   })
 

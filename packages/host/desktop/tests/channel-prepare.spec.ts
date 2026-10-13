@@ -257,7 +257,7 @@ describe('prepareChannelPackaging', () => {
     await prepareChannelPackaging({ env: { DSH_BUILD_CHANNEL: 'example-brand' }, repoRoot: repo, appDir })
     expect(existsSync(join(appDir, 'channel.json'))).toBe(true)
 
-    const context = await prepareChannelPackaging({ env: {}, repoRoot: repo, appDir })
+    const context = await prepareChannelPackaging({ env: { DSH_BUILD_CHANNEL: 'official' }, repoRoot: repo, appDir })
 
     expect(context.channelId).toBe('official')
     expect(existsSync(join(appDir, 'channel.json'))).toBe(false)

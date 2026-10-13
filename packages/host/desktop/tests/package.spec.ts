@@ -482,11 +482,12 @@ describe('published package surface', () => {
   })
 
   it('keeps the iOS Default source icon unmodified', () => {
+    // 内网默认渠道 shenji：committed build/app-icon.png 与 packaging/intranet-channel/shenji 同源。
     const digest = createHash('sha256')
       .update(readFileSync(new URL('build/app-icon.png', packageRoot)))
       .digest('hex')
 
-    expect(digest).toBe('ee0b1c199f8403b38ed2721425b021418edda629c843b4baf74e9770c0d5a1d8')
+    expect(digest).toBe('e136e7faf3d8ebaffb9cfb9669fc38d0e47738997fbde94ccdab3038981f60f4')
   })
 
   it('generates a centered macOS icon with a 100-pixel visual inset', async () => {
