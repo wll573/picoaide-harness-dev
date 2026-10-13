@@ -12,12 +12,17 @@ const ADVANCED_STYLES = `
 html, body, #root { width: 100%; height: 100%; }
 body[data-dsh-desktop-mode="advanced"] { margin: 0; background: transparent !important; }
 .dshDesktopFrame { position: relative; display: grid; grid-template-rows: 100%; width: 100%; height: 100%; overflow: hidden; background: transparent; }
-.dshDesktopSidebarSurface { --dsw-specific-sidebar-fill: transparent; position: relative; grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; background: transparent; border-right: 1px solid var(--dsw-alias-border-l1); }
+.dshDesktopSidebarSurface { --dsw-specific-sidebar-fill: var(--dsw-alias-bg-base); position: relative; grid-column: 1; grid-row: 1; min-width: 0; overflow: hidden; background: var(--dsw-alias-bg-base); border-right: 1px solid var(--dsw-alias-border-l1); }
+/* Windows Mica may be unavailable (older systems, disabled transparency or remote
+   sessions). Paint the resolved theme in the page so a transparent native window
+   cannot expose a black sidebar behind light-theme text. Only macOS uses the
+   transparent surface backed by its explicitly configured sidebar vibrancy. */
+.dshDesktopFrame[data-desktop-platform="darwin"] .dshDesktopSidebarSurface { --dsw-specific-sidebar-fill: transparent; background: transparent; }
 .dshDesktopUpstreamSidebar { box-sizing: border-box; width: 100%; height: 100%; }
 /* 模态打开期间左栏交回不透明底（issue #128：左侧毛玻璃像被扫描了）。
    整视口蒙版是 rgba(0,0,0,.24) + backdrop-filter: blur(2px)，而 backdrop-filter 只能
-   采样页面自身的绘制结果；左栏平时刻意透明（上行 background: transparent，为的是透出
-   macOS vibrancy / Windows mica 原生材质），于是蒙版在左栏根本没有可模糊的底：
+   采样页面自身的绘制结果；macOS 左栏平时刻意透明（上行 background: transparent，为的是透出
+   sidebar vibrancy 原生材质），于是蒙版在左栏根本没有可模糊的底：
    左侧 = 0.24 黑直接压在未模糊的原生材质上，右侧 = 0.24 黑 + 模糊后的页面，分界线正好
    落在 border-right 上（半糊重影就是用户说的扫描感）。
    这里在模态存在时把两个真源一起换掉 —— 表面自身的 background（darwin 上真正被绘制的
