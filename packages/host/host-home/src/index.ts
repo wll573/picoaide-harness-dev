@@ -383,3 +383,5 @@ export function isSystemWorkingDirectory(cwd: string, env: EnvLike = process.env
 export function dshHome(): string {
   return resolveDshHome()
 }
+
+export { ACCOUNT_DATA_SCOPE_SERVICE, accountDataIdentity, accountDataRoot, createAccountDataScope, type AccountDataIdentityInput, type AccountDataScope } from './account-data.ts'

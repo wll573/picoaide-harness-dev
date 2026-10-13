@@ -47,7 +47,7 @@ import { provideAppAiRunner } from './app-ai-runner.ts'
 import { assertRequiredClientEntries, assertRequiredRowsActive } from './startup-rows.ts'
 import { fatalBootIdentity, reportFatalBootFailure, type FatalBootChoice } from './fatal-boot.ts'
 import { provideWasmAppsWindows } from './wasm-apps-windows.ts'
-import { applyInstallDshHome, isSystemWorkingDirectory } from './desktop-home.ts'
+import { ACCOUNT_DATA_SCOPE_SERVICE, createAccountDataScope, applyInstallDshHome, isSystemWorkingDirectory } from './desktop-home.ts'
 import { desktopUserDataDirectoryName } from './desktop-user-data.ts'
 import { desktopProductVersion, ElectronDesktopRuntime } from './electron-runtime.ts'
 import { desktopStartupCopy } from './tray-locale.ts'
@@ -530,6 +530,7 @@ async function start(): Promise<void> {
   // exits 1) instead of silently writing user data there. This is the same
   // `isSafeDshHome` check the enterprise installers enforce.
   const homeDir = applyInstallDshHome({ productDir: CHANNEL_PROFILE?.homeDir })
+  const accountData = createAccountDataScope(homeDir, () => runtime.requestRestart())
   // 随包 agent 运行时（2026-10-08）：node + pnpm + python 随客户端分发，agent 的
   // shell / MCP stdio 子进程直接可用，`plugin_manager` 的 `install_bundle` 也因此
   // 有了真正的包管理器（此前客户端不带 pnpm ⇒ 那条作者化路径必然 ENOENT）。
@@ -611,6 +612,7 @@ async function start(): Promise<void> {
       // 必须显式注入：插件在纯 Node 宿主里无从得知 userData，缺席时窗口管理器
       // **整个不构造**（`index.ts` 的 `userDataDir === undefined` 分支）。
       app.getPath('userData'),
+      accountData.root,
     )
     const releasePackageResolver = installProfilePackageResolver(prepared.bareModuleBaseUrl)
     // Electron does not patch `child_process.spawn`/`spawnSync` for asar paths
@@ -635,6 +637,7 @@ async function start(): Promise<void> {
         )
         hostCtx.provide(DSH_LAUNCH_ENVIRONMENT_KEY, environment)
         hostCtx.provide('desktopRuntime', runtime)
+        hostCtx.provide(ACCOUNT_DATA_SCOPE_SERVICE, accountData)
         // profile 自述（issue #130，P0）：上游 base bundle 的 `plugin-manager` 行由
         // `disabled: !!js "!ctx.get('profileContext')"` 开关控制，不 provide 就会被
         // **静默** disable ⇒ `pluginManager` 服务不存在 ⇒ `cordis` preset 的行

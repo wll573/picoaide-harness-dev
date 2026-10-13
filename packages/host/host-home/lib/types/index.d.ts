@@ -117,4 +117,4 @@ export declare function dshHomePath(...segments: string[]): string;
 export declare function isSystemWorkingDirectory(cwd: string, env?: EnvLike): boolean;
 /** Resolve the product home from the live environment. */
 export declare function dshHome(): string;
-export {};
+export { ACCOUNT_DATA_SCOPE_SERVICE, accountDataIdentity, accountDataRoot, createAccountDataScope, type AccountDataIdentityInput, type AccountDataScope } from './account-data.ts';

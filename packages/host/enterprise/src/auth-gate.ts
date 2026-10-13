@@ -80,6 +80,10 @@ interface LoginCopy {
   usernamePlaceholder: string
   passwordPlaceholder: string
   signIn: string
+  register: string
+  registering: string
+  registerFailed: string
+  registrationPending: string
   browserSignIn: string
   waiting: string
   needServer: string
@@ -113,6 +117,10 @@ const LOGIN_COPY: Readonly<Record<HostLocale, LoginCopy>> = {
     usernamePlaceholder: '账号',
     passwordPlaceholder: '密码',
     signIn: '登录',
+    register: '注册账号',
+    registering: '注册中…',
+    registerFailed: '注册失败，请稍后重试',
+    registrationPending: '注册申请已提交，请联系管理员审批。审批通过后即可登录。',
     browserSignIn: '使用浏览器登录',
     waiting: '请在弹出的浏览器窗口中完成授权，等待授权完成后此处会自动继续…',
     needServer: '请填写服务端地址',
@@ -142,6 +150,10 @@ const LOGIN_COPY: Readonly<Record<HostLocale, LoginCopy>> = {
     usernamePlaceholder: 'Username',
     passwordPlaceholder: 'Password',
     signIn: 'Sign in',
+    register: 'Create account',
+    registering: 'Creating account…',
+    registerFailed: 'Registration failed. Please try again later.',
+    registrationPending: 'Registration submitted. Please contact your administrator for approval. You can sign in once approved.',
     browserSignIn: 'Sign in with browser',
     waiting: 'Complete the authorization in the browser window that just opened; this page continues automatically.',
     needServer: 'Enter the server address',
@@ -201,6 +213,8 @@ export function renderLoginPage(locale: HostLocale): string {
     --input-bg: #ffffff;
     --border: #d0d5dd;
     --err: #dc2626;
+    --notice-bg: #eff6ff;
+    --notice-fg: #1e40af;
     --accent: #2563eb;
     /* 实心强调按钮上的文字色：暗色 --accent 是浅蓝 #3b82f6，白字只有 3.68:1，
        所以暗色改用深墨（6.23:1）。亮色保持白字（5.17:1）。 */
@@ -215,6 +229,8 @@ export function renderLoginPage(locale: HostLocale): string {
       --input-bg: #1a1d24;
       --border: #333333;
       --err: #f87171;
+      --notice-bg: #172554;
+      --notice-fg: #bfdbfe;
       --accent: #3b82f6;
       --accent-fg: #0b1220;
       --brand-tile-bg: #f9fafb;
@@ -231,6 +247,10 @@ export function renderLoginPage(locale: HostLocale): string {
   input { padding: 11px 13px; border-radius: 9px; border: 1px solid var(--border); background: var(--input-bg); color: var(--fg); font-size: 14px; box-sizing: border-box; width: 100%; }
   button { padding: 11px; border-radius: 9px; border: none; background: var(--accent); color: var(--accent-fg); font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; }
   button:disabled { opacity: 0.6; cursor: default; }
+  .register { margin-top: 12px; min-height: 42px; box-sizing: border-box; background: transparent; border: 1px solid var(--border); color: var(--fg); font-weight: 500; transition: border-color 0.15s, color 0.15s; }
+  .register:hover:enabled { border-color: var(--accent); color: var(--accent); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .notice { margin-top: 14px; padding: 12px 14px; border-radius: 9px; background: var(--notice-bg); color: var(--notice-fg); font-size: 13px; line-height: 1.6; text-align: left; }
   .err { color: var(--err); font-size: 13px; min-height: 18px; margin-top: 4px; text-align: left; }
   .hint { color: var(--fg); opacity: 0.7; font-size: 12px; margin-top: 8px; }
   .back { background: transparent; color: var(--accent); border: none; font-size: 12px; cursor: pointer; padding: 6px 12px; margin: 0 0 14px; width: auto; }
@@ -274,9 +294,11 @@ export function renderLoginPage(locale: HostLocale): string {
       <input id="password" type="password" placeholder="${c.passwordPlaceholder}" autocomplete="current-password" style="display:none">
       <button type="submit" id="btn" style="display:none">${c.signIn}</button>
     </form>
+    <button type="button" id="register-btn" class="register" style="display:none">${c.register}</button>
     <button type="button" id="browser-btn" style="display:none">${c.browserSignIn}</button>
     <div class="hint" id="waiting" style="display:none">${c.waiting}</div>
     <div class="err" id="err-step2"></div>
+    <div class="notice" id="registration-notice" role="status" aria-live="polite" style="display:none"></div>
   </div>
 </div>
 <script>
@@ -293,13 +315,16 @@ export function renderLoginPage(locale: HostLocale): string {
   var f2 = document.getElementById('f2')
   var err1 = document.getElementById('err-step1')
   var err2 = document.getElementById('err-step2')
+  var registrationNotice = document.getElementById('registration-notice')
   var btn = document.getElementById('btn')
+  var registerBtn = document.getElementById('register-btn')
   var browserBtn = document.getElementById('browser-btn')
   var methodsBox = document.getElementById('methods')
   var waiting = document.getElementById('waiting')
   var brandArea = document.getElementById('brand-area')
   var currentMethod = 'local'
   var currentMethods = []
+  var registrationEnabled = false
   var currentChannel = null
   var pollTimer = null
   // 去除服务端地址尾部一个或多个斜杠(兼容带/不带 / 的用户输入)。
@@ -348,13 +373,20 @@ export function renderLoginPage(locale: HostLocale): string {
         currentChannel = null
       }
       var ms = [{ name: 'local', configured: true, browser: false }]
+      var canRegister = false
       if (methodsOk) {
         try {
           var md = await results[1].value.json()
           if (md && md.methods && md.methods.length) ms = md.methods
+          // 老版本服务端/中间代理可能只返回 methods，没有 registration 字段。
+          // 只要本地账号方法明确可用，就兼容显示注册入口；真正提交时仍由
+          // 服务端的自助注册开关和审核策略做最终校验。
+          canRegister = md && md.registration
+            ? md.registration.enabled === true
+            : ms.some(function (m) { return m.name === 'local' && m.configured !== false && m.hidden !== true })
         } catch (e3) { /* keep default */ }
       }
-      showStep2(ms)
+      showStep2(ms, canRegister)
       return true
     } finally {
       document.getElementById('next-btn').disabled = false
@@ -407,8 +439,9 @@ export function renderLoginPage(locale: HostLocale): string {
   }
   void autoConnect()
 
-  function showStep2(methods) {
+  function showStep2(methods, canRegister) {
     currentMethods = methods.filter(function (m) { return !m.hidden })
+    registrationEnabled = canRegister === true
     // 渠道区
     brandArea.innerHTML = renderChannel(currentChannel)
     // 方式选择器
@@ -491,12 +524,14 @@ export function renderLoginPage(locale: HostLocale): string {
   }
 
   function updateFields() {
+    registrationNotice.style.display = 'none'
     var isPassword = currentMethod === 'local' || currentMethod === 'ldap'
     document.getElementById('username').style.display = isPassword ? '' : 'none'
     document.getElementById('password').style.display = isPassword ? '' : 'none'
     if (isPassword) document.getElementById('username').placeholder = currentMethod === 'ldap' ? T.ldapUsername : T.usernamePlaceholder
     document.getElementById('btn').style.display = isPassword ? '' : 'none'
     f2.style.display = isPassword ? '' : 'none'
+    registerBtn.style.display = currentMethod === 'local' && registrationEnabled ? '' : 'none'
     browserBtn.style.display = isPassword ? 'none' : ''
     browserBtn.textContent = T.signInWith.replace('{method}',() => (methodLabel(currentMethod)))
     waiting.style.display = 'none'
@@ -597,6 +632,7 @@ export function renderLoginPage(locale: HostLocale): string {
   f2.addEventListener('submit', async function (e) {
     e.preventDefault()
     err2.textContent = ''
+    registrationNotice.style.display = 'none'
     var body = {
       server: document.getElementById('server').value.trim(),
       username: document.getElementById('username').value.trim(),
@@ -635,7 +671,42 @@ export function renderLoginPage(locale: HostLocale): string {
       btn.textContent = btnLabel
     }
   })
-  var friendlyLoginError = function (raw) {
+  registerBtn.addEventListener('click', async function () {
+    err2.textContent = ''
+    registrationNotice.style.display = 'none'
+    var username = document.getElementById('username').value.trim()
+    var password = document.getElementById('password').value
+    if (!username || !password) { err2.textContent = T.registerFailed; return }
+    registerBtn.disabled = true
+    var label = registerBtn.textContent
+    registerBtn.textContent = T.registering
+    try {
+      var res = await fetch('/api/pico/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          server: document.getElementById('server').value.trim(),
+          username: username,
+          password: password,
+        }),
+      })
+      if (!res.ok) {
+        var data = await res.json().catch(function () { return {} })
+        var raw = String(data.error && data.error.message ? data.error.message : (data.error || ''))
+        err2.textContent = raw || T.registerFailed
+        return
+      }
+      // 新账号等待管理员审批，不能立即登录，否则会把成功注册误报为密码错误。
+      registrationNotice.textContent = T.registrationPending
+      registrationNotice.style.display = ''
+    } catch (e6) {
+      err2.textContent = T.networkError
+    } finally {
+      registerBtn.disabled = false
+      registerBtn.textContent = label
+    }
+  })
+    var friendlyLoginError = function (raw) {
     var code = raw.toLowerCase()
     if (code.indexOf('invalid_credentials') >= 0 || code.indexOf('invalid credentials') >= 0 || code.indexOf('unauthorized') >= 0) return T.badCredentials
     if (code.indexOf('rate') >= 0 || code.indexOf('too many') >= 0) return T.tooManyAttempts
@@ -1593,7 +1664,7 @@ export function apply(ctx: Context, config: Config): void {
   const passwordChangeRequired = (res: ServerResponse, message: string): void => {
     const current = session()
     if (current !== null && current.mustChangePassword !== true) {
-      ctx.picoSession.setSession({ ...current, mustChangePassword: true })
+      void ctx.picoSession.setSession({ ...current, mustChangePassword: true })
       ctx.logger?.warn?.('pico: the gateway requires a password change for this session; routing the app page to /change-password on the next reload')
     }
     json(res, 403, {
@@ -1815,13 +1886,43 @@ export function apply(ctx: Context, config: Config): void {
             if (sessionIdentityChanged(existing, sess)) {
               ctx.logger?.warn?.('pico: session identity changed on this server; the loaded app page will reload (the previous account render state must not survive)')
             }
-            ctx.picoSession.setSession(sess)
+            await ctx.picoSession.setSession(sess)
             // 0057: 强制改密标记 → 登录页跳转强制改密页(而非直接进应用)。
             json(res, 200, { ok: true, must_change_password: sess.mustChangePassword === true })
           } catch (err) {
             // AuthError carries a user-facing message (账号或密码错误 etc.).
             const status = err instanceof AuthError && err.kind === 'network' ? 502 : 401
             json(res, status, { error: err instanceof Error ? err.message : 'login failed' })
+          }
+        },
+      }),
+
+      ctx.webServer.register({
+        kind: 'exact', path: '/api/pico/auth/register',
+        handler: async (req: IncomingMessage, res: ServerResponse) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!guard(req, res)) return
+          if (!proofOfPossession(req, res, 'required')) return
+          const raw = await collectBody(req, 64 * 1024).catch(() => null)
+          if (raw === null) return json(res, 413, { error: 'body too large' })
+          let body: { server?: unknown; username?: unknown; password?: unknown }
+          try { body = JSON.parse(raw.toString('utf8')) } catch { return json(res, 400, { error: 'bad json' }) }
+          if (typeof body.server !== 'string' || typeof body.username !== 'string' || typeof body.password !== 'string') {
+            return json(res, 400, { error: 'missing fields' })
+          }
+          try {
+            const data = await fetchJSON(body.server, '/api/client/v2/auth/register', {
+              method: 'POST',
+              body: { username: body.username, password: body.password },
+            })
+            json(res, 201, data)
+          } catch (err) {
+            if (err instanceof ApiError) {
+              json(res, err.status ?? 502, { error: { code: err.code, message: err.message } })
+              return
+            }
+            const status = err instanceof AuthError && err.kind === 'network' ? 502 : 400
+            json(res, status, { error: err instanceof Error ? err.message : 'registration failed' })
           }
         },
       }),
