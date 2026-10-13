@@ -259,10 +259,27 @@ function defaultRepoRoot(): string {
 }
 
 /**
+ * 解析渠道包目录：优先 `channels/<id>`（CI 私有仓检出或本地注入），否则回落
+ * `packaging/intranet-channel/<id>`（内网 fork 跟踪的默认包）。两处都没有时仍返回
+ * `channels/<id>`，由后续 brandDir 回落官方 / brand-prepare fail-loud。
+ * @param repoRoot - 仓库根。
+ * @param channelId - 渠道 id。
+ * @returns 含 `channel.json` 的目录（或预期路径）。
+ */
+export function resolveChannelPackageDir(repoRoot: string, channelId: string): string {
+  const live = join(repoRoot, 'channels', channelId)
+  if (existsSync(join(live, 'channel.json'))) return live
+  const intranet = join(repoRoot, 'packaging', 'intranet-channel', channelId)
+  if (existsSync(join(intranet, 'channel.json'))) return intranet
+  return live
+}
+
+/**
  * 解析本次构建的渠道上下文。
  *
- * 默认神机渠道（未设 `DSH_BUILD_CHANNEL`）读取 `channels/shenji`；显式 official 才使用官方默认值，且 `brandDir`
- * 指向 `brands/official/` —— 与改造前一致。
+ * 默认神机渠道（未设 `DSH_BUILD_CHANNEL`）优先读 `channels/shenji`（CI 私有仓检出 / 本地注入）；
+ * 若该目录不存在则回落跟踪中的 `packaging/intranet-channel/shenji`（内网 fork 默认包，避免把 `channels/` 入库）。
+ * 显式 official 才使用官方默认值，且 `brandDir` 指向 `brands/official/` —— 与改造前一致。
  * @param options - 环境与仓库根（测试可覆盖）。
  * @returns 渠道 id、素材目录与 electron-builder 覆盖参数。
  * @throws 渠道 id 非法、或渠道包里的 slug/appId 形状不对时抛错。
@@ -274,7 +291,7 @@ export function resolveChannelBuildContext(
   const repoRoot = options.repoRoot ?? defaultRepoRoot()
   const channelId = resolveBuildChannelId(env)
   const official = channelId === 'official'
-  const channelDir = join(repoRoot, 'channels', channelId)
+  const channelDir = resolveChannelPackageDir(repoRoot, channelId)
   const branding = official ? {} : readChannelDesktopBranding(channelDir)
 
   const slug = branding.slug ?? OFFICIAL_BUILD_DEFAULTS.slug

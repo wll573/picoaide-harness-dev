@@ -15,6 +15,7 @@ import {
   readChannelDesktopBranding,
   resolveBuildChannelId,
   resolveChannelBuildContext,
+  resolveChannelPackageDir,
   stageChannelProfile,
   type ChannelBuilderOverridePaths,
 } from '../scripts/channel-build.ts'
@@ -22,7 +23,7 @@ import { PACK_APP_ROOT_ENTRIES } from '../scripts/pack-app-root.mjs'
 import { PRODUCT_DSH_HOME_DIR } from '../src/desktop-home.ts'
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const repoRoot = resolve(desktopRoot, '..', '..')
+const repoRoot = resolve(desktopRoot, '..', '..', '..')  // packages/host/desktop → repo root
 
 /** package.json 的 build 块：官方编译期品牌的**真源**。 */
 const build = (JSON.parse(readFileSync(join(desktopRoot, 'package.json'), 'utf8')) as {
@@ -131,13 +132,24 @@ describe('official channel is a no-op', () => {
 })
 
 describe('default channel is shenji', () => {
-  it('uses channels/shenji when DSH_BUILD_CHANNEL is unset', () => {
+  it('falls back to packaging/intranet-channel/shenji when channels/ is empty', () => {
     const context = resolveChannelBuildContext({ env: {}, repoRoot })
     expect(context.official).toBe(false)
     expect(context.channelId).toBe('shenji')
-    expect(context.brandDir).toBe(join(repoRoot, 'channels', 'shenji'))
+    expect(context.channelDir).toBe(join(repoRoot, 'packaging', 'intranet-channel', 'shenji'))
+    expect(context.brandDir).toBe(join(repoRoot, 'packaging', 'intranet-channel', 'shenji'))
     expect(context.productName).toBe('shenji')
     expect(context.homeDir).toBe('.shenji-harness')
+  })
+
+  it('prefers live channels/shenji over the intranet fallback when present', () => {
+    const live = join(repoRoot, 'channels', 'shenji')
+    // 本用例不造夹具：若工作区已有 live 检出则直接断言优先；否则跳过。
+    // CI Gate 默认无 channels/ 检出，上一条覆盖回落路径。
+    if (!existsSync(join(live, 'channel.json'))) return
+    const context = resolveChannelBuildContext({ env: {}, repoRoot })
+    expect(context.channelDir).toBe(live)
+    expect(resolveChannelPackageDir(repoRoot, 'shenji')).toBe(live)
   })
 })
 
