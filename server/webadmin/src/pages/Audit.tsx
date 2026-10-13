@@ -19,6 +19,7 @@ import {
   type TranscriptDetailDto,
   type TranscriptFilters,
   type TranscriptRowDto,
+  type TranscriptSessionDto,
 } from '../components/transcript-detail'
 import { ScrollText, RefreshCw, Download } from 'lucide-react'
 
@@ -321,6 +322,8 @@ export default function Audit() {
   const [logsLoaded, setLogsLoaded] = useState(false)
   // ---- Prompt/Response 审计（需求 §8.2 / §8.3） ----
   const [transcripts, setTranscripts] = useState<TranscriptRowDto[]>([])
+  const [sessions, setSessions] = useState<TranscriptSessionDto[]>([])
+  const [groupBySession, setGroupBySession] = useState(true)
   const [transcriptsTotal, setTranscriptsTotal] = useState(0)
   // 输入态 vs 已应用态：与日志筛选同一条纪律（改输入不触发请求，点「查询」才应用）。
   const [transcriptFilters, setTranscriptFilters] = useState<TranscriptFilters>(EMPTY_TRANSCRIPT_FILTERS)
@@ -392,9 +395,10 @@ export default function Audit() {
     const current = ++transcriptSeq.current
     setTranscriptBusy(true)
     try {
-      const data = await request(`${ADMIN_API}/audit/transcripts?${buildTranscriptQuery(filters, offset, size)}`)
+      const data = await request(`${ADMIN_API}/audit/transcripts?${buildTranscriptQuery(filters, offset, size)}${groupBySession ? '&group_by=session' : ''}`)
       if (current !== transcriptSeq.current) return // 过期响应丢弃（快速翻页/改筛选）
       setTranscripts(Array.isArray(data?.transcripts) ? data.transcripts : [])
+      setSessions(Array.isArray(data?.sessions) ? data.sessions : [])
       setTranscriptsTotal(Number(data?.total ?? 0))
       setTranscriptError('')
       setTranscriptsLoaded(true)
@@ -402,13 +406,14 @@ export default function Audit() {
       if (current !== transcriptSeq.current) return
       // 失败清空 + 记失败态：旧行不得冒充新筛选条件下的结果（R15C-W-06 同族）。
       setTranscripts([])
+      setSessions([])
       setTranscriptsTotal(0)
       setTranscriptsLoaded(false)
       setTranscriptError(`读取 Prompt/Response 审计失败：${err.message}`)
     } finally {
       if (current === transcriptSeq.current) setTranscriptBusy(false)
     }
-  }, [])
+  }, [groupBySession])
 
   useEffect(() => {
     void loadTranscripts(appliedTranscript, transcriptOffset, transcriptPageSize)
@@ -432,6 +437,16 @@ export default function Audit() {
     setAppliedTranscript(EMPTY_TRANSCRIPT_FILTERS)
     setTranscriptOffset(0)
   }
+
+  const viewSession = (row: TranscriptSessionDto) => {
+    if (!row.session_id) { void openTranscript(row.transcript_id); return }
+    const filters = { ...appliedTranscript, userId: String(row.user_id), sessionId: row.session_id }
+    setTranscriptFilters(filters)
+    setAppliedTranscript(filters)
+    setTranscriptOffset(0)
+    setGroupBySession(false)
+  }
+
 
   // 审批预览:上传类审计条目可当场查看归档内容(2026-09-01)
   const [preview, setPreview] = useState<ArchivePreviewData | null>(null)
@@ -607,9 +622,12 @@ export default function Audit() {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-sm font-semibold">用户对话记录</h2>
-            <p className="text-xs text-muted-foreground">共 {transcriptsTotal} 条请求；点“查看对话”可查看用户请求与模型回复。</p>
+            <p className="text-xs text-muted-foreground">共 {transcriptsTotal} {groupBySession ? '个会话' : '条请求'}；{groupBySession ? '同一用户的同一 session 汇总展示，展开后查看每次请求。' : '点“查看对话”可查看用户请求与模型回复。'}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => { setGroupBySession(!groupBySession); setTranscriptOffset(0) }}>
+              {groupBySession ? '按请求展示' : '按会话展示'}
+            </Button>
             <Button size="sm" variant="outline" onClick={() => void exportTranscripts()} disabled={transcriptExportBusy}>
               <Download className="h-3.5 w-3.5" /> {transcriptExportBusy ? '导出中…' : '按日期导出'}
             </Button>
@@ -646,7 +664,17 @@ export default function Audit() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {transcripts.map((row) => (
+            {groupBySession && sessions.map((row) => (
+              <TableRow key={`${row.user_id}:${row.session_id || row.transcript_id}`}>
+                <TableCell className="text-xs">{fmtTime(row.last_at)}</TableCell>
+                <TableCell>{transcriptUserLabel(row)}</TableCell>
+                <TableCell className="max-w-64 break-all font-mono text-xs">{row.session_id || '无 Session（独立请求）'}<div className="text-muted-foreground">{row.request_count} 次请求 · {row.total_tokens} Tokens</div></TableCell>
+                <TableCell>{row.models || '—'}</TableCell>
+                <TableCell>{row.failure_count > 0 ? <Badge variant="destructive">{row.failure_count} 次失败</Badge> : <Badge variant="success">无失败</Badge>}{row.pending_count > 0 && <Badge variant="secondary">{row.pending_count} 次进行中</Badge>}</TableCell>
+                <TableCell><Button size="sm" variant="ghost" onClick={() => viewSession(row)}>查看会话</Button></TableCell>
+              </TableRow>
+            ))}
+            {!groupBySession && transcripts.map((row) => (
               <TableRow key={row.id}>
                 <TableCell className="font-mono text-xs">{fmtTime(row.created_at)}</TableCell>
                 <TableCell className={row.user_deleted ? 'text-muted-foreground' : ''}>{transcriptUserLabel(row)}</TableCell>
@@ -674,7 +702,7 @@ export default function Audit() {
                 </TableCell>
               </TableRow>
             )}
-            {transcriptsLoaded && !transcriptBusy && !transcriptError && transcripts.length === 0 && (
+            {transcriptsLoaded && !transcriptBusy && !transcriptError && (groupBySession ? sessions.length === 0 : transcripts.length === 0) && (
               <TableRow><TableCell colSpan={6} className="text-sm text-muted-foreground">暂无 Prompt/Response 审计记录</TableCell></TableRow>
             )}
             {!transcriptsLoaded && !transcriptError && (
@@ -690,7 +718,7 @@ export default function Audit() {
             disabled={transcriptOffset <= 0 || transcriptBusy}
             onClick={() => setTranscriptOffset(Math.max(0, transcriptOffset - transcriptPageSize))}
           >上一页</Button>
-          <span className="text-sm text-muted-foreground">第 {transcriptPage}/{transcriptPages} 页 · 共 {transcriptsTotal} 条请求</span>
+          <span className="text-sm text-muted-foreground">第 {transcriptPage}/{transcriptPages} 页 · 共 {transcriptsTotal} {groupBySession ? '个会话' : '条请求'}</span>
           <Button
             size="sm"
             variant="outline"

@@ -93,8 +93,18 @@ beforeEach(() => {
   mockRequest.mockReset()
   mockRequest.mockImplementation(async (path: string) => {
     if (String(path).startsWith('/api/server/admin/audit?')) return { logs: LOGS, total: LOGS.length }
+    if (String(path).includes('/api/server/admin/audit/transcripts') && String(path).includes('group_by=session')) {
+      return {
+        sessions: [{
+          user_id: 7, username: 'alice', user_deleted: false, session_id: 'sess-42',
+          transcript_id: 42, request_count: 1, failure_count: 0, pending_count: 0,
+          total_tokens: 0, models: 'model', created_at: '2026-10-11T00:00:00Z', last_at: '2026-10-11T00:00:00Z',
+        }],
+        total: 1,
+      }
+    }
     if (String(path).startsWith('/api/server/admin/audit/transcripts?')) return {
-      transcripts: [{ id: 42, user_id: 7, username: 'alice', model: 'model', audit_status: 'complete', created_at: '2026-10-11T00:00:00Z' }],
+      transcripts: [{ id: 42, user_id: 7, username: 'alice', model: 'model', audit_status: 'complete', created_at: '2026-10-11T00:00:00Z', session_id: 'sess-42' }],
       total: 1,
     }
     if (String(path) === '/api/server/admin/audit/transcripts/42') return {
@@ -131,6 +141,8 @@ describe('LLM 对话审计详情', () => {
     render(<Audit />)
     expect(screen.getByTestId('llm-transcript-audit')).toBeInTheDocument()
     expect(screen.getByTestId('audit-log-card')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: '按请求展示' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: '按请求展示' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '查看对话' })).toBeInTheDocument())
     fireEvent.click(screen.getByRole('button', { name: '查看对话' }))
     await waitFor(() => expect(screen.getByText('你好')).toBeInTheDocument())
@@ -138,6 +150,7 @@ describe('LLM 对话审计详情', () => {
     expect(screen.queryByText(/secret system|secret reasoning/)).toBeNull()
   })
 })
+
 
 async function exportCsv(): Promise<string> {
   render(<Audit />)
@@ -205,6 +218,35 @@ const SUPER: MeUser = {
   role: 'super_admin',
   permissions: ['audit:read', 'audit:retention:write', 'usage:read', 'user:read'],
 }
+
+describe('Prompt/Response 审计按会话展示', () => {
+  it('汇总同一 session，并可回到该 session 的请求明细', async () => {
+    setCurrentAdmin(SUPER)
+    const session = {
+      user_id: 7, username: 'alice', user_deleted: false, session_id: 'chat-7',
+      transcript_id: 101, request_count: 2, failure_count: 1, pending_count: 0,
+      total_tokens: 42, models: 'deepseek-chat', created_at: '2026-10-09T10:00:00Z', last_at: '2026-10-09T10:01:00Z',
+    }
+    mockRequest.mockImplementation(async (path: string) => {
+      const p = String(path)
+      if (p.startsWith('/api/server/admin/audit?')) return { logs: LOGS, total: LOGS.length }
+      if (p.startsWith(AUDIT_SETTINGS_PATH)) return { retention_days: 180 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('group_by=session')) return { sessions: [session], total: 1 }
+      if (p.includes('/api/server/admin/audit/transcripts') && p.includes('session_id=chat-7')) {
+        return { transcripts: [{ id: 101, request_id: 'req-101', user_id: 7, username: 'alice', session_id: 'chat-7', model: 'deepseek-chat', audit_status: 'complete', created_at: session.created_at }], total: 1 }
+      }
+      return {}
+    })
+    render(<Audit />)
+    await waitFor(() => expect(screen.getByText('chat-7')).toBeInTheDocument())
+    expect(screen.getByText('2 次请求 · 42 Tokens')).toBeInTheDocument()
+    expect(screen.getByText('1 次失败')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '查看会话' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: '查看对话' })).toBeInTheDocument())
+    expect(mockRequest.mock.calls.some(([path]) => String(path).includes('session_id=chat-7') && !String(path).includes('group_by=session'))).toBe(true)
+  })
+})
+
 /** 只有 audit:read（连 usage:read 都没有）的部分权限集：同样是只读视图。 */
 const READONLY: MeUser = { role: 'user', permissions: ['audit:read'] }
 
