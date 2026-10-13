@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "channel_id": "shenji",
+  "identity": {
+    "display_name": "神机",
+    "short_name": "神机",
+    "tagline": "企业智能工作台",
+    "title": "神机"
+  },
+  "copy": {
+    "login_display_name": "神机",
+    "login_tagline": "企业智能工作台",
+    "login_welcome": "欢迎使用神机",
+    "client_display_name": "神机",
+    "client_tagline": "企业智能工作台",
+    "portal_welcome": "欢迎使用神机企业智能工作台。"
+  },
+  "assets": {
+    "logo": "logo.svg",
+    "logo_dark": "logo-dark.svg",
+    "favicon": "favicon.svg",
+    "accent": "#2563eb"
+  },
+  "desktop": {
+    "product_name": "shenji",
+    "window_title": "神机",
+    "shortcut_name": "shenji",
+    "slug": "shenji",
+    "app_id": "com.shenji.desktop",
+    "deep_link_scheme": "shenji",
+    "deep_link_name": "神机",
+    "app_origin_scheme": "shenji-app",
+    "home_dir": ".shenji-harness",
+    "speech_bundle_model": true
+  },
+  "defaults": {
+    "server_url": "",
+    "telemetry_channel": "shenji"
+  }
+}
