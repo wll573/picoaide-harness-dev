@@ -15,7 +15,7 @@
   3. `enterprise/src/bootstrap.ts`：`managedTimer` 挂进 `ctx.effect` disposer（登出/dispose 清 30s sync）
   4. `scripts/check-workspaces.mjs`：任务 **starting** 进度行；默认 **20 min** 单任务墙钟（`--task-timeout-ms` / `CHECK_TASK_TIMEOUT_MS`），防再静默吃满 1h
 - 本地复核：`verify:profile` ~21s EXIT 0；`verify:session` 16/16；desktop 全量 `yarn check` ~95s EXIT 0；`check:check-workspaces` 509 断言绿
-- 远程：待 push `boss/shenji/intranet`（本轮 tip）
+- 远程：已 push `boss/shenji/intranet` tip `0183c9c19f`；CI https://github.com/wll573/picoaide-harness-dev/actions/runs/38554132233
 - 残余风险：
   - CI 仍把 Full gate stdout/stderr 重定向到 verdict 文件 ⇒ 进度行要等步骤结束才进 GH 日志；单任务超时负责 fail-loud
   - `app-ai-release-gate` 在高负载下偶发假红（单测单独连跑 3 次绿）—— 与本次挂起无关
