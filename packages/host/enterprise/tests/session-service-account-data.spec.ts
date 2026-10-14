@@ -28,7 +28,8 @@ afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: tru
 describe('session activation and account data', () => {
   it('persists and restarts before publishing an account into another account data scope', async () => {
     const h = harness()
-    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true))
+    // 现象：进程内异步状态传播（restore 完成后的断言）；vitest 缺省的 1s 在 CI 4 vCPU 负载下不够（R11-B-02）。
+    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true), { timeout: 10_000 })
     await h.service.setSession(sample)
     expect(h.activate).toHaveBeenCalledWith(sample)
     expect(h.service.isLoggedIn()).toBe(false)
@@ -38,7 +39,8 @@ describe('session activation and account data', () => {
 
   it('activates normally when the process already owns this account data', async () => {
     const h = harness(true)
-    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true))
+    // 现象：进程内异步状态传播（restore 完成后的断言）；vitest 缺省的 1s 在 CI 4 vCPU 负载下不够（R11-B-02）。
+    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true), { timeout: 10_000 })
     await h.service.setSession(sample)
     expect(h.service.getSession()).toEqual(sample)
     expect(h.activate).not.toHaveBeenCalled()
@@ -47,7 +49,8 @@ describe('session activation and account data', () => {
 
   it('rejects a failed token write without exposing either account or restarting', async () => {
     const h = harness(false, true)
-    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true))
+    // 现象：进程内异步状态传播（restore 完成后的断言）；vitest 缺省的 1s 在 CI 4 vCPU 负载下不够（R11-B-02）。
+    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true), { timeout: 10_000 })
     await expect(h.service.setSession(sample)).rejects.toThrow()
     expect(h.activate).not.toHaveBeenCalled()
     expect(h.service.getSession()).toBeNull()
@@ -55,7 +58,8 @@ describe('session activation and account data', () => {
 
   it('cancels an in-flight account switch on logout and does not revive its token', async () => {
     const h = harness()
-    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true))
+    // 现象：进程内异步状态传播（restore 完成后的断言）；vitest 缺省的 1s 在 CI 4 vCPU 负载下不够（R11-B-02）。
+    await vi.waitFor(() => expect(h.service.isRestored()).toBe(true), { timeout: 10_000 })
     const pending = h.service.setSession(sample)
     const concurrent = h.service.setSession({ ...sample, username: 'bob' })
     h.service.clear()

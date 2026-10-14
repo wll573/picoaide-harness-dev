@@ -128,7 +128,8 @@ describe('POST /api/pico/auth/login:已登录时拒绝换服务端(FIX-18)', () 
     h.setSession.mockImplementation(() => new Promise<void>(resolve => { finish = resolve }))
     const output = fakeResponse()
     const pending = h.handler(fakeRequest({ server: 'https://harness.example', username: 'alice', password: 'pw' }), output.res)
-    await vi.waitFor(() => expect(h.setSession).toHaveBeenCalled())
+    // 现象：进程内异步状态传播（setSession 入队后的断言）；vitest 缺省的 1s 在 CI 4 vCPU 负载下不够（R11-B-02）。
+    await vi.waitFor(() => expect(h.setSession).toHaveBeenCalled(), { timeout: 10_000 })
     expect(output.read().code).toBe(0)
     finish()
     await pending
