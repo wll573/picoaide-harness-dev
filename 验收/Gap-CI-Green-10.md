@@ -11,3 +11,8 @@
   2. 本地复核：`auth-gate-brand` + `audit-r9` 11/11 绿
 - 待拍板：先 push mock 修复，还是把剩余红一并收完再推
 - 远程：https://github.com/wll573/picoaide-harness-dev/actions/runs/38554161483
+
+## 续（Green-11）
+
+- push tip：`13878f84bd`（本文件所列 mock 修复已推）
+- 剩余 i18n / bootstrap / epoch / sentinel 红见 `验收/Gap-CI-Green-11.md`

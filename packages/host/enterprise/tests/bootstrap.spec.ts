@@ -195,6 +195,24 @@ describe('会话代际守卫（Z2-01）：迟到的 bootstrap 响应不得落地
     globalThis.fetch = vi.fn((input: unknown) => {
       const url = String(input)
       const key: 'A' | 'B' = url.startsWith('https://server-a') ? 'A' : 'B'
+      // Gap-CI-Green-11：sync 在 getBootstrap 之后还会打 managed policy / state。
+      // 本用例只钉 bootstrap 迟到响应的代际丢弃；其它同机请求立即回空策略/204，
+      // 避免 follow-on 把 B 的落地卡在第二个 pending 上。
+      if (!url.includes('/api/client/v2/config/bootstrap')) {
+        if (url.includes('/api/client/v2/management/policy')) {
+          return Promise.resolve(new Response(JSON.stringify({
+            user_id: 0, revision: 0, settings: {}, skills: [],
+          }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+        }
+        if (url.includes('/api/client/v2/management/state')) {
+          return Promise.resolve(new Response(JSON.stringify({}), {
+            status: 200, headers: { 'Content-Type': 'application/json' },
+          }))
+        }
+        return Promise.resolve(new Response(JSON.stringify({
+          error: { code: 'HTTP_404', message: 'not found' },
+        }), { status: 404, headers: { 'Content-Type': 'application/json' } }))
+      }
       return new Promise<Response>((resolve) => {
         const queue = pending.get(key) ?? []
         queue.push({ resolve })

@@ -379,7 +379,7 @@ export function renderLoginPage(locale: HostLocale): string {
           var md = await results[1].value.json()
           if (md && md.methods && md.methods.length) ms = md.methods
           // 老版本服务端/中间代理可能只返回 methods，没有 registration 字段。
-          // 只要本地账号方法明确可用，就兼容显示注册入口；真正提交时仍由
+          // 只要 name===local 且 configured 的方法明确可用，就兼容显示注册入口；真正提交时仍由
           // 服务端的自助注册开关和审核策略做最终校验。
           canRegister = md && md.registration
             ? md.registration.enabled === true

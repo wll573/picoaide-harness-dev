@@ -212,11 +212,17 @@ let perModelReasoningPatched = false
  */
 function installPerModelReasoning(ctx: Context): void {
   if (perModelReasoningPatched) return
-  perModelReasoningPatched = true
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const llm = (ctx as unknown as Record<string, unknown>).llm as any
+  // `inject` lists `llm`, so the real host always has it. Structure stubs used
+  // by bootstrap / session-sentinel specs often omit the service; skip rather
+  // than throw on Object.getPrototypeOf(undefined) before sync can register.
+  if (llm == null || typeof llm !== 'object') return
   const proto = Object.getPrototypeOf(llm)
+  if (proto == null || typeof proto.resolveModelInfo !== 'function') return
+
+  perModelReasoningPatched = true
 
   const originalResolve: (
     provider: string,

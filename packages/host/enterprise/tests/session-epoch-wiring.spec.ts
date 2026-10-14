@@ -206,6 +206,11 @@ const ENTRY_EXEMPTIONS: Readonly<Record<string, EntryExemption>> = {
     reason: 'FIX-40 ③ 收口、FIX-44 ② 复核为**等价机制**：上报是**事件归属**，不是"当前会话的投影" —— 事件发生在哪一代就记在哪一代名下，代际守卫会把换代窗口里的真实调用**整份丢掉**（既错记 vs 丢记，前者可修、后者不可观测）。机制 = **作用域在观察点、第一个 await 之前同步取**：两个观察点都先 `const session = ctx.picoSession.getSession()` 再 `void installedVersion(...)`，而 `reportSkillCall` 的去重键 `reportKey(session, …)` 自带账号 + 服务端地址 + 令牌 ⇒ 每条上报自带归属身份。判据 `tests/skill-telemetry-session-capture.spec.ts`（3 例；读文件由用例控闸，会话在读取期间从 ALICE 切到 BOB，断言这一笔仍记在 ALICE）。**负控**：把取用挪到 `installedVersion` 的续体里（修前形状）⇒ 同一份 spec 当场红（2026-09-23 实跑，日志 temp/r21/fix-44/probe/logs/nc-b-skill-telemetry.log）。**装代际是错的**：实测装上会让规则 C 对 `reportSkillCall`（`await fetchJSON`）与 `installedVersion`（`await readFile`）报红，而这两处 await 之后只返回值 / 只写"自带作用域身份的已报键集合"，没有跨代落地路径。',
     witness: 'const session = ctx.picoSession.getSession()',
   },
+  // Gap-CI-Green-11：托管策略轮询入口用本地 epoch 闸 interval，不是库代际。
+  'packages/host/enterprise/src/managed-policy.ts': {
+    reason: '`startManagedStateSync` 用本地 `epoch` 计数 + `current === epoch` 闸住 interval tick（换会话即清 timer、丢弃上一代 tick）；`load(session)` 闭包捕获的是回调当时那份 session。机制与 createSessionEpoch 同族但粒度是"定时轮询归属"。装库代际会把整文件拖进规则 C（大量非会话 await）。',
+    witness: 'current === epoch',
+  },
 }
 
 /**
@@ -273,6 +278,9 @@ const AWAIT_EXEMPTIONS: Readonly<Record<string, string>> = {
     '模块级的纯文件读取（`open`/`read`/`close`）：不读会话、不落状态，返回值由带代际的调用方判定。',
   'packages/host/desktop/src/updates.ts#disposeUpdates':
     'effect 收尾（dispose）：先置 `disposed` 再等在飞任务 settle —— 它的"代际判定"就是 `disposed` 本身，且此时任何结果都不该再落地。',
+  // Gap-CI-Green-11：per-model reasoning 原型补丁（不投影会话 settings）。
+  'packages/host/enterprise/src/bootstrap.ts#installPerModelReasoning$2':
+    '原型补丁 `resolveModelInfo`：await 原实现后只按模块级 `modelThinkingAdapterMap` 改写返回值（该 map 由带代际的 sync 同步重置/重建）。本层不读会话、不写 settings；不会把上一台租户的目录/令牌投影进当前会话。',
 }
 
 /**
