@@ -408,9 +408,12 @@ export function apply(ctx: Context): void {
   // 托管策略和网关模型目录需要周期性复核(管理员改了策略/技能授权/网关默认模型后,
   // 客户端不必重启或重新登录):每 30 秒重跑一次 sync;登出时清掉定时器。
   let managedTimer: ReturnType<typeof setInterval> | undefined
-  subscribeSession(ctx, (session) => {
+  const stopManagedTimer = (): void => {
     if (managedTimer !== undefined) clearInterval(managedTimer)
     managedTimer = undefined
+  }
+  subscribeSession(ctx, (session) => {
+    stopManagedTimer()
     void sync(session).catch((cause) => ctx.logger.error(cause))
     if (session !== null) {
       managedTimer = setInterval(() => {
@@ -418,4 +421,7 @@ export function apply(ctx: Context): void {
       }, BOOTSTRAP_SYNC_INTERVAL_MS)
     }
   })
+  // Gap-CI-Green-9：登出路径会清定时器，但 fiber.dispose 不一定再发一次 session=null。
+  // 把清定时器挂进 effect disposer，避免宿主退出后 30s sync 还在跑（烟测/CI 挂起同类）。
+  ctx.effect?.(() => () => { stopManagedTimer() })
 }

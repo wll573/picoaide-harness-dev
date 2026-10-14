@@ -62,13 +62,30 @@ process.env.DSH_HOME = home
 /** Canonical generation file names for every tagged generation (v0 is untagged). */
 const GENERATION_FILE = /^session(?:\.v[1-9][0-9]*)?\.jsonl(?:\.zstd)?$/u
 
-/** Locate the session's directory under the profile-owned session root. */
+/**
+ * Locate the session's directory under the account-scoped session root.
+ *
+ * Gap-Legacy-Full-Parity / account isolation pins `session-persistence-jsonl`
+ * under `accounts/<hash|signed-out>/sessions` (see `prepareDesktopProfile` +
+ * `accountDataRoot`). Smokes without a selected account land in `signed-out`.
+ * Keep the legacy `$DSH_HOME/sessions` walk as a fallback so a revert of the
+ * pin stays diagnosable.
+ */
 function findSessionDir(id) {
-  const root = join(home, 'sessions')
-  if (!existsSync(root)) return undefined
-  for (const project of readdirSync(root)) {
-    const dir = join(root, project, id)
-    if (existsSync(dir)) return dir
+  const roots = []
+  const accountsRoot = join(home, 'accounts')
+  if (existsSync(accountsRoot)) {
+    for (const account of readdirSync(accountsRoot)) {
+      roots.push(join(accountsRoot, account, 'sessions'))
+    }
+  }
+  roots.push(join(home, 'sessions'))
+  for (const root of roots) {
+    if (!existsSync(root)) continue
+    for (const project of readdirSync(root)) {
+      const dir = join(root, project, id)
+      if (existsSync(dir)) return dir
+    }
   }
   return undefined
 }
@@ -329,3 +346,6 @@ if (failed.length > 0) {
   console.error(failed.map(entry => `  ✗ ${entry.name} — ${entry.detail}`).join('\n'))
   process.exit(1)
 }
+// Same hang class as verify:profile (Gap-CI-Green-9): after fiber.dispose the
+// event loop can keep a stray request alive. Exit explicitly on success.
+process.exit(0)

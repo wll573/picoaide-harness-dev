@@ -19,7 +19,9 @@
  *   node scripts/check-workspaces.mjs --changed origin/master
  *   node scripts/check-workspaces.mjs --only dsh-plugin-desktop,@picoaide/dsh-cron
  *   node scripts/check-workspaces.mjs --list          # 只打印将执行的任务
- * 环境变量:CHECK_CONCURRENCY 覆盖并发数(默认 min(4, CPU 数))。
+ *   node scripts/check-workspaces.mjs --task-timeout-ms 1200000  # 单任务墙钟上限
+ * 环境变量:CHECK_CONCURRENCY 覆盖并发数(默认 min(4, CPU 数))；
+ *          CHECK_TASK_TIMEOUT_MS 覆盖单任务超时(默认 20 分钟，防 CI 静默吃满 1h)。
  */
 
 import { spawn } from 'node:child_process'
@@ -42,6 +44,8 @@ import { fileURLToPath } from 'node:url'
 
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)))
+/** Set in main() from --task-timeout-ms / CHECK_TASK_TIMEOUT_MS (see resolveTaskTimeoutMs). */
+let TASK_TIMEOUT_MS = 20 * 60 * 1000
 
 /**
  * "会改变语义"的旗标：出现在守卫 argv 里一律拒（R8-D-22 / R11-I1 接线）。
@@ -626,7 +630,7 @@ const GLOBAL_PREFIXES = [
 ]
 
 function parseArgs(argv) {
-  const options = { changed: null, only: null, list: false, concurrency: null, guards: true, help: false, fullOutput: false }
+  const options = { changed: null, only: null, list: false, concurrency: null, guards: true, help: false, fullOutput: false, taskTimeoutMs: null }
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]
     if (arg === '--changed') {
@@ -663,6 +667,16 @@ function parseArgs(argv) {
     } else if (arg === '--list') options.list = true
     else if (arg === '--no-guards') options.guards = false
     else if (arg === '--full-output') options.fullOutput = true
+    else if (arg === '--task-timeout-ms') {
+      const value = Number(argv[i + 1])
+      if (!Number.isSafeInteger(value) || value <= 0) {
+        console.error(`check-workspaces: --task-timeout-ms 需要正整数毫秒,收到 ${JSON.stringify(argv[i + 1])}`)
+        process.exitCode = 2
+        return null
+      }
+      options.taskTimeoutMs = value
+      i += 1
+    }
     else if (arg === '--help' || arg === '-h') options.help = true
     else {
       console.error(`check-workspaces: 未知参数 ${arg}`)
@@ -2217,12 +2231,35 @@ function runTask(task) {
       env: { ...process.env, FORCE_COLOR: '0', YARN_IGNORE_PATH: '1' },
     })
     let output = ''
+    let settled = false
+    const finish = (result) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timeoutHandle)
+      resolve(result)
+    }
+    const budget = TASK_TIMEOUT_MS
+    const timeoutHandle = budget > 0
+      ? setTimeout(() => {
+          killProcessTree(child)
+          finish({
+            task,
+            ok: false,
+            ms: Date.now() - started,
+            output: `${output}\ncheck-workspaces: task timed out after ${seconds(budget)}`
+              + ` (CHECK_TASK_TIMEOUT_MS / --task-timeout-ms; Gap-CI-Green-9)`,
+            code: null,
+            signal: 'SIGKILL',
+            timedOut: true,
+          })
+        }, budget)
+      : null
     child.stdout.on('data', chunk => { output += chunk })
     child.stderr.on('data', chunk => { output += chunk })
     child.on('error', error => {
       // C-15（2026-09-24 第十轮审计）：`code`/`signal` 必须一路带到失败块标题，
       // 否则「测试失败(1)」「用法错误(2)」「被信号杀(超时/OOM)」在日志里同形。
-      resolve({
+      finish({
         task,
         ok: false,
         ms: Date.now() - started,
@@ -2233,7 +2270,7 @@ function runTask(task) {
       })
     })
     child.on('close', (code, signal) => {
-      resolve({ task, ok: code === 0, ms: Date.now() - started, output, code, signal })
+      finish({ task, ok: code === 0, ms: Date.now() - started, output, code, signal })
     })
   })
 }
@@ -2241,6 +2278,33 @@ function runTask(task) {
 function seconds(ms) {
   return `${(ms / 1000).toFixed(1)}s`
 }
+
+/**
+ * Per-task wall-clock budget (Gap-CI-Green-9).
+ *
+ * CI redirects check-workspaces stdout/stderr into a verdict file, so a hung
+ * package prints nothing in the GitHub log until the job's 1h timeout cancels
+ * the step. A per-task budget fails loud with the task name instead of eating
+ * the whole job. Override with `--task-timeout-ms` or `CHECK_TASK_TIMEOUT_MS`.
+ * Default 20 minutes — above a healthy desktop check, below the 1h job cap.
+ */
+function resolveTaskTimeoutMs(options) {
+  if (options?.taskTimeoutMs != null) return options.taskTimeoutMs
+  const fromEnv = Number(process.env.CHECK_TASK_TIMEOUT_MS)
+  if (Number.isSafeInteger(fromEnv) && fromEnv > 0) return fromEnv
+  return 20 * 60 * 1000
+}
+
+function killProcessTree(child) {
+  if (child.pid === undefined || child.killed) return
+  try {
+    // Best-effort process-group kill (spawn uses detached:false; still try).
+    process.kill(-child.pid, 'SIGKILL')
+  } catch {
+    try { child.kill('SIGKILL') } catch { /* already gone */ }
+  }
+}
+
 
 /**
  * 记录一个失败任务的归属：`advisory` 任务只告警、不拦门禁。
@@ -2266,6 +2330,7 @@ async function runPool(tasks, limit, state) {
     for (;;) {
       const task = queue.shift()
       if (task === undefined) return
+      console.log(`▶ ${task.name.padEnd(28)} starting`)
       const result = await runTask(task)
       state.results.push(result)
       if (!result.ok) classifyFailure(result, state)
@@ -2288,6 +2353,7 @@ async function runScheduler(tasks, limit, state) {
   const succeeded = new Set(state.results.filter(r => r.ok).map(r => r.task.name))
 
   const start = task => {
+    console.log(`▶ ${task.name.padEnd(28)} starting`)
     const promise = runTask(task).then(result => {
       running.delete(task.name)
       state.results.push(result)
@@ -2440,8 +2506,10 @@ export async function main(argv = process.argv.slice(2)) {
 
   const envConcurrency = Number(process.env.CHECK_CONCURRENCY ?? '')
   const defaultConcurrency = Math.max(1, Math.min(4, availableParallelism()))
-  const concurrency = options.concurrency ??
-    (Number.isFinite(envConcurrency) && envConcurrency > 0 ? envConcurrency : defaultConcurrency)
+  const concurrency = options.concurrency
+    ?? (Number.isFinite(envConcurrency) && envConcurrency > 0 ? envConcurrency : defaultConcurrency)
+  TASK_TIMEOUT_MS = resolveTaskTimeoutMs(options)
+  console.log(`check-workspaces: per-task timeout ${seconds(TASK_TIMEOUT_MS)} (override: --task-timeout-ms / CHECK_TASK_TIMEOUT_MS)`)
 
   let selectedNames = null
   if (options.only !== null) {

@@ -842,10 +842,34 @@ try {
     + ' presets mount; directory picker; update tray; settings round-trip through'
     + ' config-editor reconcile; authenticated Web root + boot graph)\n',
   )
+} catch (error) {
+  // Catch here (not only let the rejection escape): the composition tree can leave
+  // open FSReqCallbacks / sockets after dispose, so a thrown assertion would still
+  // hang the process and silence CI for the full job budget (Gap-CI-Green-9).
+  console.error(error)
+  process.exitCode = 1
 } finally {
-  await ctx?.fiber.dispose()
+  try {
+    await ctx?.fiber.dispose()
+  } catch (disposeError) {
+    console.error(disposeError)
+    process.exitCode = 1
+  }
   releasePackageResolver?.()
-  rmSync(home, { recursive: true, force: true })
+  try {
+    rmSync(home, { recursive: true, force: true })
+  } catch {
+    // best-effort temp cleanup
+  }
   if (previousDshHome === undefined) delete process.env.DSH_HOME
   else process.env.DSH_HOME = previousDshHome
 }
+// Forceful exit: after a full profile boot, libuv can keep a stray FSReqCallback
+// (rimraf/unlink during plugin unload) that never settles on a natural exit —
+// locally reproduced as "capability section: passed" then silence until killed.
+// verify:renderer-capture / verify:licenses already exit explicitly; match them.
+if (process.exitCode && process.exitCode !== 0) {
+  process.exit(process.exitCode)
+}
+process.stdout.write('[verify-profile] PASS — assembled profile boot smoke ok\n')
+process.exit(0)
