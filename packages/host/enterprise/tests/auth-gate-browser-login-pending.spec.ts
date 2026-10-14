@@ -291,6 +291,7 @@ async function hostHarness(config: Partial<Config> = {}, current: Session | null
       isRestored: () => true,
       isLoggedIn: () => current !== null,
       getSession: () => current,
+      getLastServer: () => null,
       setSession: vi.fn(),
       clear: vi.fn(),
     },

@@ -17,7 +17,7 @@ function brandLiteral(html: string): string {
   return m![1]!
 }
 
-/** 内存版 Cordis 上下文：只实现 auth-gate 用到的那三个面。 */
+/** 内存版 Cordis 上下文：只实现 auth-gate 登录页用到的那几个面。 */
 function serveLoginPage(config: Config, loggedIn = false): string {
   let index: ((html: string) => string) | undefined
   const ctx = {
@@ -26,6 +26,7 @@ function serveLoginPage(config: Config, loggedIn = false): string {
       isRestored: () => true,
       isLoggedIn: () => loggedIn,
       getSession: () => null,
+      getLastServer: () => null,
     },
     webServer: {
       tapIndex: (cb: (html: string) => string) => { index = cb; return () => {} },

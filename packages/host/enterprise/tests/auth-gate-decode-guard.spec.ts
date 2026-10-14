@@ -95,6 +95,7 @@ function harness(session: Session | null): { call: (url: string, method: string)
       isRestored: () => true,
       isLoggedIn: () => session !== null,
       getSession: () => session,
+      getLastServer: () => null,
       setSession: vi.fn(),
       clear: vi.fn(),
     },

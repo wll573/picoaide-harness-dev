@@ -149,6 +149,7 @@ function harness(session: Session | null, fence?: ReturnType<typeof browserFence
       isRestored: () => true,
       isLoggedIn: () => session !== null,
       getSession: () => session,
+      getLastServer: () => null,
       setSession: vi.fn(),
       clear: vi.fn(),
     },

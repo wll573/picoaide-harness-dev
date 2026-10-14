@@ -47,6 +47,7 @@ function channelHandler(
       isRestored: () => true,
       isLoggedIn: () => session !== null,
       getSession: () => session,
+      getLastServer: () => null,
     },
     webServer: {
       tapIndex: () => () => {},

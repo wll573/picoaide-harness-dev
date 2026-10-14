@@ -74,6 +74,7 @@ function sessionHarness(
       isRestored: () => true,
       isLoggedIn: () => session !== null,
       getSession: () => session,
+      getLastServer: () => null,
       setSession,
       clear,
     },
@@ -306,6 +307,7 @@ describe('connection 服务查找(真 Cordis Context)', () => {
         isRestored: () => true,
         isLoggedIn: () => false,
         getSession: () => null,
+        getLastServer: () => null,
         setSession,
         clear: vi.fn(),
       },
@@ -342,6 +344,7 @@ describe('connection 缺席(真 Cordis Context)', () => {
     const ctx = root.extend({
       picoSession: {
         isRestored: () => true, isLoggedIn: () => false, getSession: () => null,
+        getLastServer: () => null,
         setSession, clear,
       },
       webServer: {
