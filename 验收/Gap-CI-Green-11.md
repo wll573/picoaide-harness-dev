@@ -12,4 +12,5 @@
   - Full gate 其它包/其它 job 未在本机整跑；以 push 后 CI 为准
   - `installPerModelReasoning` 在无 `llm` 替身上跳过是测试友好路径；真宿主仍靠 `inject: ['llm']`
   - managed-policy 入口走等价本地 epoch，未改成库 `createSessionEpoch`（装库代际会拖整文件进规则 C）
-- 远程：push 后填 CI URL
+- tip：`3d8f53218f`（`boss/shenji/intranet`）
+- 远程：https://github.com/wll573/picoaide-harness-dev/actions/runs/38655867287
