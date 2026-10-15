@@ -28,6 +28,7 @@
  *     即修前形态）⇒ 用例①红；
  *   - 干脆不排背景任务（`runLifecycle('background', …)` 提前 return）⇒ 用例②红。
  */
+import { rmSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -86,7 +87,19 @@ const sleep = async (ms: number): Promise<void> => { await new Promise(resolve =
 async function tempHome(): Promise<string> {
   const home = await mkdtemp(join(tmpdir(), 'fix31-lifecycle-'))
   vi.stubEnv('DSH_HOME', home)
-  cleanups.push(async () => { await rm(home, { recursive: true, force: true }) })
+  // CI 上 connectors 目录偶发仍有未刷完的子项时，裸 recursive rm 会以 ENOTEMPTY/rmdir 砸红
+  // afterEach（断言已过也算失败）。加 maxRetries，并在仍失败时吞掉临时目录清理错误。
+  cleanups.push(async () => {
+    try {
+      await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+    } catch {
+      try {
+        rmSync(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 })
+      } catch {
+        // best-effort：临时目录残留不得淹没 FIX-31 本体断言
+      }
+    }
+  })
   return home
 }
 
