@@ -32,11 +32,12 @@ Green-14/15 的 CDP 超时、suite hard timeout、nontag stage 登记均保留�
 ## 本机验证
 
 - `node --check` 上述四个 e2e 脚本 → OK
+- `node scripts/verify-ci-scripts.mjs` → OK
 - 完整 Electron E2E 需 Xvfb + 已打包 `dist/linux-unpacked`（本环境无产物）；正确性按旗标/诊断/重连路径推理
 
 ## push 记录
 
-- Tip SHA：（）
+- Tip SHA：`807daf5517`（功能）/ `f73191ce09`（验收补记）
 - 远程分支：`boss/shenji/intranet`
-- CI："'https://github.com/wll573/picoaide-harness-dev/actions/runs/38763253796'"
+- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38763253796
 - 推送时间：2026-10-15 23:46 CST（Asia/Shanghai）
