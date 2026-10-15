@@ -45,4 +45,7 @@
 
 ## push 记录
 
-- （commit / push 后填写 tip SHA + Actions URL）
+- Tip SHA：`14911fba40`（`fix(ci): Gap-CI-Green-12 intranet channel fallback without secrets`）
+- 远程分支：`boss/shenji/intranet`
+- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38748060617
+- 推送时间：2026-10-15 22:03 CST（Asia/Shanghai）
