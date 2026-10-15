@@ -27,6 +27,6 @@ Green-16/17/18 保留。
 
 ## push 记录
 
-- Tip SHA：`8a4dfe5d5935`（`8a4dfe5d59350e675ba5566a43c36b7df1c00eb0`）
+- Tip SHA：`eb890c72de5d`（验收补记；功能 tip `8a4dfe5d5935`）
 - 远程分支：`boss/shenji/intranet`
-- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38773832597
+- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38773878238（验收补记推送；功能推送 run 38773832597）
