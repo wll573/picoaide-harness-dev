@@ -53,6 +53,6 @@ Green-16–19 保留。未改产品 FootNav / AccountCard 源码（口径已是�
 
 ## push 记录
 
-- Tip SHA：`1f9e39972fea`
+- Tip SHA：`a8954881bc4f`
 - 远程分支：`boss/shenji/intranet`
-- CI：（push 后 `gh run list`）
+- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38777446442
