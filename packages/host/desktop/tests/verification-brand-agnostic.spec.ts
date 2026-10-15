@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { packagedProductName } from '../scripts/channel-build.ts'
+import { packagedProductName, packagedWindowTitle } from '../scripts/channel-build.ts'
 
 /**
  * 验证门禁不得把**厂商品牌**锁进发布链。
@@ -95,6 +95,32 @@ describe('verification gates are brand-agnostic', () => {
     // 验证期宁可 fail-loud:猜一个产品名去比对,等于给白标事故盖章。
     const dir = mkdtempChannelBuildDir('{ not json')
     expect(() => packagedProductName(dir)).toThrow(/不是合法 JSON/u)
+  })
+
+  it('reads window title separately from product_name slug (shenji 神机)', () => {
+    // Gap-CI-Green-20：product_name 常是 ASCII slug，document.title 用 window_title。
+    const dir = mkdtempChannelBuildDir({
+      channel_id: 'shenji',
+      identity: { display_name: '神机', title: '神机' },
+      desktop: { product_name: 'shenji', window_title: '神机' },
+    })
+    expect(packagedProductName(dir)).toBe('shenji')
+    expect(packagedWindowTitle(dir)).toBe('神机')
+  })
+
+  it('falls window title back through identity.title then display_name', () => {
+    const byTitle = mkdtempChannelBuildDir({
+      channel_id: 'acme',
+      identity: { display_name: 'Acme AI', title: 'Acme 助手' },
+      desktop: { product_name: 'acme' },
+    })
+    expect(packagedWindowTitle(byTitle)).toBe('Acme 助手')
+    const byDisplay = mkdtempChannelBuildDir({
+      channel_id: 'acme',
+      identity: { display_name: 'Acme AI' },
+      desktop: { product_name: 'acme' },
+    })
+    expect(packagedWindowTitle(byDisplay)).toBe('Acme AI')
   })
 })
 

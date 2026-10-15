@@ -184,9 +184,11 @@ const server = createServer((req, res) => {
       // USAGE_PAYLOAD_KEYS 一致(形状不符时 UsageService 会保持空态)。
       is_admin: false,
       monthly_usage: 1234, monthly_cost: 12.3,
-      today_usage: 0, today_cost: 0.5,
+      today_usage: 56, today_cost: 0.5,
       yesterday_usage: 0, yesterday_cost: 0,
-      total_usage: 0, total_cost: 25.6,
+      // 折叠行主数字读 total_usage；给非零值让 E2E 能量到 Token 主视觉（Gap-CI-Green-20）。
+      total_usage: 1234, total_cost: 25.6,
+      input_tokens: 800, output_tokens: 434,
       balance_money: 88.5, balance_activated: true, balance_enabled: true,
       balance_monthly: 100, balance_mode: 'add',
     }))

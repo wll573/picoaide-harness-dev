@@ -152,6 +152,12 @@ export function resolveBuildChannelId(env: NodeJS.ProcessEnv = process.env): str
 /** 渠道包里与编译期品牌相关的字段（全部可选）。 */
 export interface ChannelDesktopBranding {
   readonly productName?: string
+  /**
+   * 窗口 / document.title 用的展示名（`desktop.window_title` → `identity.title`
+   * → `identity.display_name`）。与 `productName`（安装包 slug 面，常为 ASCII）
+   * 刻意分开：shenji 渠道 product_name=`shenji`、window_title=`神机`。
+   */
+  readonly windowTitle?: string
   readonly slug?: string
   readonly appId?: string
   readonly shortcutName?: string
@@ -200,11 +206,15 @@ export function readChannelDesktopBranding(channelDir: string): ChannelDesktopBr
   const desktop = record(root.desktop)
   const identity = record(root.identity)
   const productName = text(desktop.product_name) ?? text(identity.display_name)
+  // 运行期 document.title / BrowserWindow title 走 window_title（见 desktop-channel.ts），
+  // 与 product_name（安装包/产物面）不是同一个字段 —— E2E 标题断言必须用前者。
+  const windowTitle = text(desktop.window_title) ?? text(identity.title) ?? text(identity.display_name)
   const slug = text(desktop.slug)
   const appId = text(desktop.app_id)
   const maintainer = text(desktop.maintainer)
   const result: {
     productName?: string
+    windowTitle?: string
     slug?: string
     appId?: string
     shortcutName?: string
@@ -216,6 +226,7 @@ export function readChannelDesktopBranding(channelDir: string): ChannelDesktopBr
     speechBundleModel?: boolean
   } = {}
   if (productName !== undefined) result.productName = productName
+  if (windowTitle !== undefined) result.windowTitle = windowTitle
   if (slug !== undefined) result.slug = slug
   if (appId !== undefined) result.appId = appId
   if (maintainer !== undefined) result.linuxMaintainer = maintainer
@@ -459,6 +470,30 @@ export function packagedProductName(buildDir?: string): string {
     // 与运行期同源:同一个文件名、同一套解析(readChannelDesktopBranding)。
     const name = readChannelDesktopBranding(dir).productName
     if (name !== undefined) return name
+  }
+  return OFFICIAL_BUILD_DEFAULTS.productName
+}
+
+/**
+ * 本次打包产物**窗口标题 / document.title** 声明 —— E2E 登录成功标题断言的唯一解析。
+ *
+ * 真源与运行期 `desktop-channel.ts` 一致：
+ * `desktop.window_title ?? identity.title ?? identity.display_name ?? product_name`。
+ *
+ * **为什么不能用 {@link packagedProductName}**：渠道常把 `desktop.product_name` 写成
+ * ASCII slug（安装包名 / executable，如 `shenji`），而窗口标题是中文展示名
+ * （`window_title`/`identity.title` = `神机`）。用 product_name 去对 `document.title`
+ * 会在白标渠道路径上永远红（Gap-CI-Green-20：`title=神机 expected=shenji`）。
+ * @param buildDir - `packages/host/desktop/build` 目录（默认仓库内该目录）。
+ * @returns 非空窗口标题。
+ * @throws 渠道包存在但不可解析时抛错（验证期 fail-loud，不猜）。
+ */
+export function packagedWindowTitle(buildDir?: string): string {
+  const dir = buildDir ?? join(defaultRepoRoot(), 'packages/host/desktop', 'build')
+  if (existsSync(join(dir, 'channel.json'))) {
+    const branding = readChannelDesktopBranding(dir)
+    if (branding.windowTitle !== undefined) return branding.windowTitle
+    if (branding.productName !== undefined) return branding.productName
   }
   return OFFICIAL_BUILD_DEFAULTS.productName
 }
