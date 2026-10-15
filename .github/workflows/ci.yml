@@ -1241,12 +1241,17 @@ jobs:
           name: desktop-Linux
           path: client-assets/**
           if-no-files-found: error
-      # 非 tag(PR/分支)也要有可下载产物:只传 official 那一份(品牌产物不在里面)。
+      # 非 tag(PR/分支)也要有可下载产物:按 channels.list 只 stage 白名单渠道
+      # (official|beta|shenji)。内网无 secrets 时 list=shenji，不再硬编码 official
+      # (Gap-CI-Green-14)。多品牌不得整包 client-assets/** 上公开 artifact。
+      - name: Stage non-tag client artifacts (channels.list whitelist)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: bash scripts/ci-stage-nontag-client-assets.sh --list channels.list --from client-assets --to nontag-client-assets
       - uses: actions/upload-artifact@v7
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           name: desktop-Linux
-          path: client-assets/official/**
+          path: nontag-client-assets/**
           if-no-files-found: error
       - uses: actions/upload-artifact@v7
         if: always()
@@ -1389,18 +1394,25 @@ jobs:
       # artifact 名中性(公开仓的 artifact 列表匿名可读,名字带渠道 id 即泄露客户名)。
       # 守卫与 linux job / macOS job 同源(2026-09-12 审计 P1-1):品牌渠道产物经
       # R2 中转、**只在 tag 上**被搬走,非 tag 时 client-assets/ 里仍有品牌目录
-      # ⇒ 无守卫的 upload 等于把客户品牌安装包公开。非 tag 只传 official。
+      # ⇒ 无守卫的 upload 等于把客户品牌安装包公开。非 tag 只传 channels.list
+      # 白名单(official|beta|shenji；见 ci-stage-nontag-client-assets.sh)。
       - uses: actions/upload-artifact@v7
         if: ${{ startsWith(github.ref, 'refs/tags/v') }}
         with:
           name: desktop-Windows-installer
           path: client-assets/**
           if-no-files-found: error
+      # 非 tag:与 linux 同源 —— channels.list 白名单 stage，不硬编码 official
+      # (Gap-CI-Green-14；内网 only-shenji 时 official/** 空路径会红)。
+      - name: Stage non-tag client artifacts (channels.list whitelist)
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        shell: bash
+        run: bash scripts/ci-stage-nontag-client-assets.sh --list channels.list --from client-assets --to nontag-client-assets
       - uses: actions/upload-artifact@v7
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
         with:
           name: desktop-Windows-installer
-          path: client-assets/official/**
+          path: nontag-client-assets/**
           if-no-files-found: error
 
   # macOS 单 job 三态:正式 tag(纯 vX.Y.Z)打包+签名+公证(可重试);预发 tag

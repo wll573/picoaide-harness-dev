@@ -123,7 +123,19 @@ function pickAppTarget(list) {
     ?? apps[0]
 }
 
-/** Minimal CDP client bound to the main application target. */
+/**
+ * Minimal CDP client bound to the main application target.
+ *
+ * Gap-CI-Green-14: every `send` must settle. When the target navigates away
+ * (auth-gate "restoring session" → login) or the app exits, the WebSocket
+ * closes and Chromium stops answering — without onclose/timeout the Promise
+ * hangs forever, the suite never reaches `run()`'s finally, and Node dies with
+ * "unsettled top-level await" (CI exit 13 on shenji-only Linux). Reject pending
+ * on close/error and bound each call so waitFor can fail clearly.
+ */
+const CDP_SEND_TIMEOUT_MS = 4000
+const CDP_OPEN_TIMEOUT_MS = 10000
+
 async function connectMain(port) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
   const main = pickAppTarget(list)
@@ -131,10 +143,32 @@ async function connectMain(port) {
   const ws = new WebSocket(main.webSocketDebuggerUrl)
   let id = 0
   const pending = new Map()
+  const rejectAll = (reason) => {
+    for (const [, p] of pending) p.rej(reason instanceof Error ? reason : new Error(String(reason)))
+    pending.clear()
+  }
   const send = (method, params = {}) => new Promise((res, rej) => {
+    if (ws.readyState !== WebSocket.OPEN) {
+      rej(new Error(`CDP WebSocket not open (readyState=${ws.readyState}) for ${method}`))
+      return
+    }
     const mid = ++id
-    pending.set(mid, { res, rej })
-    ws.send(JSON.stringify({ id: mid, method, params }))
+    const timer = setTimeout(() => {
+      if (!pending.has(mid)) return
+      pending.delete(mid)
+      rej(new Error(`CDP ${method} timed out after ${CDP_SEND_TIMEOUT_MS}ms`))
+    }, CDP_SEND_TIMEOUT_MS)
+    pending.set(mid, {
+      res: (value) => { clearTimeout(timer); res(value) },
+      rej: (err) => { clearTimeout(timer); rej(err) },
+    })
+    try {
+      ws.send(JSON.stringify({ id: mid, method, params }))
+    } catch (cause) {
+      pending.delete(mid)
+      clearTimeout(timer)
+      rej(cause instanceof Error ? cause : new Error(String(cause)))
+    }
   })
   ws.onmessage = data => {
     const msg = JSON.parse(data.data)
@@ -144,8 +178,60 @@ async function connectMain(port) {
       msg.error ? p.rej(new Error(msg.error.message)) : p.res(msg.result)
     }
   }
-  await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
+  let opened = false
+  ws.onclose = () => { rejectAll(new Error('CDP WebSocket closed')) }
+  ws.onerror = () => {
+    const err = new Error(opened ? 'CDP WebSocket error' : 'CDP WebSocket failed to open')
+    rejectAll(err)
+  }
+  await new Promise((res, rej) => {
+    const timer = setTimeout(() => {
+      rej(new Error(`CDP WebSocket open timed out after ${CDP_OPEN_TIMEOUT_MS}ms`))
+    }, CDP_OPEN_TIMEOUT_MS)
+    ws.onopen = () => { clearTimeout(timer); opened = true; res() }
+    const prior = ws.onerror
+    ws.onerror = () => {
+      clearTimeout(timer)
+      const err = new Error('CDP WebSocket failed to open')
+      if (typeof prior === 'function') prior()
+      rej(err)
+    }
+  })
+  // After open, keep rejectAll on subsequent socket errors.
+  ws.onerror = () => { rejectAll(new Error('CDP WebSocket error')) }
   return { ws, send }
+}
+
+/**
+ * Connect (and reconnect) until the auth-gate login step-1 form is present.
+ * Shenji / channel builds still serve #f1+#server; the hang was CDP dying on
+ * the transient restoring-session document, not a different selector.
+ */
+async function connectUntilLoginForm(port, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs
+  let lastErr = ''
+  while (Date.now() < deadline) {
+    let cdp
+    try {
+      cdp = await connectMain(port)
+      const slice = Math.min(5000, Math.max(500, deadline - Date.now()))
+      const ready = await waitFor(cdp, `!!document.getElementById('f1') && !!document.getElementById('server')`, slice, 300)
+      if (ready) return cdp
+      let snippet = ''
+      try {
+        snippet = await evalSafe(cdp, `(() => ({ title: document.title, hasBody: !!document.body, text: (document.body?.innerText ?? '').slice(0, 160) }))()`)
+        lastErr = `login form not ready yet: ${JSON.stringify(snippet)}`
+      } catch (cause) {
+        lastErr = cause instanceof Error ? cause.message : String(cause)
+      }
+      try { cdp.ws.close() } catch { /* ignore */ }
+    } catch (cause) {
+      lastErr = cause instanceof Error ? cause.message : String(cause)
+      try { cdp?.ws.close() } catch { /* ignore */ }
+    }
+    await wait(400)
+  }
+  throw new Error(`login form did not appear within ${timeoutMs}ms (${lastErr || 'no detail'})`)
 }
 
 let child = undefined
@@ -375,16 +461,15 @@ async function main() {
   if (!ready) throw new Error('app did not expose CDP within 30s')
   reportStep('应用启动并暴露 CDP', true, `port ${cdpPort}`)
 
-  const cdp = await connectMain(cdpPort)
-
   // 4. Log in against the mock gateway. The auth-gate serves a transient
   // "restoring session" page first (it re-requests the index after 1.2s), so
   // wait until the real login form (with a #f submit form) is present before
   // filling it — filling the restoring page would be wiped by its reload.
+  // Gap-CI-Green-14: connectUntilLoginForm reconnects when CDP dies on that
+  // navigation (神机/渠道包同样走 #f1+#server，不是另一套 brand selector)。
   // auth-gate 登录页已是两步式(2026-09):f1 服务端地址 → /api/pico/auth/methods
   // 探测 → f2 本地表单。e2e 脚本原按旧单页 #f 断言,2026-09-05 同步两步流程。
-  const step1Ready = await waitFor(cdp, `!!document.getElementById('f1') && !!document.getElementById('server')`, 15000, 300)
-  if (!step1Ready) throw new Error('login form did not appear within 15s')
+  const cdp = await connectUntilLoginForm(cdpPort, 45000)
   await evalSafe(cdp, `(() => {
     const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
     return set('server', 'http://127.0.0.1:${GATEWAY_PORT}')
@@ -1098,4 +1183,23 @@ async function run() {
   }
 }
 
-await run()
+// Hard ceiling so a hung CDP send can never leave top-level await unsettled
+// (Gap-CI-Green-14 CI: PASS CDP → silent hang → exit 13). Timer stays ref'd.
+const SUITE_HARD_TIMEOUT_MS = 12 * 60 * 1000
+const suiteWatchdog = setTimeout(() => {
+  console.error(`e2e-client: suite hard timeout after ${SUITE_HARD_TIMEOUT_MS}ms — forcing exit`)
+  try {
+    reportStep('e2e suite hard timeout', false, `${SUITE_HARD_TIMEOUT_MS}ms`)
+    const reportPath = join(PACKAGE_ROOT, '.e2e-report.md')
+    writeFileSync(reportPath, `# PicoAide Harness 客户端 E2E 报告\n\n- hard timeout after ${SUITE_HARD_TIMEOUT_MS}ms\n`)
+  } catch { /* best-effort */ }
+  try { if (child) child.kill('SIGKILL') } catch { /* ignore */ }
+  try { if (gateway) gateway.kill('SIGKILL') } catch { /* ignore */ }
+  process.exit(1)
+}, SUITE_HARD_TIMEOUT_MS)
+
+try {
+  await run()
+} finally {
+  clearTimeout(suiteWatchdog)
+}

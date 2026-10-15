@@ -6178,13 +6178,62 @@ exit 0
   check(afterB.includes('2.7.0'), `保留窗口必须含本次版本,实际 ${afterB.join(', ')}`)
 }
 
-// ---- 11. 品牌渠道产物不得进入**无 tag 守卫**的公开 artifact(2026-09-12 审计 P1-1) ----
+// ---- 10b. 非 tag 公开产物 stage（Gap-CI-Green-14）----
+//
+// 内网 only-shenji / 上游 official / fork 回落 official 都必须能 stage；品牌 id 必须拒。
+{
+  const script = join(root, 'scripts', 'ci-stage-nontag-client-assets.sh')
+  check(existsSync(script), 'ci-stage-nontag-client-assets.sh 必须存在')
+  const work = mkdtempSync(join(tmpdir(), 'nontag-stage-'))
+  try {
+    const from = join(work, 'client-assets')
+    const to = join(work, 'nontag-client-assets')
+    const list = join(work, 'channels.list')
+    mkdirSync(join(from, 'shenji'), { recursive: true })
+    writeFileSync(join(from, 'shenji', 'App.AppImage'), 'fake')
+    writeFileSync(list, 'shenji\n')
+    const shenji = spawnSync('bash', [script, '--list', list, '--from', from, '--to', to], { encoding: 'utf8' })
+    check(shenji.status === 0, `shenji-only stage 应成功，实际 ${String(shenji.status)}: ${shenji.stderr}`)
+    check(existsSync(join(to, 'shenji', 'App.AppImage')), '应 stage client-assets/shenji 产物')
+
+    rmSync(to, { recursive: true, force: true })
+    mkdirSync(join(from, 'official'), { recursive: true })
+    writeFileSync(join(from, 'official', 'App.AppImage'), 'official')
+    writeFileSync(list, 'official\n')
+    const official = spawnSync('bash', [script, '--list', list, '--from', from, '--to', to], { encoding: 'utf8' })
+    check(official.status === 0, `official stage 应成功，实际 ${String(official.status)}: ${official.stderr}`)
+    check(existsSync(join(to, 'official', 'App.AppImage')), '应 stage official 产物')
+
+    rmSync(to, { recursive: true, force: true })
+    writeFileSync(list, 'acme-brand\n')
+    mkdirSync(join(from, 'acme-brand'), { recursive: true })
+    writeFileSync(join(from, 'acme-brand', 'App.AppImage'), 'leak')
+    const brand = spawnSync('bash', [script, '--list', list, '--from', from, '--to', to], { encoding: 'utf8' })
+    check(brand.status !== 0, '品牌渠道 id 在非 tag stage 必须失败（防泄漏）')
+    check(`${brand.stderr ?? ''}`.includes('refuses brand channel'),
+      `品牌拒绝应点名 refuses brand channel，实际 ${JSON.stringify(brand.stderr)}`)
+
+    // fork 回落：无 list、仅有 official
+    rmSync(list, { force: true })
+    rmSync(to, { recursive: true, force: true })
+    const fork = spawnSync('bash', [script, '--list', list, '--from', from, '--to', to], { encoding: 'utf8' })
+    check(fork.status === 0, `无 list + official 目录应 fallback 成功，实际 ${String(fork.status)}: ${fork.stderr}`)
+    check(existsSync(join(to, 'official', 'App.AppImage')), 'fork fallback 应 stage official')
+  } finally {
+    rmSync(work, { recursive: true, force: true })
+  }
+}
+
+// ---- 11. 品牌渠道产物不得进入**无 tag 守卫**的公开 artifact(2026-09-12 审计 P1-1;
+//          Gap-CI-Green-14:非 tag 改为 nontag-client-assets/**，由 channels.list 白名单 stage) ----
 //
 // artifact 对任何登录账号可下载(公开仓尤其匿名可读),所以"品牌渠道产物不进公开
 // artifact"是定策;唯一把品牌目录搬出 `client-assets/` 的 transfer step 带
 // `startsWith(github.ref, 'refs/tags/v')` 守卫 ⇒ **分支/PR 上它被跳过**。
 // 于是同一轮里 `upload-artifact` 成了唯一出口:它自己必须带同源守卫,且非 tag 时
-// 只上传 official。这条只能静态检查(本地跑不了 GitHub Actions),所以放在这里。
+// 只上传 `nontag-client-assets/**`（scripts/ci-stage-nontag-client-assets.sh 从
+// channels.list 拷贝 official|beta|shenji；内网 only-shenji 不再硬要求 official）。
+// 这条只能静态检查(本地跑不了 GitHub Actions),所以放在这里。
 {
   const workflowPath = join(root, '.github', 'workflows', 'ci.yml')
   const text = readFileSync(workflowPath, 'utf8')
@@ -6241,24 +6290,34 @@ exit 0
   }
   check(uploads.length >= 4, `未解析出 ci.yml 的 artifact 上传步骤(扫描器可能已失效),实际 ${uploads.length}`)
 
-  // 上传整份 client-assets/** 的步骤必须带 tag 守卫:非 tag 上传的只能是 official。
+  // 上传整份 client-assets/** 的步骤必须带 tag 守卫。
+  // 非 tag 必须走 nontag-client-assets/**（白名单 stage），不得硬编码只认 official
+  // （内网 only-shenji 时 official 空路径会红），也不得上传裸 client-assets/**。
   const brandFacing = uploads.filter(upload => upload.path.includes('client-assets/'))
   check(brandFacing.length >= 3, `未解析出 client-assets 的 artifact 上传步骤(三个平台各一条),实际 ${brandFacing.length}`)
   for (const upload of brandFacing) {
+    const nontagStaged = upload.path.startsWith('nontag-client-assets/')
     const officialOnly = upload.path.startsWith('client-assets/official/')
     check(
-      officialOnly || tagGuarded(upload.condition),
+      nontagStaged || officialOnly || tagGuarded(upload.condition),
       `ci.yml:${upload.line} (job ${upload.job}) 把 client-assets/** 传进公开 artifact 却没有 tag 守卫`
         + `(非 tag 时品牌渠道产物还在目录里 ⇒ 客户身份泄漏;if: ${upload.condition || '<无>'})`,
     )
-    if (officialOnly) {
+    if (nontagStaged || officialOnly) {
       check(
         upload.condition.includes('!startsWith(github.ref'),
-        `ci.yml:${upload.line} (job ${upload.job}) 只传 official 的 fallback 必须在**非 tag** 时生效(if: ${upload.condition || '<无>'})`,
+        `ci.yml:${upload.line} (job ${upload.job}) 非 tag fallback 上传必须在**非 tag** 时生效(if: ${upload.condition || '<无>'})`,
       )
     }
   }
-  // 三个平台各自都要有"tag 传全量 / 非 tag 传 official"这一对,缺一个平台就是一条泄漏面。
+  // staging 脚本必须存在且被 linux/windows 非 tag 步骤调用。
+  const stageScript = join(root, 'scripts', 'ci-stage-nontag-client-assets.sh')
+  check(existsSync(stageScript), 'scripts/ci-stage-nontag-client-assets.sh 必须存在(非 tag 公开产物白名单出口)')
+  check(
+    text.includes('ci-stage-nontag-client-assets.sh'),
+    'ci.yml 非 tag 上传前必须调用 ci-stage-nontag-client-assets.sh',
+  )
+  // 三个平台各自都要有"tag 传全量 / 非 tag 传白名单 stage"这一对。
   for (const artifact of ['desktop-Linux', 'desktop-Windows-installer']) {
     const names = []
     for (const [id, steps] of jobs) {
@@ -6274,8 +6333,11 @@ exit 0
       `${artifact} 的 tag 上传必须覆盖 client-assets/(品牌产物由 transfer 搬走后剩下的 official/beta)`,
     )
     check(
-      names.some(entry => (entry.keys.get('path') ?? '').startsWith('client-assets/official/')),
-      `${artifact} 非 tag 时必须有一个只传 client-assets/official/** 的上传步骤(每个提交都要有可下载产物)`,
+      names.some(entry => {
+        const p = entry.keys.get('path') ?? ''
+        return p.startsWith('nontag-client-assets/') || p.startsWith('client-assets/official/')
+      }),
+      `${artifact} 非 tag 时必须上传 nontag-client-assets/**（channels.list 白名单 stage；兼容旧 official/**）`,
     )
   }
 }
