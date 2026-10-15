@@ -94,6 +94,25 @@ esac
 # official",绝不能因为名字像 tag 就把品牌渠道发出去。
 SOURCE="${CI_CHANNELS_SOURCE:-}"
 
+# 仓库根（脚本所在仓）。内网 fallback 与素材文件名清单都按它定位 —— 不能用调用方 cwd
+# （verify-ci-scripts 在临时目录跑本脚本）。
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# 内网 fork 无 secrets 时的默认渠道包（Gap-CI-Green-12）：跟踪在
+# packaging/intranet-channel/<id>/，不入库 channels/。凭据形态为 none 且未设
+# CI_CHANNELS_SOURCE 时，用这份包物化 channels/<id>，而不是 fail-loud 整条 Desktop。
+# 有 token/ssh/url/source 时本路径不介入，私有仓行为不变。
+INTRANET_CHANNEL_ID="${CI_INTRANET_CHANNEL_ID:-shenji}"
+INTRANET_PACK_DIR="${CI_INTRANET_PACK_ROOT:-$REPO_ROOT/packaging/intranet-channel}/${INTRANET_CHANNEL_ID}"
+# gate --resolve-only 在无凭据时输出的稳定本地 pin；Desktop 以 CI_CHANNELS_PIN 收下后
+# 走同一条 fallback（不是 40-hex，不得进 require_pin_shape / 远端 fetch）。
+INTRANET_LOCAL_PIN="intranet-local"
+INTRANET_FALLBACK=0
+
+intranet_pack_available() {
+  [ -f "${INTRANET_PACK_DIR}/channel.json" ]
+}
+
 # 渠道 id 形状(与客户端 CHANNEL_ID_PATTERN / 服务端 IsChannelID 同源)。
 ID_PATTERN='^[a-z0-9][a-z0-9-]{0,31}$'
 
@@ -330,6 +349,13 @@ require_pin_shape() {
 # 那一行(`>> "$GITHUB_OUTPUT"` 直接消费),说明性文字一律走 stderr。
 if [ "$RESOLVE_ONLY" -eq 1 ]; then
   if [ "$(credential_form)" = "none" ]; then
+    # 内网 fork：无 secrets 时用跟踪中的 intranet 包给出稳定本地 pin，避免 gate/Desktop
+    # 因缺 CHANNELS_REPO_* 整条红。有凭据时不走这里。
+    if intranet_pack_available; then
+      printf 'channels_rev=%s\n' "$INTRANET_LOCAL_PIN"
+      echo "channel packages revision resolved (intranet-local; no private-repo credentials)" >&2
+      exit 0
+    fi
     echo "::error::缺少读渠道仓的凭据（CHANNELS_REPO_TOKEN 或 CHANNELS_REPO_SSH_KEY）—— 无法读取私有渠道仓 ${REPO}" >&2
     echo "::error::推荐形态是只读 SSH deploy key（secret CHANNELS_REPO_SSH_KEY，不过期、只对那一个仓）；" >&2
     echo "::error::兼容形态是细粒度 PAT（secret CHANNELS_REPO_TOKEN，需该仓 Contents:Read，会过期）" >&2
@@ -377,11 +403,23 @@ if [ -n "$SOURCE" ]; then
   stage_from "$SOURCE"
 else
   if [ "$(credential_form)" = "none" ]; then
-    echo "::error::缺少读渠道仓的凭据（CHANNELS_REPO_TOKEN 或 CHANNELS_REPO_SSH_KEY）—— 无法读取私有渠道仓 ${REPO}" >&2
-    echo "::error::推荐形态是只读 SSH deploy key（secret CHANNELS_REPO_SSH_KEY，不过期、只对那一个仓）；" >&2
-    echo "::error::兼容形态是细粒度 PAT（secret CHANNELS_REPO_TOKEN，需该仓 Contents:Read，会过期）" >&2
-    exit 1
-  fi
+    if intranet_pack_available; then
+      # 物化跟踪中的内网默认包 → channels/<id>（不入库；与 stage_from 的私有仓
+      # 布局不同：intranet 包目录本身就是 channel.json 所在层）。
+      echo "channel packages materialized from intranet pack (no private-repo credentials)" >&2
+      rm -rf "$DEST"
+      mkdir -p "$DEST/$INTRANET_CHANNEL_ID"
+      cp -a "$INTRANET_PACK_DIR/." "$DEST/$INTRANET_CHANNEL_ID/"
+      CHECKOUT_ROOT="$(cd "$(dirname "$INTRANET_PACK_DIR")" && pwd)"
+      CHANNELS_FROM_REMOTE=0
+      INTRANET_FALLBACK=1
+    else
+      echo "::error::缺少读渠道仓的凭据（CHANNELS_REPO_TOKEN 或 CHANNELS_REPO_SSH_KEY）—— 无法读取私有渠道仓 ${REPO}" >&2
+      echo "::error::推荐形态是只读 SSH deploy key（secret CHANNELS_REPO_SSH_KEY，不过期、只对那一个仓）；" >&2
+      echo "::error::兼容形态是细粒度 PAT（secret CHANNELS_REPO_TOKEN，需该仓 Contents:Read，会过期）" >&2
+      exit 1
+    fi
+  else
   # **发布 tag 上必须 pin**(2026-09-23 第五轮审计 R5-C-2):pin 由 gate 的
   # `--resolve-only` 解析一次,四个调用点(三平台 job + release job)共用 ⇒ 同一次 tag
   # 的包内客户端与镜像内渠道内容同源、同一源码 tag 可复现。缺 pin 时**不能静默退回**
@@ -452,6 +490,7 @@ else
     CHANNELS_FROM_REMOTE=1
     echo "channel packages fetched (revision $(git -C "$CLONE" rev-parse HEAD 2>/dev/null || echo unknown))"
   fi
+  fi  # credential_form != none
 fi
 
 # 枚举渠道目录并**逐个掩码**。
@@ -597,7 +636,11 @@ CHANNEL_SET="$(bash "$POLICY" --ref "${GITHUB_REF:-}" --ref-name "$RAW_REF_NAME"
 # "静默缩小 ⇒ 红"的能力一点没少（`verify-ci-scripts.mjs` 的 C-07 用真 git 仓库 + pin 走生产
 # 路径验它；另有一条静态判据断言**没有任何 workflow 设置 CI_CHANNELS_SOURCE**）。
 if [ "$CHANNELS_FROM_REMOTE" -ne 1 ]; then
-  echo "::notice::本次内容来自本地检出(CI_CHANNELS_SOURCE) ⇒ 跳过「渠道目录数下限」判定：该判据只针对**远端取源**（clone/pin，生产链的形态）—— 本地夹具/合成渠道仓的目录数天然小于真实渠道仓，在这里判红会让逐渠道字段校验看不到自己的错误" >&2
+  if [ "$INTRANET_FALLBACK" -eq 1 ]; then
+    echo "::notice::本次内容来自内网跟踪包(packaging/intranet-channel；无 private-repo credentials) ⇒ 跳过「渠道目录数下限」判定：该判据只针对远端取源（clone/pin）" >&2
+  else
+    echo "::notice::本次内容来自本地检出(CI_CHANNELS_SOURCE) ⇒ 跳过「渠道目录数下限」判定：该判据只针对**远端取源**（clone/pin，生产链的形态）—— 本地夹具/合成渠道仓的目录数天然小于真实渠道仓，在这里判红会让逐渠道字段校验看不到自己的错误" >&2
+  fi
 elif [ "${#FOUND[@]}" -lt "$MIN_EXPECTED_CHANNELS" ]; then
   if [ "$CHANNEL_SET" = "all" ]; then
     echo "::error::渠道仓里的渠道目录数(${#FOUND[@]})少于登记下限(${MIN_EXPECTED_CHANNELS})：正式 tag 的语义是「所有渠道都发布」，少一个目录就有一个渠道静默拿不到交付物(流水线却全绿)。先核对本次 pin 的 revision 与渠道仓目录是否完整；确属渠道下线时，必须在同一次改动里显式下调 scripts/ci-channels.sh 的 MIN_EXPECTED_CHANNELS" >&2
@@ -615,6 +658,13 @@ case "$CHANNEL_SET" in
   *)
     SELECTED=("official") ;;
 esac
+
+# 内网 fallback：私有仓不可读时只构建跟踪中的默认渠道（shenji）。非 tag 的
+# channel_set=official 会选不存在的 official；正式 tag 的 all 也只有这一份包 ——
+# 统一钉死为 INTRANET_CHANNEL_ID，避免缺目录 fail-loud 把 Desktop 打红。
+if [ "$INTRANET_FALLBACK" -eq 1 ]; then
+  SELECTED=("$INTRANET_CHANNEL_ID")
+fi
 
 # 名字像发布 tag、但 ref **不是** tag:最常见的来源是"把 tag 名当分支推了"
 # (`git push origin v2.7.3` 少了 `refs/tags/`,或从 tag 建了同名分支)。按上面的
@@ -644,7 +694,7 @@ fi
 # 这里读它而不是再写一份字面量:输入侧(本脚本)与打包侧(brand-prepare.mjs)必须
 # 同名,否则托盘位图与随包内联 logo 会取**两个**文件(同一个包里两套品牌,
 # 2026-09-26 审计 Z3-3 的第 3 个触发形态)。
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# REPO_ROOT 已在脚本前部设定（内网 fallback / 素材清单共用）。
 if ! CHANNEL_ASSET_FILES="$(node -e '
   import(require("node:url").pathToFileURL(process.argv[1]).href).then((mod) => {
     const files = mod.CHANNEL_ASSET_FILES

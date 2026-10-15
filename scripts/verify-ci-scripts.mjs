@@ -10,7 +10,8 @@
  * 覆盖:
  *   1. tag → 渠道集策略(正式 tag 全发、beta tag 只发 beta、非 tag 只发 official)
  *   2. 渠道枚举的掩码与定序(official 置顶)、不合规目录被跳过且**不打印名字**
- *   3. 缺 token / 渠道仓结构不符 / 缺 channel.json → fail-loud；渠道字段(品牌 +
+ *   3. 缺 token 且无 intranet 包 / 渠道仓结构不符 / 缺 channel.json → fail-loud；
+ *      缺 token 但有 packaging/intranet-channel/<id> → 物化默认渠道（Gap-CI-Green-12）；渠道字段(品牌 +
  *      `desktop.app_origin_scheme`)的必填/形状/保留字/跨渠道唯一也在这里拦,
  *      且失败信息**只报字段名不回显取值**(取值就是客户品牌,输出进公开日志)
  *   4. 逐渠道打包:官方保留完整日志、渠道输出被抑制、失败只报中性信息
@@ -2047,9 +2048,21 @@ function runChannels({ source, refName = '', ref, dest, list, env = {}, args = [
     check(`${tokenForm.stderr ?? ''}`.includes('channels credential form: token'), 'PAT 形态应报 token')
     check(!`${tokenForm.stdout ?? ''}${tokenForm.stderr ?? ''}`.includes('FAKEPAT-TOKEN-MARKER'),
       '凭据形态那行只报形态，不得回显凭据内容')
+    // Gap-CI-Green-12：本仓跟踪了 packaging/intranet-channel/shenji 时，无凭据的
+    // --resolve-only 回落稳定本地 pin，不再 fail-loud（Desktop/gate 无 secrets 可绿）。
+    // 强制把 pack root 指到空目录时仍必须 fail-loud（防"永远成功"）。
     const noneForm = resolveOnly({})
     check(`${noneForm.stderr ?? ''}`.includes('channels credential form: none'), '无凭据时应报 none')
-    check(noneForm.status !== 0, '无凭据必须 fail-loud')
+    check(noneForm.status === 0, `有 intranet 包时无凭据 --resolve-only 应成功（intranet-local），实际 ${String(noneForm.status)}：${noneForm.stderr}`)
+    check((noneForm.stdout ?? '').trim() === 'channels_rev=intranet-local',
+      `--resolve-only 无凭据时应输出 channels_rev=intranet-local，实际 ${JSON.stringify(noneForm.stdout)}`)
+    check(`${noneForm.stderr ?? ''}`.includes('intranet-local'),
+      '无凭据 --resolve-only 成功时应在 stderr 说明用了 intranet-local')
+    const noneMissingPack = resolveOnly({ CI_INTRANET_PACK_ROOT: join(tempDir('ci-no-intranet-'), 'missing') })
+    check(noneMissingPack.status !== 0, '无凭据且无 intranet 包时 --resolve-only 必须 fail-loud')
+    check(`${noneMissingPack.stderr ?? ''}`.includes('CHANNELS_REPO_TOKEN')
+      || `${noneMissingPack.stderr ?? ''}`.includes('CHANNELS_REPO_SSH_KEY'),
+      '无 intranet 包时失败信息应指明缺失的 secret')
     const sourceForm = runChannels({
       source: fakeChannelRepo(['official']),
       refName: 'ci-probe',
@@ -2981,9 +2994,62 @@ function runChannels({ source, refName = '', ref, dest, list, env = {}, args = [
 
 // ---- 3. fail-loud 分支 ----
 {
-  const noToken = runChannels({ source: undefined, refName: 'v2.7.0', dest: 'channels', list: 'e.list' })
-  check(noToken.status !== 0, '没有渠道仓令牌时必须失败(不得静默按官方发)')
-  check(noToken.stderr.includes('CHANNELS_REPO_TOKEN'), '失败信息应指明缺失的 secret')
+  // Gap-CI-Green-12：无凭据时若跟踪了 intranet 包 → 物化 shenji 并成功；
+  // 强制无 pack 时仍 fail-loud（不得静默按官方发）。
+  const noTokenMissingPack = runChannels({
+    source: undefined,
+    refName: 'v2.7.0',
+    dest: 'channels',
+    list: 'e.list',
+    env: { CI_INTRANET_PACK_ROOT: join(tempDir('ci-no-intranet-pack-'), 'missing') },
+  })
+  check(noTokenMissingPack.status !== 0, '没有渠道仓令牌且无 intranet 包时必须失败(不得静默按官方发)')
+  check(noTokenMissingPack.stderr.includes('CHANNELS_REPO_TOKEN')
+    || noTokenMissingPack.stderr.includes('CHANNELS_REPO_SSH_KEY'),
+    '失败信息应指明缺失的 secret')
+
+  const intranetFallback = runChannels({
+    source: undefined,
+    refName: 'ci-probe',
+    ref: 'refs/heads/ci-probe',
+    dest: 'channels',
+    list: 'intranet-fallback.list',
+  })
+  check(intranetFallback.status === 0,
+    `无凭据但有 intranet 包时应成功物化默认渠道，实际 ${String(intranetFallback.status)}：${intranetFallback.stderr}`)
+  check(JSON.stringify(intranetFallback.selected) === JSON.stringify(['shenji']),
+    `内网 fallback 的 channels.list 必须只有 shenji，实际 ${JSON.stringify(intranetFallback.selected)}`)
+  check(intranetFallback.stderr.includes('materialized from intranet pack')
+    || intranetFallback.stderr.includes('intranet pack'),
+    '内网 fallback 必须打中性日志说明用了 tracking pack（无 secrets）')
+  // 正式 tag 上同样只发 shenji（只有这一份跟踪包），不得因 channel_set=all/official 去找官方目录。
+  const intranetTag = runChannels({
+    source: undefined,
+    refName: 'v9.9.9',
+    ref: 'refs/tags/v9.9.9',
+    dest: 'channels',
+    list: 'intranet-tag.list',
+  })
+  check(intranetTag.status === 0,
+    `无凭据正式 tag + intranet 包应成功，实际 ${String(intranetTag.status)}：${intranetTag.stderr}`)
+  check(JSON.stringify(intranetTag.selected) === JSON.stringify(['shenji']),
+    `内网 fallback 正式 tag 仍只选 shenji，实际 ${JSON.stringify(intranetTag.selected)}`)
+
+  // 有凭据时不得走 intranet fallback（仍走 clone；这里用坏 URL 证明仍尝试远端）。
+  const withTokenStillRemote = runChannels({
+    source: undefined,
+    refName: 'ci-probe',
+    ref: 'refs/heads/ci-probe',
+    dest: 'channels',
+    list: 'with-token.list',
+    env: {
+      CHANNELS_REPO_TOKEN: 'FAKEPAT-KEEP-REMOTE',
+      CI_CHANNELS_URL: 'https://example.invalid/picoaide/channels.git',
+    },
+  })
+  check(withTokenStillRemote.status !== 0, '有 token 时必须走远端克隆路径（坏 URL 应失败），不得静默回落 intranet')
+  check(!withTokenStillRemote.stderr.includes('materialized from intranet pack'),
+    '有凭据时不得打印 intranet pack 物化日志')
 
   const wrongStructure = tempDir('ci-channels-bad-')
   mkdirSync(join(wrongStructure, 'not-channels'), { recursive: true })
