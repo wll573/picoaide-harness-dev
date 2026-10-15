@@ -1217,14 +1217,23 @@ jobs:
       - name: Collect E2E report & screenshots
         if: always()
         run: |
-          # errexit 不适用:本块要逐个尝试收集三份证据再上传(见 BLOCK_ERREXIT_ALLOWLIST)。
+          # errexit 不适用:本块要逐个尝试收集多份证据再上传(见 BLOCK_ERREXIT_ALLOWLIST)。
           # upload-artifact v4+ 不收录点开头文件/目录(.e2e-report.md/.e2e-shots),
           # 复制并重命名为非点名称再上传(2026-09-06 两轮实测缺失)。
           mkdir -p packages/host/desktop/e2e-results
-          cp packages/host/desktop/.e2e-report.md packages/host/desktop/e2e-results/e2e-report.md 2>/dev/null || true
-          cp packages/host/desktop/.e2e-app.log packages/host/desktop/e2e-results/e2e-app.log 2>/dev/null || true
-          cp -r packages/host/desktop/.e2e-shots packages/host/desktop/e2e-results/shots 2>/dev/null || true
-          cp -r packages/host/desktop/.e2e-sidebar/shots packages/host/desktop/e2e-results/sidebar-shots 2>/dev/null || true
+          # 文件/目录可能不存在（e2e 早死或未跑到）——用 if/[ -f|-d ] 显式跳过，禁止 || true 吞码（SK-7a）。
+          if [ -f packages/host/desktop/.e2e-report.md ]; then
+            cp packages/host/desktop/.e2e-report.md packages/host/desktop/e2e-results/e2e-report.md
+          fi
+          if [ -f packages/host/desktop/.e2e-app.log ]; then
+            cp packages/host/desktop/.e2e-app.log packages/host/desktop/e2e-results/e2e-app.log
+          fi
+          if [ -d packages/host/desktop/.e2e-shots ]; then
+            cp -r packages/host/desktop/.e2e-shots packages/host/desktop/e2e-results/shots
+          fi
+          if [ -d packages/host/desktop/.e2e-sidebar/shots ]; then
+            cp -r packages/host/desktop/.e2e-sidebar/shots packages/host/desktop/e2e-results/sidebar-shots
+          fi
       # artifact 名保持**中性**(不含渠道名):公开仓的 artifact 列表是匿名可读的
       # (实测),名字里带渠道 id 就等于公开客户名。
       # 2026-09-10 审计后**内容也不再含品牌渠道**:品牌渠道的安装包经 R2 私密中转

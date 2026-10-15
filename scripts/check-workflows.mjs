@@ -431,15 +431,15 @@ const BLOCK_ERREXIT_ALLOWLIST = [
   {
     file: 'ci.yml',
     key: 'block-errexit:desktop-linux:Collect E2E report & screenshots',
-    // 为什么这个块**必须跑完再汇总**:它要收集的是**三份互相独立**的证据
-    // (e2e 报告 / e2e 截图 / 右栏 e2e 截图),而这三份在失败路径上**本来就可能缺**
-    // —— `run` 的三条 `cp` 因此都带 `|| true`。开 errexit 的后果是:第一份缺失
-    // (最常见)就让 step 立刻红,后两份**来得及上传的证据也一起丢**,而这一步的
-    // 唯一职责恰恰是"失败也把证据留下来"(step 上是 `if: always()`)。
-    reason: '证据收集步骤(`if: always()`):三份证据(报告/截图/右栏截图)在失败路径上'
+    // 为什么这个块**必须跑完再汇总**:它要收集的是**多份互相独立**的证据
+    // (e2e 报告 / app 日志 / e2e 截图 / 右栏 e2e 截图),而这几份在失败路径上**本来就可能缺**
+    // —— `run` 用 `if [ -f|-d ]; then cp; fi` 显式跳过缺失项(禁止 || true 吞码)。
+    // 开 errexit 的后果是:第一份缺失(最常见)就让 step 立刻红,后几份**来得及上传的证据也一起丢**,
+    // 而这一步的唯一职责恰恰是"失败也把证据留下来"(step 上是 `if: always()`)。
+    reason: '证据收集步骤(`if: always()`):多份证据(报告/app日志/截图/右栏截图)在失败路径上'
       + '本来就可能缺失,必须**逐个尝试收集完**再一次上传;开 errexit 会让第一份缺失就中断,'
-      + '把后两份能拿到的证据一起丢掉 —— 而"失败也留证据"正是这一步存在的全部理由。'
-      + '三条 `cp … || true` 已逐条登记在 SWALLOW_ALLOWLIST。',
+      + '把后几份能拿到的证据一起丢掉 —— 而"失败也留证据"正是这一步存在的全部理由。'
+      + '缺失项用 if/[ -f|-d ] 显式跳过,不再依赖 SWALLOW_ALLOWLIST 的 || true。',
   },
   {
     file: 'notary-probe.yml',
@@ -1172,22 +1172,6 @@ const SWALLOW_ALLOWLIST = [
     file: 'ci.yml',
     signature: 'rm -rf "$PG18_MOUNT" 2>/dev/null || true',
     reason: '清理:$RUNNER_TEMP 下的临时挂载目录,退出路径上尽力删除;失败不影响任何验证结论。',
-  },
-  {
-    file: 'ci.yml',
-    signature: 'cp packages/host/desktop/.e2e-report.md packages/host/desktop/e2e-results/e2e-report.md 2>/dev/null || true',
-    reason: '证据收集(step 是 `if: always()`,只为"失败也留证据"):e2e 失败时点开头的报告文件'
-      + '本来就可能不存在,复制失败不应把这一步变红 —— 否则会盖掉 e2e 本身的失败原因。',
-  },
-  {
-    file: 'ci.yml',
-    signature: 'cp -r packages/host/desktop/.e2e-shots packages/host/desktop/e2e-results/shots 2>/dev/null || true',
-    reason: '同上:e2e 截图目录在失败/超时路径上可能不存在,证据收集不得反过来掩盖被测失败。',
-  },
-  {
-    file: 'ci.yml',
-    signature: 'cp -r packages/host/desktop/.e2e-sidebar/shots packages/host/desktop/e2e-results/sidebar-shots 2>/dev/null || true',
-    reason: '同上:右栏 e2e 截图目录在失败路径上可能不存在,证据收集不得反过来掩盖被测失败。',
   },
 ]
 
