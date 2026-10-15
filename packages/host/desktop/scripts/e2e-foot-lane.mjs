@@ -47,6 +47,11 @@ const DISPLAY = process.env.DISPLAY ?? ':99'
 if (!existsSync(APP)) { console.error(`[probe] app not found: ${APP}`); process.exit(2) }
 rmSync(OUT, { recursive: true, force: true })
 for (const dir of [HOME_DIR, join(RUN_DIR, 'cfg'), join(RUN_DIR, 'cache'), SHOTS]) mkdirSync(dir, { recursive: true })
+// Gap-CI-Green-19: pre-seed account-data so first login skips activate→relaunch.
+writeFileSync(join(HOME_DIR, 'account-data.json'), JSON.stringify({
+  serverURL: `http://127.0.0.1:34567`,
+  username: 'admin',
+}), { mode: 0o600 })
 
 const wait = ms => new Promise(r => { setTimeout(r, ms) })
 /**
@@ -88,7 +93,7 @@ if (!ATTACH && SERVER === '') {
 
 let child
 if (!ATTACH) {
-  child = spawn(APP, ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--lang=zh-CN', `--remote-debugging-port=${String(PORT)}`], {
+  child = spawn(APP, ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--password-store=basic', '--lang=zh-CN', `--remote-debugging-port=${String(PORT)}`], {
     env: {
       ...process.env,
       PICOAI_ALLOW_DEBUG_SWITCHES: '1',

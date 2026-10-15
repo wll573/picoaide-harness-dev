@@ -48,6 +48,11 @@ const DISPLAY = process.env.DISPLAY ?? ':99'
 if (!existsSync(APP)) { console.error(`[probe] app not found: ${APP}`); process.exit(2) }
 rmSync(OUT, { recursive: true, force: true })
 for (const dir of [HOME_DIR, join(RUN_DIR, 'cfg'), join(RUN_DIR, 'cache'), SHOTS]) mkdirSync(dir, { recursive: true })
+// Gap-CI-Green-19: pre-seed account-data so first login does not activate→relaunch (exit 0).
+writeFileSync(join(HOME_DIR, 'account-data.json'), JSON.stringify({
+  serverURL: SERVER !== '' ? SERVER : `http://127.0.0.1:${String(GATEWAY_PORT)}`,
+  username: USER,
+}), { mode: 0o600 })
 
 const wait = ms => new Promise(r => { setTimeout(r, ms) })
 const checks = []
@@ -83,6 +88,7 @@ if (!ATTACH) {
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
+    '--password-store=basic',
     '--lang=zh-CN',
     `--remote-debugging-port=${String(PORT)}`,
   ], {

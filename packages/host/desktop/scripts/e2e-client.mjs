@@ -102,6 +102,15 @@ if (workDir === '') throw new Error('cannot create a writable e2e work directory
     schemaVersion: 2, revision: 1, jobs, scheduler: { timeZone: 'Asia/Shanghai' },
   }))
 }
+// Gap-CI-Green-19: first login always misses account-data scope (signed-out →
+// admin@mock) and accountData.activate() calls requestRestart() → app.relaunch()
+// + exit(0). Green-16 then treats that voluntary relaunch as "app died" while
+// CDP stays up on the new PID. Pre-seed the selector so setSession matches and
+// skips activate/relaunch; login form still shows (no session.json yet).
+writeFileSync(join(HOME_DIR, 'account-data.json'), JSON.stringify({
+  serverURL: `http://127.0.0.1:${GATEWAY_PORT}`,
+  username: 'admin',
+}), { mode: 0o600 })
 console.log(`[e2e] workDir=${workDir} home=${HOME_DIR} port=${cdpPort}`)
 
 const DISPLAY = process.env.DISPLAY ?? ':99'
@@ -149,9 +158,45 @@ function electronE2eArgs(port) {
     '--no-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
+    // Gap-CI-Green-19: headless GHA has no gnome-keyring/kwallet; Chromium's
+    // default password-store probes D-Bus and floods the log. basic is enough
+    // for E2E (session tokens still use the 0600 plaintext safeStorage fallback).
+    '--password-store=basic',
     '--lang=zh-CN',
     `--remote-debugging-port=${String(port)}`,
   ]
+}
+
+
+/**
+ * True when CDP still serves an app page target (relaunch may have replaced the
+ * tracked child PID while keeping --remote-debugging-port).
+ */
+async function cdpHasAppTarget(port) {
+  try {
+    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
+    return Array.isArray(list) && list.some(isAppPageTarget)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Gap-CI-Green-19: if the tracked process exited 0 but CDP is (or comes) back,
+ * adopt the relaunched app instead of failing as "app died".
+ */
+async function adoptVoluntaryRelaunch(label) {
+  if (!childExit || childExit.code !== 0 || childExit.signal != null) return false
+  for (let i = 0; i < 24; i += 1) {
+    if (await cdpHasAppTarget(cdpPort)) {
+      console.error(`[e2e] app voluntarily exited code=0; CDP still up — adopting relaunch (${label})`)
+      childExit = undefined
+      child = undefined
+      return true
+    }
+    await wait(250)
+  }
+  return false
 }
 
 function isCdpTransportDead(err) {
@@ -290,7 +335,12 @@ let shotsDir = undefined
 async function diagnoseAppDeath(reason) {
   const parts = [reason]
   if (childExit) {
-    parts.push(`app_exited code=${childExit.code} signal=${childExit.signal}`)
+    // code=0 + signal=null is the account-data activate relaunch (or any orderly
+    // requestQuit(0)); say so loudly instead of a bare "app_exited".
+    const voluntary = childExit.code === 0 && childExit.signal == null
+    parts.push(voluntary
+      ? `app_voluntarily_exited code=0 signal=null (account-data relaunch or orderly quit)`
+      : `app_exited code=${childExit.code} signal=${childExit.signal}`)
   } else if (child) {
     parts.push(`app_process alive pid=${child.pid}`)
   } else {
@@ -594,7 +644,25 @@ async function main() {
         throw new Error(await diagnoseAppDeath(loginLastErr))
       }
       const detail = await diagnoseAppDeath(loginLastErr)
-      if (childExit) throw new Error(`login aborted: app died — ${detail}`)
+      if (childExit) {
+        if (await adoptVoluntaryRelaunch(loginLastErr)) {
+          // After account-data relaunch the session is usually already on disk —
+          // skip the login form if the shell is up.
+          try {
+            const probe = await connectMain(cdpPort)
+            const loggedIn = await waitFor(probe, `location.href.includes('dsh-desktop-mode') || !!document.querySelector('[data-slot], #composer, textarea')`, 8000, 300)
+            if (loggedIn) {
+              cdp = probe
+              title = await evalSafe(cdp, 'document.title')
+              break
+            }
+            try { probe.ws.close() } catch { /* ignore */ }
+          } catch { /* fall through to retry login */ }
+          await wait(500)
+          continue
+        }
+        throw new Error(`login aborted: app voluntarily exited — ${detail}`)
+      }
       console.error(`[e2e] login CDP lost; retrying — ${detail}`)
       await wait(500)
     }
