@@ -88,7 +88,7 @@ if (!ATTACH && SERVER === '') {
 
 let child
 if (!ATTACH) {
-  child = spawn(APP, ['--no-sandbox', '--lang=zh-CN', `--remote-debugging-port=${String(PORT)}`], {
+  child = spawn(APP, ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--lang=zh-CN', `--remote-debugging-port=${String(PORT)}`], {
     env: {
       ...process.env,
       PICOAI_ALLOW_DEBUG_SWITCHES: '1',

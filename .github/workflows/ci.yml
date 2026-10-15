@@ -1222,6 +1222,7 @@ jobs:
           # 复制并重命名为非点名称再上传(2026-09-06 两轮实测缺失)。
           mkdir -p packages/host/desktop/e2e-results
           cp packages/host/desktop/.e2e-report.md packages/host/desktop/e2e-results/e2e-report.md 2>/dev/null || true
+          cp packages/host/desktop/.e2e-app.log packages/host/desktop/e2e-results/e2e-app.log 2>/dev/null || true
           cp -r packages/host/desktop/.e2e-shots packages/host/desktop/e2e-results/shots 2>/dev/null || true
           cp -r packages/host/desktop/.e2e-sidebar/shots packages/host/desktop/e2e-results/sidebar-shots 2>/dev/null || true
       # artifact 名保持**中性**(不含渠道名):公开仓的 artifact 列表是匿名可读的

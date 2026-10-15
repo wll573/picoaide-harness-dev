@@ -12,7 +12,7 @@
  * dist/linux-unpacked/dsh-plugin-desktop (or a dev binary).
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -136,6 +136,29 @@ function pickAppTarget(list) {
 const CDP_SEND_TIMEOUT_MS = 4000
 const CDP_OPEN_TIMEOUT_MS = 10000
 
+/**
+ * Chromium flags for packaged E2E on CI (Xvfb / GitHub Actions).
+ *
+ * Gap-CI-Green-16: without `--disable-dev-shm-usage`, Linux runners with a tiny
+ * `/dev/shm` routinely kill the renderer a few seconds after CDP comes up
+ * (readyState=3 flash-close; chrome_crashpad_handler left as orphan). WASM
+ * probes already pass `--disable-gpu`; keep the same baseline here.
+ */
+function electronE2eArgs(port) {
+  return [
+    '--no-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-gpu',
+    '--lang=zh-CN',
+    `--remote-debugging-port=${String(port)}`,
+  ]
+}
+
+function isCdpTransportDead(err) {
+  const message = err instanceof Error ? err.message : String(err)
+  return /readyState=\d|WebSocket (closed|error|failed to open|not open)|CDP .+ timed out/u.test(message)
+}
+
 async function connectMain(port) {
   const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json()
   const main = pickAppTarget(list)
@@ -216,7 +239,25 @@ async function connectUntilLoginForm(port, timeoutMs = 30000) {
       cdp = await connectMain(port)
       const slice = Math.min(5000, Math.max(500, deadline - Date.now()))
       const ready = await waitFor(cdp, `!!document.getElementById('f1') && !!document.getElementById('server')`, slice, 300)
-      if (ready) return cdp
+      if (ready) {
+        // Gap-CI-Green-16: form can flash on a document that is about to navigate
+        // (restoring→login) or die with the renderer. Settle, then re-check WS + DOM
+        // before handing the session to fill/login — otherwise the next evaluate
+        // fails with a bare readyState=3 and no app-liveness context.
+        await wait(600)
+        if (cdp.ws.readyState !== WebSocket.OPEN) {
+          lastErr = 'CDP WebSocket closed during login-form settle'
+          try { cdp.ws.close() } catch { /* ignore */ }
+          await wait(400)
+          continue
+        }
+        const still = await waitFor(cdp, `!!document.getElementById('f1') && !!document.getElementById('server')`, 2000, 200)
+        if (still) return cdp
+        lastErr = 'login form disappeared during settle (navigation or renderer death)'
+        try { cdp.ws.close() } catch { /* ignore */ }
+        await wait(400)
+        continue
+      }
       let snippet = ''
       try {
         snippet = await evalSafe(cdp, `(() => ({ title: document.title, hasBody: !!document.body, text: (document.body?.innerText ?? '').slice(0, 160) }))()`)
@@ -235,9 +276,49 @@ async function connectUntilLoginForm(port, timeoutMs = 30000) {
 }
 
 let child = undefined
+/** @type {{ code: number | null, signal: NodeJS.Signals | null, at: number } | undefined} */
+let childExit = undefined
+let appLogPath = undefined
 let gateway = undefined
 const results = []
 let shotsDir = undefined
+
+/**
+ * Loud diagnosis when CDP dies: distinguish app quit/crash from a page-target
+ * navigation flash. Prefer this over a bare readyState=3 message.
+ */
+async function diagnoseAppDeath(reason) {
+  const parts = [reason]
+  if (childExit) {
+    parts.push(`app_exited code=${childExit.code} signal=${childExit.signal}`)
+  } else if (child) {
+    parts.push(`app_process alive pid=${child.pid}`)
+  } else {
+    parts.push('app_process not spawned by this suite (reused CDP?)')
+  }
+  try {
+    const res = await fetch(`http://127.0.0.1:${cdpPort}/json/list`)
+    if (!res.ok) {
+      parts.push(`cdp_http status=${res.status}`)
+    } else {
+      const list = await res.json()
+      const apps = Array.isArray(list) ? list.filter(isAppPageTarget) : []
+      parts.push(`cdp_http ok targets=${apps.length} urls=${apps.map(t => t.url).slice(0, 3).join('|') || '(none)'}`)
+    }
+  } catch (cause) {
+    parts.push(`cdp_http down (${cause instanceof Error ? cause.message : String(cause)})`)
+  }
+  if (appLogPath && existsSync(appLogPath)) {
+    try {
+      const raw = readFileSync(appLogPath, 'utf8')
+      const tail = raw.trim().split('\n').slice(-12).join(' | ')
+      parts.push(`app_log_tail=${tail || '(empty)'}`)
+    } catch { /* ignore */ }
+  } else {
+    parts.push('app_log=(none)')
+  }
+  return parts.join('; ')
+}
 
 function reportStep(name, ok, detail = '') {
   results.push({ name, ok, detail })
@@ -433,7 +514,11 @@ async function main() {
     // 断言语料是中文 UI(连接/能力中心/关闭等 marker),--lang 强制 Chromium
     // renderer 语言,与 runner 系统语言解耦(2026-09-06 CI 实测:en_US runner
     // 上 UI 变英文,中文 marker 断言失败)。
-    child = spawn(appBinary, ['--no-sandbox', '--lang=zh-CN', `--remote-debugging-port=${String(cdpPort)}`], {
+    // Gap-CI-Green-16: capture stdout/stderr (stdio:ignore hid renderer death)
+    // and pass --disable-dev-shm-usage for GHA tiny /dev/shm.
+    appLogPath = join(workDir, 'app.log')
+    const appLog = createWriteStream(appLogPath, { flags: 'a' })
+    child = spawn(appBinary, electronE2eArgs(cdpPort), {
       env: {
         ...process.env,
         PICOAI_ALLOW_DEBUG_SWITCHES: '1',
@@ -443,8 +528,14 @@ async function main() {
         XDG_CACHE_HOME: join(workDir, 'cache'),
         DISPLAY,
       },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+    })
+    child.stdout?.pipe(appLog)
+    child.stderr?.pipe(appLog)
+    child.on('exit', (code, signal) => {
+      childExit = { code, signal, at: Date.now() }
+      console.error(`[e2e] app exited code=${code} signal=${signal}`)
     })
     child.unref()
   }
@@ -469,23 +560,48 @@ async function main() {
   // navigation (神机/渠道包同样走 #f1+#server，不是另一套 brand selector)。
   // auth-gate 登录页已是两步式(2026-09):f1 服务端地址 → /api/pico/auth/methods
   // 探测 → f2 本地表单。e2e 脚本原按旧单页 #f 断言,2026-09-05 同步两步流程。
-  const cdp = await connectUntilLoginForm(cdpPort, 45000)
-  await evalSafe(cdp, `(() => {
-    const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
-    return set('server', 'http://127.0.0.1:${GATEWAY_PORT}')
-  })()`)
-  await wait(400)
-  await clickLabel(cdp, '下一步', 7000)
-  const step2Ready = await waitFor(cdp, `!!document.getElementById('f2') && !!document.getElementById('username') && !!document.getElementById('password')`, 15000, 300)
-  if (!step2Ready) throw new Error('login method form did not appear within 15s')
-  await evalSafe(cdp, `(() => {
-    const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
-    const ok = set('username', 'admin') && set('password', 'admin')
-    return ok
-  })()`)
-  await wait(400)
-  await clickLabel(cdp, '登录', 7000)
-  const title = await evalSafe(cdp, 'document.title')
+  // Gap-CI-Green-16: login fill may lose the CDP target mid-step (renderer
+  // death or restoring navigation). Reconnect bounded times; always assert
+  // app liveness so readyState=3 is never a silent flash-close.
+  const loginDeadline = Date.now() + 90000
+  let cdp
+  let title
+  let loginLastErr = ''
+  while (Date.now() < loginDeadline) {
+    try {
+      cdp = await connectUntilLoginForm(cdpPort, Math.min(45000, Math.max(5000, loginDeadline - Date.now())))
+      await evalSafe(cdp, `(() => {
+        const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
+        return set('server', 'http://127.0.0.1:${GATEWAY_PORT}')
+      })()`)
+      await wait(400)
+      await clickLabel(cdp, '下一步', 7000)
+      const step2Ready = await waitFor(cdp, `!!document.getElementById('f2') && !!document.getElementById('username') && !!document.getElementById('password')`, 15000, 300)
+      if (!step2Ready) throw new Error('login method form did not appear within 15s')
+      await evalSafe(cdp, `(() => {
+        const set = (id, v) => { const el = document.getElementById(id); if (!el) return false; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); return true }
+        const ok = set('username', 'admin') && set('password', 'admin')
+        return ok
+      })()`)
+      await wait(400)
+      await clickLabel(cdp, '登录', 7000)
+      title = await evalSafe(cdp, 'document.title')
+      break
+    } catch (cause) {
+      loginLastErr = cause instanceof Error ? cause.message : String(cause)
+      try { cdp?.ws.close() } catch { /* ignore */ }
+      if (!isCdpTransportDead(cause) && !/login (form|method form)/u.test(loginLastErr)) {
+        throw new Error(await diagnoseAppDeath(loginLastErr))
+      }
+      const detail = await diagnoseAppDeath(loginLastErr)
+      if (childExit) throw new Error(`login aborted: app died — ${detail}`)
+      console.error(`[e2e] login CDP lost; retrying — ${detail}`)
+      await wait(500)
+    }
+  }
+  if (title === undefined || cdp === undefined) {
+    throw new Error(await diagnoseAppDeath(`login did not complete within 90s (${loginLastErr || 'no detail'})`))
+  }
   // 断言对齐**本次构建声明的产品名**（渠道构建下是客户名），不硬编码厂商名:
   // 旧写法把厂商名直接写进断言,渠道构建的 E2E 于是永远红。
   const titleOk = title.includes(PRODUCT_NAME)
@@ -1153,11 +1269,21 @@ async function run() {
     // A fatal error must fail the run: reporting only to stderr let the
     // script print "全部通过" and exit 0 when the app never came up
     // (2026-09-08 audit P0-1).
-    const message = cause instanceof Error ? cause.message : String(cause)
+    let message = cause instanceof Error ? cause.message : String(cause)
+    if (isCdpTransportDead(cause) || /readyState=/u.test(message)) {
+      message = await diagnoseAppDeath(message)
+    }
     console.error('e2e-client fatal:', message)
     reportStep('e2e 致命错误（应用未就绪）', false, message)
   } finally {
     await cleanup()
+    // Gap-CI-Green-16: surface electron stdout/stderr in the package dir so CI
+    // can upload it with e2e-results (workDir under /tmp is otherwise lost).
+    if (appLogPath && existsSync(appLogPath)) {
+      try {
+        writeFileSync(join(PACKAGE_ROOT, '.e2e-app.log'), readFileSync(appLogPath))
+      } catch { /* best-effort */ }
+    }
     const failed = results.filter(r => !r.ok)
     const lines = [
       '# PicoAide Harness 客户端 E2E 报告',
