@@ -43,6 +43,7 @@
 
 ## push 记录
 
-- Tip SHA：（push 后补）
+- Tip SHA：`21b4e74263`（`fix(ci): Gap-CI-Green-14 nontag shenji upload + Linux E2E CDP hang`）
 - 远程分支：`boss/shenji/intranet`
-- CI：（push 后补）
+- CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38755696131
+- 推送时间：2026-10-15 22:55 CST（Asia/Shanghai）
