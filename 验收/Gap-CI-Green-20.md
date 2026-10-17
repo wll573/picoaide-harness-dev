@@ -56,3 +56,11 @@ Green-16–19 保留。未改产品 FootNav / AccountCard 源码（口径已是�
 - Tip SHA：`a8954881bc4f`
 - 远程分支：`boss/shenji/intranet`
 - CI：https://github.com/wll573/picoaide-harness-dev/actions/runs/38777446442
+
+## CI 全绿复核（run 38777494364）
+
+- 复核时间：2026-10-16 10:55 CST（Asia/Shanghai）
+- 成功 run：https://github.com/wll573/picoaide-harness-dev/actions/runs/38777494364
+- Tip：`c428c13b2162`（docs 记录 commit；含 Green-20 fix `a8954881bc`）
+- 结论：整 workflow success；含 Desktop Linux `Client E2E (packaged app, Xvfb)` success；Gate / Go / macOS / Windows installer 均 success
+- 备注：渠道仍走内网跟踪包 `packaging/intranet-channel`（无 private-repo credentials）；渠道仓 secrets 非本轮阻塞

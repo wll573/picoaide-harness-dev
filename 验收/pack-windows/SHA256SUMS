@@ -1,0 +1,11 @@
+# Pack-Windows SHA256SUMS — tip c428c13b216235bdae259ed3261c6e17d47cbdb7
+# Source CI: https://github.com/wll573/picoaide-harness-dev/actions/runs/38777494364
+# Artifacts: desktop-Windows-installer + picoaide-server-linux-amd64
+# Generated: 2026-10-17 14:36 CST (Asia/Shanghai)
+# Do not commit the binaries. Re-download and verify:
+#   gh run download 38777494364 -R wll573/picoaide-harness-dev -n desktop-Windows-installer -D media/win
+#   gh run download 38777494364 -R wll573/picoaide-harness-dev -n picoaide-server-linux-amd64 -D media/server
+#   ./验收/pack-windows/regen-sha256sums.sh media && (cd media && sha256sum -c ../验收/pack-windows/SHA256SUMS)
+#
+8d48a7152b6395abe864a4c196e109dc029c108f3d6c4fa68dafe877acdb6d79  shenji-2.8.3-beta.1-x64-Setup.exe
+12ef68eece77246bcbc4c0e16c400634604eddc1afbc06c406a2964e6e78e7f5  picoaide-server
